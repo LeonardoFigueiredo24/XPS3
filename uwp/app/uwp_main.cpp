@@ -372,6 +372,10 @@ namespace
 			// only partly present and runs since it was enabled by default (builds 12-18) hit heap corruption.
 			if (fs::is_file(g_local_dir + "d3d12_debug"))
 				_putenv_s("DZN_DEBUG", "d3d12");
+			// VK_EXT_external_memory_host (D3D12 heaps opened on PS3 memory) only on request
+			// (LocalState/ext_host_mem) while it is a suspect for the startup heap corruption.
+			if (fs::is_file(g_local_dir + "ext_host_mem"))
+				_putenv_s("DZN_EXT_HOST_MEM", "1");
 
 			// Errors and warnings from the Vulkan driver (Mesa Dozen), with Mesa's source file:line.
 			uwp_vkshim_log = [](const char* where, const char* text)
