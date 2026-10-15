@@ -32,6 +32,14 @@ for name, (w, h) in {'StoreLogo': (50, 50), 'Square150x150Logo': (150, 150), 'Sq
                      'Wide310x150Logo': (310, 150), 'SplashScreen': (620, 300)}.items():
     open(os.path.join(out, 'Assets', name + '.png'), 'wb').write(png(w, h, (26, 26, 31)))
 
+# Overlay UI icons; the shell copies them into LocalState/rpcs3/Icons on first start.
+shutil.copytree(os.path.join(src, 'bin', 'Icons'), os.path.join(out, 'Icons'))
+
+# Overlay and menu font: DejaVu Sans (free license, see fonts/DejaVu-LICENSE.txt).
+os.makedirs(os.path.join(out, 'fonts'))
+for f in ('DejaVuSans.ttf', 'DejaVu-LICENSE.txt'):
+    shutil.copy(os.path.join(src, 'uwp', 'package', 'fonts', f), os.path.join(out, 'fonts'))
+
 test_dir = os.path.join(src, 'bin', 'test')
 for f in os.listdir(test_dir):
     shutil.copy(os.path.join(test_dir, f), os.path.join(out, 'test'))

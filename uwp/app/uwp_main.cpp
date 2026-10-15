@@ -1,13 +1,18 @@
 // RPCS3 UWP shell for Xbox Series X|S Dev Mode.
 //
-// Milestone 1: no UI and no graphics. On launch it sets up RPCS3's folders in the
-// app's LocalState, boots the first program found in LocalState/boot/ (or the bundled
-// test ELF) with the null renderer, and writes RPCS3.log next to it.
-// The screen shows the state: blue = booting/running, green = program exited cleanly,
-// red = boot failed or fatal error.
+// On launch it sets up RPCS3's folders in the app's LocalState and shows the controller
+// menu (uwp_frontend.cpp): game list, firmware installer, settings. An empty
+// LocalState/autoboot file skips the menu and boots the first program in LocalState/boot/
+// (or the bundled test ELF) like the earlier test builds, or the XMB if it contains "xmb".
+// With firmware installed and no LocalState/menu file, the XMB boots at startup. RPCS3.log goes to LocalState/rpcs3.
+// While a game boots or runs the screen shows its frames, or a status color when there are
+// none: blue = booting/running, green = exited cleanly, red = boot failed or fatal error.
 
 #include "stdafx.h"
+#include <algorithm>
+#include <winsock2.h>
 #include "winrt_min.h"
+#include "uwp_frontend.h"
 
 #include "Emu/System.h"
 #include "Emu/system_config.h"
@@ -46,14 +51,11 @@
 #include <map>
 #include <mutex>
 #include <vector>
-#include <set>
 #include <d3d11_1.h>
 #include <dxgi1_2.h>
 
-// Firmware library list (Emu/Cell/PPUModule.cpp): true = HLE by default.
-extern const std::map<std::string_view, int> g_prx_list;
-
 LOG_CHANNEL(vk_drv_log, "DZN");
+extern "C" void uwp_heap_guard_open_log(const wchar_t* path);
 extern "C" void (*uwp_vkshim_log)(const char* where, const char* text);
 LOG_CHANNEL(sys_log, "SYS");
 
@@ -301,13 +303,18 @@ namespace
 		g_emu_callbacks.get_recvmessage_dialog = []() -> std::shared_ptr<RecvMessageDialogBase> { return {}; };
 		g_emu_callbacks.get_trophy_notification_dialog = []() -> std::unique_ptr<TrophyNotificationBase> { return {}; };
 
-		g_emu_callbacks.on_run = [](bool) { g_state = shell_state::running; };
+		g_emu_callbacks.on_run = [](bool)
+		{
+			g_state = shell_state::running;
+			uwp_frontend::on_emulation_started();
+		};
 		g_emu_callbacks.on_pause = []() {};
 		g_emu_callbacks.on_resume = []() {};
 		g_emu_callbacks.on_stop = []()
 		{
 			if (g_state != shell_state::failed)
 				g_state = shell_state::finished;
+			uwp_frontend::on_emulation_stopped();
 		};
 		g_emu_callbacks.on_ready = []() {};
 		g_emu_callbacks.on_emulation_stop_no_response = [](std::shared_ptr<atomic_t<bool>> closed, int)
@@ -331,7 +338,7 @@ namespace
 		g_emu_callbacks.play_sound = [](const std::string&, std::optional<f32>) {};
 		g_emu_callbacks.get_image_info = [](const std::string&, std::string&, s32&, s32&, s32&) { return false; };
 		g_emu_callbacks.get_scaled_image = [](const std::string&, s32, s32, s32&, s32&, u8*, bool) { return false; };
-		g_emu_callbacks.get_font_dirs = []() { return std::vector<std::string>{}; };
+		g_emu_callbacks.get_font_dirs = []() { return std::vector<std::string>{get_package_dir() + "fonts/"}; };
 		g_emu_callbacks.on_install_pkgs = [](const std::vector<std::string>&, bool) { return false; };
 		g_emu_callbacks.add_breakpoint = [](u32) {};
 		g_emu_callbacks.display_sleep_control_supported = []() { return false; };
@@ -340,17 +347,60 @@ namespace
 		g_emu_callbacks.make_video_source = []() -> std::unique_ptr<video_source> { return nullptr; };
 		g_emu_callbacks.enable_gamemode = [](bool) {};
 		g_emu_callbacks.get_database_config = [](const std::string&) -> std::string { return {}; };
+
+		// Desktop resolves paths with Qt's canonicalFilePath (forward slashes, no trailing slash,
+		// empty if missing). Boot code relies on that, e.g. "/dev_flash" + path.substr(resolved
+		// dev_flash size) for firmware executables, which lost its '/' with the default callback.
+		g_emu_callbacks.resolve_path_may_not_exist = [](std::string_view sv) -> std::string
+		{
+			std::string path(sv);
+			std::replace(path.begin(), path.end(), '\\', '/');
+			while (path.size() > 1 && path.back() == '/' && !(path.size() == 3 && path[1] == ':'))
+				path.pop_back();
+			return path;
+		};
+		g_emu_callbacks.resolve_path = [](std::string_view sv) -> std::string
+		{
+			if (!fs::exists(std::string(sv)))
+				return {};
+			return g_emu_callbacks.resolve_path_may_not_exist(sv);
+		};
 	}
 
 	DWORD WINAPI emulator_thread(void*)
 	{
 		{
 			g_local_dir = get_local_state_dir();
+
+			// Desktop RPCS3 starts Winsock in main(); without it every guest socket call fails
+			// with WSANOTINITIALISED (10093), which sys_net treats as fatal (seen in the XMB).
+			{
+				WSADATA wsa_data{};
+				const int wsa_res = ::WSAStartup(MAKEWORD(2, 2), &wsa_data);
+				if (wsa_res != 0)
+					OutputDebugStringA("UWP: WSAStartup failed\n");
+			}
+			{
+				const std::string guard_log = g_local_dir + "heap_guard.log";
+				std::wstring wpath(guard_log.size() + 1, L'\0');
+				wpath.resize(::MultiByteToWideChar(CP_UTF8, 0, guard_log.c_str(), -1, wpath.data(), static_cast<int>(wpath.size())));
+				uwp_heap_guard_open_log(wpath.c_str());
+			}
 			g_android_executable_dir = get_package_dir();
 			g_android_config_dir = g_local_dir + "rpcs3/";
 			g_android_cache_dir = g_local_dir + "rpcs3/cache/";
 			fs::create_path(g_android_config_dir);
 			fs::create_path(g_android_cache_dir);
+
+			// Overlay UI icons ship in the package; RPCS3 looks for them in its config dir.
+			const std::string icons_src = get_package_dir() + "Icons/ui/";
+			const std::string icons_dst = g_android_config_dir + "Icons/ui/";
+			fs::create_path(icons_dst);
+			for (const auto& entry : fs::dir(icons_src))
+			{
+				if (!entry.is_directory && !fs::is_file(icons_dst + entry.name))
+					fs::copy_file(icons_src + entry.name, icons_dst + entry.name, false);
+			}
 
 			static std::unique_ptr<logs::listener> log_file = logs::make_file_listener(g_android_config_dir + "RPCS3.log", 256 * 1024 * 1024);
 
@@ -370,9 +420,14 @@ namespace
 			if (FILE* f = std::freopen((g_local_dir + "mesa.log").c_str(), "w", stderr))
 				std::setvbuf(f, nullptr, _IONBF, 0);
 			_putenv_s("MESA_LOG_LEVEL", "info");
-			// D3D12 debug layer for Dozen, if the console has it; LocalState/no_d3d12_debug turns it off.
-			if (!fs::is_file(g_local_dir + "no_d3d12_debug"))
+			// D3D12 debug layer for Dozen only on request (LocalState/d3d12_debug). On the Xbox it is
+			// only partly present and runs since it was enabled by default (builds 12-18) hit heap corruption.
+			if (fs::is_file(g_local_dir + "d3d12_debug"))
 				_putenv_s("DZN_DEBUG", "d3d12");
+			// VK_EXT_external_memory_host (D3D12 heaps opened on PS3 memory) only on request
+			// (LocalState/ext_host_mem) while it is a suspect for the startup heap corruption.
+			if (fs::is_file(g_local_dir + "ext_host_mem"))
+				_putenv_s("DZN_EXT_HOST_MEM", "1");
 
 			// Errors and warnings from the Vulkan driver (Mesa Dozen), with Mesa's source file:line.
 			uwp_vkshim_log = [](const char* where, const char* text)
@@ -394,15 +449,19 @@ namespace
 			Emu.SetUsr("00000001");
 			Emu.Init();
 
-			// Vulkan through Mesa's Dozen (D3D12). An empty LocalState/null_renderer file
-			// switches back to the null renderer for CPU-only tests.
+			// Vulkan through Mesa's Dozen (D3D12) unless the menu's settings chose Null. An empty
+			// LocalState/null_renderer file forces the null renderer for CPU-only tests.
 			const bool use_null = fs::is_file(g_local_dir + "null_renderer");
-			g_cfg.video.renderer.set(use_null ? video_renderer::null : video_renderer::vulkan);
-			sys_log.always()("UWP: renderer: %s", use_null ? "null" : "Vulkan (Dozen on D3D12)");
+			if (use_null)
+				g_cfg.video.renderer.set(video_renderer::null);
+			else if (g_cfg.video.renderer != video_renderer::null)
+				g_cfg.video.renderer.set(video_renderer::vulkan);
+			sys_log.always()("UWP: renderer: %s", g_cfg.video.renderer.get());
 			// XAudio2 sound; an empty LocalState/null_audio file turns it off.
 			const bool null_audio = fs::is_file(g_local_dir + "null_audio");
 			g_cfg.audio.renderer.set(null_audio ? audio_renderer::null : audio_renderer::xaudio);
 			sys_log.always()("UWP: audio: %s", null_audio ? "null" : "XAudio2");
+			// Controllers 1-4 as PS3 pads 1-4 (written once; the XMB and games read it at boot).
 			uwp_input_default_config();
 			g_cfg.audio.music.set(music_handler::null);
 			g_cfg.io.camera.set(camera_handler::null);
@@ -411,33 +470,29 @@ namespace
 			g_cfg.core.ppu_decoder.set(ppu_decoder_type::_static);
 			g_cfg.core.spu_decoder.set(spu_decoder_type::_static);
 
-			// No firmware installed yet: use RPCS3's built-in (HLE) version of every firmware
-			// library, otherwise the boot stops with "firmware missing".
-			if (!fs::is_file(g_cfg_vfs.get_dev_flash() + "sys/external/liblv2.sprx"))
-			{
-				std::set<std::string> libs;
-				for (const auto& [name, hle] : g_prx_list)
-				{
-					if (!hle)
-						libs.emplace(std::string(name) + ":hle");
-				}
-
-				g_cfg.core.libraries_control.set_set(std::move(libs));
-				sys_log.warning("UWP: no firmware installed, using HLE for all firmware libraries");
-			}
-
-			// BootGame reloads the global config file, so store these settings there.
 			Emulator::SaveSettings(g_cfg.to_string(), {});
 
-			const std::string target = find_boot_target();
-			sys_log.always()("UWP: booting '%s'", target);
-
-			const game_boot_result result = Emu.BootGame(target, "", true);
-			if (result != game_boot_result::no_errors)
+			uwp_frontend::init({g_local_dir, get_package_dir(), [](std::function<void()> func)
 			{
-				sys_log.fatal("UWP: boot failed: %s", result);
-				g_state = shell_state::failed;
-				return 1;
+				g_emu_callbacks.call_from_main_thread(std::move(func), nullptr);
+			}});
+
+			// With firmware installed the app boots the PS3 system menu (XMB) straight away;
+			// an empty LocalState/menu file opens the controller menu instead.
+			const std::string xmb_path = g_cfg_vfs.get_dev_flash() + "vsh/module/vsh.self";
+			if (fs::is_file(g_local_dir + "autoboot"))
+			{
+				fs::file f(g_local_dir + "autoboot");
+				const std::string what = f ? fmt::trim(f.to_string(), " \t\r\n") : std::string();
+				const std::string target = what == "xmb" ? xmb_path : find_boot_target();
+				if (!uwp_frontend::boot(target))
+					g_state = shell_state::failed;
+			}
+			else if (!fs::is_file(g_local_dir + "menu") && fs::is_file(xmb_path))
+			{
+				sys_log.always()("UWP: firmware installed, booting the XMB (create LocalState/menu to open the menu instead)");
+				if (!uwp_frontend::boot(xmb_path))
+					g_state = shell_state::failed;
 			}
 
 			// Serve main-thread requests for as long as the app lives (shutdown needs them too).
@@ -581,6 +636,38 @@ namespace
 				if (!sc || !rtv)
 				{
 					Sleep(100);
+					continue;
+				}
+
+				// The menu, whenever no game is booting or running.
+				const u32* menu_pixels = nullptr;
+				bool menu_changed = false;
+				if (uwp_frontend::frame(window, menu_pixels, menu_changed))
+				{
+					static ID3D11Texture2D* menu_tex = nullptr;
+					if (!menu_tex)
+					{
+						D3D11_TEXTURE2D_DESC td{};
+						td.Width = uwp_frontend::canvas_width;
+						td.Height = uwp_frontend::canvas_height;
+						td.MipLevels = 1;
+						td.ArraySize = 1;
+						td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+						td.SampleDesc.Count = 1;
+						td.Usage = D3D11_USAGE_DEFAULT;
+						dev->CreateTexture2D(&td, nullptr, &menu_tex);
+						menu_changed = true;
+					}
+					if (menu_tex)
+					{
+						if (menu_changed)
+							ctx->UpdateSubresource(menu_tex, 0, nullptr, menu_pixels, uwp_frontend::canvas_width * 4, 0);
+						ID3D11Resource* target = nullptr;
+						rtv->GetResource(&target);
+						ctx->CopyResource(target, menu_tex);
+						target->Release();
+					}
+					sc->Present(1, 0);
 					continue;
 				}
 				static const float blue[4] = {0.10f, 0.25f, 0.60f, 1}, green[4] = {0.10f, 0.55f, 0.20f, 1}, red[4] = {0.70f, 0.12f, 0.12f, 1};

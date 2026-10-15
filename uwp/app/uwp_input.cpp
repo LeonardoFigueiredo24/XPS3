@@ -396,7 +396,9 @@ void uwp_input_attach_view()
 void uwp_input_default_config()
 {
 	const std::string path = rpcs3::utils::get_input_config_dir() + g_cfg_input_configs.default_config + ".yml";
-	if (fs::is_file(path))
+	// Keep a config that already maps controllers (an earlier run wrote it, or a user edited it).
+	// Builds without controller support ran with every pad on Null; replace those.
+	if (fs::file f(path); f && f.to_string().find("Handler: XInput") != umax)
 		return;
 
 	g_cfg_input.from_default();
