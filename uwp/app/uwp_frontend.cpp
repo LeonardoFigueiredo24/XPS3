@@ -27,6 +27,7 @@
 #include <inspectable.h>
 
 #include <stb_truetype.h>
+#include <stb_image.h>
 
 #include <algorithm>
 #include <chrono>
@@ -262,6 +263,37 @@ namespace uwp_frontend
 		}
 
 		// ---- Canvas ----
+		// A decoded game icon (ICON0.PNG, 320x176 on the PS3), BGRA with straight alpha.
+		struct icon_image
+		{
+			u32 w = 0, h = 0;
+			std::vector<u32> px;
+		};
+
+		std::shared_ptr<icon_image> decode_icon(const std::vector<u8>& png)
+		{
+			if (png.empty())
+				return nullptr;
+			int w = 0, h = 0, comp = 0;
+			stbi_uc* rgba = stbi_load_from_memory(png.data(), ::narrow<int>(png.size()), &w, &h, &comp, 4);
+			if (!rgba)
+				return nullptr;
+			auto img = std::make_shared<icon_image>();
+			if (w > 0 && h > 0 && w <= 2048 && h <= 2048)
+			{
+				img->w = w;
+				img->h = h;
+				img->px.resize(usz{img->w} * img->h);
+				for (usz i = 0; i < img->px.size(); i++)
+				{
+					const stbi_uc* p = rgba + i * 4;
+					img->px[i] = (u32{p[3]} << 24) | (u32{p[0]} << 16) | (u32{p[1]} << 8) | p[2];
+				}
+			}
+			stbi_image_free(rgba);
+			return img->px.empty() ? nullptr : img;
+		}
+
 		class canvas
 		{
 		public:
@@ -282,6 +314,47 @@ namespace uwp_frontend
 						for (int xx = x0; xx < x1; xx++)
 							row[xx] = blend(row[xx], c, a);
 				}
+			}
+
+			// Bilinear-scaled, alpha-blended copy of an image into (x, y, w, h).
+			void image(const icon_image& img, int x, int y, int w, int h)
+			{
+				if (!img.w || !img.h || w <= 0 || h <= 0)
+					return;
+				for (int j = std::max(0, -y); j < h && y + j < static_cast<int>(canvas_height); j++)
+				{
+					const float sy = std::clamp((j + 0.5f) * img.h / h - 0.5f, 0.f, img.h - 1.f);
+					const u32 y0 = static_cast<u32>(sy), y1 = std::min(y0 + 1, img.h - 1);
+					const float fy = sy - y0;
+					u32* row = px.data() + usz{static_cast<u32>(y + j)} * canvas_width;
+					for (int i = std::max(0, -x); i < w && x + i < static_cast<int>(canvas_width); i++)
+					{
+						const float sx = std::clamp((i + 0.5f) * img.w / w - 0.5f, 0.f, img.w - 1.f);
+						const u32 x0 = static_cast<u32>(sx), x1 = std::min(x0 + 1, img.w - 1);
+						const float fx = sx - x0;
+						const u32 c00 = img.px[usz{y0} * img.w + x0], c10 = img.px[usz{y0} * img.w + x1];
+						const u32 c01 = img.px[usz{y1} * img.w + x0], c11 = img.px[usz{y1} * img.w + x1];
+						u32 out = 0;
+						for (u32 sh = 0; sh < 32; sh += 8)
+						{
+							const float top = ((c00 >> sh) & 0xff) * (1 - fx) + ((c10 >> sh) & 0xff) * fx;
+							const float bot = ((c01 >> sh) & 0xff) * (1 - fx) + ((c11 >> sh) & 0xff) * fx;
+							out |= static_cast<u32>(top * (1 - fy) + bot * fy + 0.5f) << sh;
+						}
+						const u32 a = out >> 24;
+						if (a)
+							row[x + i] = a == 0xff ? out : blend(row[x + i], out, a);
+					}
+				}
+			}
+
+			// Outline of a rectangle, `t` pixels thick.
+			void frame_rect(int x, int y, int w, int h, int t, u32 c)
+			{
+				fill(x, y, w, t, c);
+				fill(x, y + h - t, w, t, c);
+				fill(x, y, t, h, c);
+				fill(x + w - t, y, t, h, c);
 			}
 
 			static u32 blend(u32 dst, u32 src, u32 a)
@@ -388,6 +461,11 @@ namespace uwp_frontend
 			std::string title;
 			std::string detail; // title ID, source
 			std::string path;
+			std::shared_ptr<icon_image> icon; // ICON0.PNG, when the game has one
+			std::string title_id;
+			std::string version; // APP_VER
+			std::string kind;    // "Disc game", "HDD game", "ISO", "Program", ...
+			std::string source;  // where it was found
 		};
 
 		// Something the Install tab can install.
@@ -512,19 +590,26 @@ namespace uwp_frontend
 			if (!is_iso_file(path))
 				return false;
 
-			std::string title, title_id = "?";
+			std::string title, title_id = "?", version;
+			std::shared_ptr<icon_image> icon;
 			iso_archive archive(path);
 			if (archive.is_valid())
 			{
 				const psf::registry sfo = archive.open_psf("PS3_GAME/PARAM.SFO");
 				title = std::string(psf::get_string(sfo, "TITLE"));
 				title_id = std::string(psf::get_string(sfo, "TITLE_ID", "?"));
+				version = std::string(psf::get_string(sfo, "APP_VER"));
+				if (archive.is_file("PS3_GAME/ICON0.PNG"))
+				{
+					if (fs::file f{archive.open("PS3_GAME/ICON0.PNG")})
+						icon = decode_icon(f.to_vector<u8>());
+				}
 			}
 			const std::string name = path.substr(path.rfind('/') + 1);
 			if (title.empty())
 				title = name;
 			std::replace(title.begin(), title.end(), '\n', ' ');
-			out.push_back({title, fmt::format("%s  ·  ISO  ·  %s", title_id, source), path});
+			out.push_back({title, fmt::format("%s  ·  ISO  ·  %s", title_id, source), path, std::move(icon), title_id, version, "Disc image (ISO)", std::string(source)});
 			return true;
 		}
 
@@ -583,7 +668,15 @@ namespace uwp_frontend
 				title = dir.substr(dir.rfind('/') + 1);
 			std::replace(title.begin(), title.end(), '\n', ' ');
 
-			out.push_back({title, fmt::format("%s  ·  %s", psf::get_string(sfo, "TITLE_ID", "?"), source), dir});
+			// ICON0.PNG sits next to PARAM.SFO.
+			std::shared_ptr<icon_image> icon;
+			if (fs::file f{sfo_path.substr(0, sfo_path.rfind('/') + 1) + "ICON0.PNG"})
+				icon = decode_icon(f.to_vector<u8>());
+
+			const std::string title_id{psf::get_string(sfo, "TITLE_ID", "?")};
+			const bool disc = sfo_path.ends_with("/PS3_GAME/PARAM.SFO");
+			out.push_back({title, fmt::format("%s  ·  %s", title_id, source), dir, std::move(icon), title_id,
+				std::string(psf::get_string(sfo, "APP_VER")), disc ? "Disc game (folder)" : "HDD game", std::string(source)});
 			return true;
 		}
 
@@ -594,7 +687,7 @@ namespace uwp_frontend
 
 			// The PS3 system menu (XMB) once firmware is installed, as desktop RPCS3's "Boot VSH".
 			if (const std::string vsh = g_cfg_vfs.get_dev_flash() + "vsh/module/vsh.self"; fs::is_file(vsh))
-				games.insert(games.begin(), {"PS3 System Menu (XMB)", "from the installed firmware", vsh});
+				games.insert(games.begin(), {"PS3 System Menu (XMB)", "from the installed firmware", vsh, nullptr, {}, utils::get_firmware_version(), "System software", "installed firmware"});
 
 			games.insert(games.end(), programs.begin(), programs.end());
 
@@ -643,7 +736,7 @@ namespace uwp_frontend
 				else if (upper_ext(e.name) == ".ISO")
 					add_iso(games, games_dir + e.name, "games folder");
 				else if (is_program_file(e.name))
-					programs.push_back({e.name, "program  ·  games folder", games_dir + e.name});
+					programs.push_back({e.name, "program  ·  games folder", games_dir + e.name, nullptr, {}, {}, "Program", "games folder"});
 			}
 
 			const std::string hdd_game = rpcs3::utils::get_hdd0_dir() + "game/";
@@ -656,12 +749,12 @@ namespace uwp_frontend
 			for (const auto& e : fs::dir(boot_dir))
 			{
 				if (!e.is_directory && is_program_file(e.name))
-					programs.push_back({e.name, "program  ·  boot folder", boot_dir + e.name});
+					programs.push_back({e.name, "program  ·  boot folder", boot_dir + e.name, nullptr, {}, {}, "Program", "boot folder"});
 			}
 			for (const auto& e : fs::dir(g_host.package_dir + "test/"))
 			{
 				if (!e.is_directory && is_program_file(e.name))
-					programs.push_back({e.name, "bundled test program", g_host.package_dir + "test/" + e.name});
+					programs.push_back({e.name, "bundled test program", g_host.package_dir + "test/" + e.name, nullptr, {}, {}, "Test program", "bundled with the app"});
 			}
 
 			for (const std::string& dir : {g_host.local_dir, fw_dir, pkg_dir})
@@ -864,7 +957,8 @@ namespace uwp_frontend
 				{"VSync", &g_cfg.video.vsync, {}, {}},
 				{"Shader mode", &g_cfg.video.shadermode, {}, "Async with interpreter avoids stutter while shaders compile."},
 				{"Write color buffers", &g_cfg.video.write_color_buffers, {"false", "true"}, "Needed by some games for correct visuals; costs speed."},
-				{"Performance overlay", &g_cfg.video.perf_overlay.enabled, {"false", "true"}, "Shows FPS and CPU usage in the corner."},
+				{"Stats overlay", &g_cfg.video.perf_overlay.enabled, {"false", "true"}, "FPS, CPU and GPU load in the top right corner while a game runs."},
+				{"Stats detail", &g_cfg.video.perf_overlay.level, {"Minimal", "Low", "Medium", "High"}, "Minimal = FPS. Low adds CPU. Medium adds PPU/SPU/RSX. High adds GPU load."},
 #ifdef LLVM_AVAILABLE
 				{"LLVM compile threads", &g_cfg.core.llvm_threads, {"0", "1", "2", "3", "4", "6"}, "0 = automatic. Fewer threads use less memory while compiling."},
 #endif
@@ -1113,6 +1207,113 @@ namespace uwp_frontend
 				cv.text(margin_x + 30, y + 54, detail, 24, selected ? 0xffc8d6ee : detail_color, w - 60);
 		}
 
+		// Placeholder tile for entries without ICON0.PNG: a tinted card with a short label.
+		void draw_placeholder_icon(canvas& cv, int x, int y, int w, int h, const game_entry& g)
+		{
+			const bool xmb = g.kind == "System software";
+			cv.fill(x, y, w, h, xmb ? 0xff2a3a66 : 0xff262a35);
+			const std::string_view label = xmb ? "XMB" : g.kind == "Disc image (ISO)" ? "ISO" : "ELF";
+			const int size = std::max(16, h * 2 / 5);
+			cv.text(x + (w - cv.text_width(label, size)) / 2, y + (h - size * 5 / 4) / 2, label, size, xmb ? 0xffc8d6ee : 0xff6c7383);
+		}
+
+		void draw_icon(canvas& cv, int x, int y, int w, int h, const game_entry& g)
+		{
+			if (g.icon)
+			{
+				// Keep the icon's aspect ratio inside the box, centered on a dark backdrop.
+				cv.fill(x, y, w, h, 0xff101116);
+				int iw = w, ih = static_cast<int>(u64{static_cast<u32>(w)} * g.icon->h / g.icon->w);
+				if (ih > h)
+				{
+					ih = h;
+					iw = static_cast<int>(u64{static_cast<u32>(h)} * g.icon->w / g.icon->h);
+				}
+				cv.image(*g.icon, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih);
+			}
+			else
+			{
+				draw_placeholder_icon(cv, x, y, w, h, g);
+			}
+		}
+
+		// Games tab: icon list on the left, details of the selected entry on the right.
+		void draw_games(canvas& cv, int top, int bottom, int& sel, int& scroll)
+		{
+			constexpr int row_h = 124;
+			constexpr int thumb_w = 182, thumb_h = 100; // ICON0 is 320x176
+			const int list_w = 1060;
+			const int visible = std::max(1, (bottom - top - 60) / row_h);
+			const int count = ::size32(g_games);
+
+			sel = std::clamp(sel, 0, std::max(count - 1, 0));
+			if (sel < scroll) scroll = sel;
+			if (sel >= scroll + visible) scroll = sel - visible + 1;
+			scroll = std::clamp(scroll, 0, std::max(count - visible, 0));
+
+			for (int i = scroll; i < std::min(count, scroll + visible); i++)
+			{
+				const game_entry& g = g_games[i];
+				const bool selected = i == sel;
+				const int y = top + (i - scroll) * row_h;
+				const int h = row_h - 12;
+				if (selected)
+				{
+					cv.fill(margin_x, y, list_w, h, col_sel);
+					cv.fill(margin_x, y, 6, h, col_accent);
+				}
+				else
+				{
+					cv.fill(margin_x, y, list_w, h, col_panel);
+				}
+				const int ix = margin_x + 18, iy = y + (h - thumb_h) / 2;
+				draw_icon(cv, ix, iy, thumb_w, thumb_h, g);
+				const int tx = ix + thumb_w + 24, tw = margin_x + list_w - tx - 20;
+				cv.text(tx, y + 18, g.title, 34, col_text, tw);
+				std::string sub = g.title_id.empty() || g.title_id == "?" ? g.kind : g.title_id + "  ·  " + g.kind;
+				if (!g.source.empty())
+					sub += "  ·  " + g.source;
+				cv.text(tx, y + 64, sub, 24, selected ? 0xffc8d6ee : col_dim, tw);
+			}
+
+			// Scroll position.
+			if (count > visible)
+			{
+				const int track_h = visible * row_h - 12;
+				const int knob_h = std::max(40, track_h * visible / count);
+				const int knob_y = top + (track_h - knob_h) * scroll / std::max(1, count - visible);
+				cv.fill(margin_x + list_w + 10, top, 4, track_h, 0xff2c2f38);
+				cv.fill(margin_x + list_w + 10, knob_y, 4, knob_h, col_accent);
+			}
+
+			// Details of the selected entry.
+			if (sel >= count)
+				return;
+			const game_entry& g = g_games[sel];
+			const int px = margin_x + list_w + 40, pw = canvas_width - margin_x - px;
+			const int ph = bottom - top - 60;
+			cv.fill(px, top, pw, ph, col_panel);
+			const int big_w = pw - 60, big_h = big_w * 176 / 320;
+			draw_icon(cv, px + 30, top + 30, big_w, big_h, g);
+			int y = top + 30 + big_h + 26;
+			// Up to two lines of title.
+			const int title_h = cv.paragraph(px + 30, y, g.title, 34, col_text, big_w);
+			y += std::min(title_h, 2 * 34 * 135 / 100) + 10;
+			const auto field = [&](std::string_view label, const std::string& value)
+			{
+				if (value.empty() || value == "?")
+					return;
+				cv.text(px + 30, y, label, 24, col_dim);
+				cv.text(px + 30 + 150, y, value, 24, col_text, big_w - 150);
+				y += 36;
+			};
+			field("Title ID", g.title_id);
+			field("Type", g.kind);
+			field("Version", g.version);
+			field("Location", g.source);
+			cv.text(px + 30, top + ph - 60, "A  Start", 30, col_accent);
+		}
+
 		void draw(canvas& cv)
 		{
 			ui_state& ui = *g_ui;
@@ -1172,8 +1373,10 @@ namespace uwp_frontend
 						"Copy a game folder (with PS3_GAME inside, or PARAM.SFO + USRDIR) or an .iso into the app's LocalState\\games folder with the Device Portal's File explorer, "
 						"or put games in a GAMES folder on a USB drive. Press Y to look again.", 30, col_dim, canvas_width - margin_x * 2);
 				}
-				for (int i = scroll; i < std::min<int>(::size32(g_games), scroll + visible); i++)
-					draw_list_row(cv, top + (i - scroll) * row_h, row_h - 8, i == sel, g_games[i].title, g_games[i].detail);
+				else
+				{
+					draw_games(cv, top, bottom, sel, scroll);
+				}
 				draw_footer(cv, "A  Start      Y  Refresh      LB/RB  Tabs      In game: hold View + Menu to return here");
 			}
 			else if (ui.current == tab::install)
