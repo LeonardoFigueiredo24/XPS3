@@ -112,9 +112,13 @@ namespace vk
 			m_pending = static_cast<s32>(image);
 
 			const u64 now = now_us();
+			if (!m_last_present_us)
+				uwp_present_log.notice("First frame presented");
 			if (m_last_present_us)
 			{
 				const u64 interval = now - m_last_present_us;
+				if (interval >= 250'000)
+					uwp_present_log.notice("Frame gap of %.3f s", interval / 1e6);
 				m_interval_sum_us += interval;
 				m_interval_max_us = std::max(m_interval_max_us, interval);
 				if (++m_stats_count == c_stats_frames)

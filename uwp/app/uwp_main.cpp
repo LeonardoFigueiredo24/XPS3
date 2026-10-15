@@ -21,6 +21,7 @@
 #include "Emu/system_progress.hpp"
 #include "Emu/VFS.h"
 #include "Emu/Cell/PPUAnalyser.h"
+#include "Emu/Cell/PPUThread.h"
 #include "Emu/Cell/lv2/sys_sync.h"
 #include "Emu/emu_callbacks.h"
 #include "Emu/IdManager.h"
@@ -90,6 +91,7 @@ namespace
 	// Latest frame from the Vulkan renderer, picked up by the UI thread.
 	std::mutex g_frame_mutex;
 	void start_background_precompile(u32 ticks);
+	void report_stall(u32 ticks);
 	// Triple buffer: the emulator fills g_frame_spare without the lock and swaps it into
 	// g_frame_pixels; the render loop swaps that out into its own buffer, so neither side
 	// holds the lock during an 8 MB copy.
@@ -609,6 +611,7 @@ namespace
 					if (ticks % 1000 == 0)
 						log_app_memory("running");
 					start_background_precompile(ticks);
+					report_stall(ticks);
 				}
 				else if (!logged_end && Emu.IsStopped(true))
 				{
@@ -674,6 +677,52 @@ namespace
 			ppu_precompile(dirs, nullptr, false);
 			sys_log.always()("UWP: background PPU compile %s after %us", Emu.IsStopped() ? "stopped" : "finished", (get_system_time() - start) / 1'000'000);
 		});
+	}
+
+	// Startup stall diagnosis: while emulation runs and no new frame arrived for a second, log
+	// once a second (up to 20 times per stall) where each PPU thread is.
+	void report_stall(u32 ticks)
+	{
+		static u64 last_serial = 0;
+		static u32 last_change = 0;
+		static u32 reports = 0;
+
+		if (Emu.IsStopped(true) || !Emu.IsRunning())
+		{
+			last_change = ticks;
+			reports = 0;
+			return;
+		}
+
+		u64 serial;
+		{
+			std::lock_guard lock(g_frame_mutex);
+			serial = g_frame_serial;
+		}
+
+		if (serial != last_serial || !last_change)
+		{
+			if (reports)
+				sys_log.always()("UWP stall: frames resumed after %.2fs", (ticks - last_change) / 100.0);
+			last_serial = serial;
+			last_change = ticks;
+			reports = 0;
+			return;
+		}
+
+		const u32 idle = ticks - last_change;
+		if (idle < 100 || idle % 100 != 0 || reports >= 20)
+			return;
+
+		reports++;
+		std::string out = fmt::format("UWP stall: no new frame for %.0fs (frame %u):", idle / 100.0, serial);
+		idm::select<named_thread<ppu_thread>>([&](u32, ppu_thread& ppu)
+		{
+			const char* func = ppu.current_function;
+			fmt::append(out, "\n  %s: cia=0x%x state=%s func=%s last=%s", ppu.get_name(), ppu.cia, +ppu.state,
+				func ? func : "-", ppu.last_function ? ppu.last_function : "-");
+		});
+		sys_log.always()("%s", out);
 	}
 
 	// While a game boots without a frame (first boots compile PPU code for minutes), or while
