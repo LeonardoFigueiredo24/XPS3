@@ -85,7 +85,75 @@ namespace utils
 	constexpr int c_mfd_huge_2mb = 0;
 #endif
 
-#ifdef _WIN32
+#if defined(_WIN32) && defined(RPCS3_UWP)
+	// UWP apps may only create executable memory through the *FromApp APIs (with the
+	// codeGeneration capability). Executable views of a file mapping are refused (tested:
+	// ERROR_INVALID_PARAMETER), so map them writable first and then change protection.
+	namespace uwp_mem
+	{
+		constexpr DWORD exec_mask = PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+
+		inline PVOID virtual_alloc(PVOID addr, SIZE_T size, DWORD type, DWORD prot)
+		{
+			if (!(prot & exec_mask))
+				return ::VirtualAllocFromApp(addr, size, type, prot);
+
+			PVOID ret = ::VirtualAllocFromApp(addr, size, type, PAGE_READWRITE);
+			ULONG old;
+			if (ret && (type & MEM_COMMIT) && !::VirtualProtectFromApp(ret, size, prot, &old))
+				return nullptr;
+			return ret;
+		}
+
+		inline BOOL virtual_protect(PVOID addr, SIZE_T size, DWORD prot, PDWORD old)
+		{
+			return ::VirtualProtectFromApp(addr, size, prot, reinterpret_cast<PULONG>(old));
+		}
+
+		inline HANDLE create_file_mapping(HANDLE file, LPSECURITY_ATTRIBUTES sa, DWORD prot, DWORD size_hi, DWORD size_lo, LPCWSTR name)
+		{
+			return ::CreateFileMappingFromApp(file, sa, prot, (ULONG64{size_hi} << 32) | size_lo, name);
+		}
+
+		inline PVOID map_view_3(HANDLE h, HANDLE process, PVOID base, ULONG64 off, SIZE_T size, ULONG type, ULONG prot, MEM_EXTENDED_PARAMETER* params, ULONG count)
+		{
+			if (!(prot & exec_mask))
+				return ::MapViewOfFile3FromApp(h, process, base, off, size, type, prot, params, count);
+
+			const ULONG data_prot = prot == PAGE_EXECUTE_WRITECOPY ? PAGE_WRITECOPY : PAGE_READWRITE;
+			PVOID ret = ::MapViewOfFile3FromApp(h, process, base, off, size, type, data_prot, params, count);
+			ULONG old;
+			if (ret && !::VirtualProtectFromApp(ret, size, prot, &old))
+			{
+				::UnmapViewOfFile2(process, ret, (type & MEM_REPLACE_PLACEHOLDER) ? MEM_PRESERVE_PLACEHOLDER : 0);
+				return nullptr;
+			}
+			return ret;
+		}
+
+		inline PVOID map_view_ex(HANDLE h, DWORD access, DWORD off_hi, DWORD off_lo, SIZE_T size, PVOID base)
+		{
+			ULONG prot = (access & FILE_MAP_COPY) == FILE_MAP_COPY ? PAGE_WRITECOPY : (access & FILE_MAP_WRITE) ? PAGE_READWRITE : PAGE_READONLY;
+			if (access & FILE_MAP_EXECUTE)
+				prot = prot == PAGE_WRITECOPY ? PAGE_EXECUTE_WRITECOPY : prot == PAGE_READWRITE ? PAGE_EXECUTE_READWRITE : PAGE_EXECUTE_READ;
+			return map_view_3(h, ::GetCurrentProcess(), base, (ULONG64{off_hi} << 32) | off_lo, size, 0, prot, nullptr, 0);
+		}
+	}
+
+#define VirtualAlloc utils::uwp_mem::virtual_alloc
+#define VirtualProtect utils::uwp_mem::virtual_protect
+#define CreateFileMappingW utils::uwp_mem::create_file_mapping
+#define MapViewOfFileEx utils::uwp_mem::map_view_ex
+
+	inline constexpr auto VirtualAlloc2 = &::VirtualAlloc2FromApp;
+	inline constexpr auto MapViewOfFile3 = &uwp_mem::map_view_3;
+	inline constexpr auto UnmapViewOfFile2 = &::UnmapViewOfFile2;
+
+	bool has_win10_memory_mapping_api()
+	{
+		return true;
+	}
+#elif defined(_WIN32)
 	DYNAMIC_IMPORT("KernelBase.dll", VirtualAlloc2, PVOID(HANDLE Process, PVOID Base, SIZE_T Size, ULONG AllocType, ULONG Prot, MEM_EXTENDED_PARAMETER*, ULONG));
 	DYNAMIC_IMPORT("KernelBase.dll", MapViewOfFile3, PVOID(HANDLE Handle, HANDLE Process, PVOID Base, ULONG64 Off, SIZE_T ViewSize, ULONG AllocType, ULONG Prot, MEM_EXTENDED_PARAMETER*, ULONG));
 	DYNAMIC_IMPORT("KernelBase.dll", UnmapViewOfFile2, BOOL(HANDLE Process, PVOID BaseAddress, ULONG UnmapFlags));
@@ -94,6 +162,8 @@ namespace utils
 	{
 		return VirtualAlloc2 && MapViewOfFile3 && UnmapViewOfFile2;
 	}
+#endif
+#ifdef _WIN32
 
 	struct map_info_t
 	{
