@@ -38,6 +38,7 @@
 #include "util/sysinfo.hpp"
 #include "util/video_source.h"
 
+#include <cstdio>
 #include <deque>
 #include <functional>
 #include <map>
@@ -50,6 +51,8 @@
 // Firmware library list (Emu/Cell/PPUModule.cpp): true = HLE by default.
 extern const std::map<std::string_view, int> g_prx_list;
 
+LOG_CHANNEL(vk_drv_log, "DZN");
+extern "C" void (*uwp_vkshim_log)(const char* where, const char* text);
 LOG_CHANNEL(sys_log, "SYS");
 
 extern std::string g_android_executable_dir;
@@ -338,6 +341,29 @@ namespace
 			fs::create_path(g_android_cache_dir);
 
 			static std::unique_ptr<logs::listener> log_file = logs::make_file_listener(g_android_config_dir + "RPCS3.log", 256 * 1024 * 1024);
+
+			// Any fatal log line (e.g. a dying RSX thread, which doesn't stop the emulator) turns the screen red.
+			struct fatal_listener final : logs::listener
+			{
+				void log(u64, const logs::message& msg, std::string_view, std::string_view) override
+				{
+					if (logs::level{msg} == logs::level::fatal)
+						g_state = shell_state::failed;
+				}
+			};
+			static fatal_listener s_fatal_listener;
+			logs::listener::add(&s_fatal_listener);
+
+			// Mesa's own messages (shader compiler, D3D12 failures) go to stderr; keep them in LocalState.
+			if (FILE* f = std::freopen((g_local_dir + "mesa.log").c_str(), "w", stderr))
+				std::setvbuf(f, nullptr, _IONBF, 0);
+			_putenv_s("MESA_LOG_LEVEL", "info");
+
+			// Errors and warnings from the Vulkan driver (Mesa Dozen), with Mesa's source file:line.
+			uwp_vkshim_log = [](const char* where, const char* text)
+			{
+				vk_drv_log.error("%s: %s", where, text);
+			};
 
 			sys_log.always()("RPCS3 UWP shell starting");
 			sys_log.always()("%s", utils::get_system_info());

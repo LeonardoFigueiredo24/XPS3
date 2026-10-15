@@ -1,5 +1,21 @@
+diff --git a/src/microsoft/vulkan/dzn_cmd_buffer.c b/src/microsoft/vulkan/dzn_cmd_buffer.c
+index fd85f88..1e8fe73 100644
+--- a/src/microsoft/vulkan/dzn_cmd_buffer.c
++++ b/src/microsoft/vulkan/dzn_cmd_buffer.c
+@@ -1078,8 +1078,10 @@ dzn_EndCommandBuffer(VkCommandBuffer commandBuffer)
+       dzn_cmd_buffer_gather_events(cmdbuf);
+       dzn_cmd_buffer_gather_queries(cmdbuf);
+       HRESULT hres = ID3D12GraphicsCommandList1_Close(cmdbuf->cmdlist);
+-      if (FAILED(hres))
++      if (FAILED(hres)) {
++         mesa_loge("dzn: ID3D12GraphicsCommandList::Close failed: 0x%08x", (unsigned)hres);
+          vk_command_buffer_set_error(&cmdbuf->vk, VK_ERROR_OUT_OF_HOST_MEMORY);
++      }
+    }
+ 
+    return vk_command_buffer_end(&cmdbuf->vk);
 diff --git a/src/microsoft/vulkan/dzn_device.c b/src/microsoft/vulkan/dzn_device.c
-index 4a4dde5..d068ed9 100644
+index 4a4dde5..efe9cc7 100644
 --- a/src/microsoft/vulkan/dzn_device.c
 +++ b/src/microsoft/vulkan/dzn_device.c
 @@ -153,6 +153,7 @@ dzn_physical_device_get_extensions(struct dzn_physical_device *pdev)
@@ -10,7 +26,18 @@ index 4a4dde5..d068ed9 100644
        .EXT_subgroup_size_control             = true,
        .EXT_vertex_attribute_divisor          = true,
        .EXT_memory_budget                     = true,
-@@ -808,6 +809,9 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
+@@ -446,6 +447,10 @@ dzn_physical_device_cache_caps(struct dzn_physical_device *pdev)
+    ID3D12Device1_CheckFeatureSupport(pdev->dev, D3D12_FEATURE_D3D12_OPTIONS15, &pdev->options15, sizeof(pdev->options15));
+    ID3D12Device1_CheckFeatureSupport(pdev->dev, D3D12_FEATURE_D3D12_OPTIONS16, &pdev->options16, sizeof(pdev->options16));
+    ID3D12Device1_CheckFeatureSupport(pdev->dev, D3D12_FEATURE_D3D12_OPTIONS17, &pdev->options17, sizeof(pdev->options17));
++   mesa_logi("dzn: %s: feature level 0x%x, shader model 0x%x, resource binding tier %d, enhanced barriers %d, 16-bit ops %d",
++             pdev->desc.description, pdev->feature_level, pdev->shader_model,
++             pdev->options.ResourceBindingTier, pdev->options12.EnhancedBarriersSupported,
++             pdev->options4.Native16BitShaderOpsSupported);
+    if (FAILED(ID3D12Device1_CheckFeatureSupport(pdev->dev, D3D12_FEATURE_D3D12_OPTIONS19, &pdev->options19, sizeof(pdev->options19)))) {
+       pdev->options19.MaxSamplerDescriptorHeapSize = D3D12_MAX_SHADER_VISIBLE_SAMPLER_HEAP_SIZE;
+       pdev->options19.MaxSamplerDescriptorHeapSizeWithStaticSamplers = pdev->options19.MaxSamplerDescriptorHeapSize;
+@@ -808,6 +813,9 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
        .vertexAttributeInstanceRateDivisor = true,
        .vertexAttributeInstanceRateZeroDivisor = true,
        .shaderReplicatedComposites         = true,

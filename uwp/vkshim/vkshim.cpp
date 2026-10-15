@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <vulkan/vulkan.h>
 #include <cstring>
+#include <vector>
 
 extern "C"
 {
@@ -13,6 +14,9 @@ extern "C"
 	extern const size_t uwp_vk_count;
 	extern void* uwp_vk_ptrs[];
 	HMODULE WINAPI LoadPackagedLibrary(LPCWSTR name, DWORD reserved);
+
+	// Set by the app to receive driver errors/warnings (Mesa reports its source file:line as the prefix).
+	void (*uwp_vkshim_log)(const char* where, const char* text) = nullptr;
 }
 
 namespace
@@ -84,9 +88,40 @@ extern "C"
 		if (!fn)
 			return VK_ERROR_INCOMPATIBLE_DRIVER;
 
-		const VkResult res = fn(info, alloc, instance);
-		if (res == VK_SUCCESS)
-			resolve_all(*instance);
+		// Always enable VK_EXT_debug_report so driver errors reach the app log; there are no layers.
+		std::vector<const char*> exts(info->ppEnabledExtensionNames, info->ppEnabledExtensionNames + info->enabledExtensionCount);
+		bool has_report = false;
+		for (const char* e : exts)
+			has_report |= std::strcmp(e, VK_EXT_DEBUG_REPORT_EXTENSION_NAME) == 0;
+		if (!has_report)
+			exts.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
+
+		VkInstanceCreateInfo patched = *info;
+		patched.enabledLayerCount = 0;
+		patched.ppEnabledLayerNames = nullptr;
+		patched.enabledExtensionCount = static_cast<uint32_t>(exts.size());
+		patched.ppEnabledExtensionNames = exts.data();
+
+		const VkResult res = fn(&patched, alloc, instance);
+		if (res != VK_SUCCESS)
+			return res;
+
+		resolve_all(*instance);
+
+		VkDebugReportCallbackCreateInfoEXT cb{};
+		cb.sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT;
+		cb.flags = VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT | VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT;
+		cb.pfnCallback = [](VkDebugReportFlagsEXT, VkDebugReportObjectTypeEXT, uint64_t, size_t, int32_t, const char* prefix, const char* msg, void*) -> VkBool32
+		{
+			if (uwp_vkshim_log)
+				uwp_vkshim_log(prefix ? prefix : "", msg ? msg : "");
+			return VK_FALSE;
+		};
+		if (auto create = reinterpret_cast<PFN_vkCreateDebugReportCallbackEXT>(g_gipa(*instance, "vkCreateDebugReportCallbackEXT")))
+		{
+			VkDebugReportCallbackEXT handle;
+			create(*instance, &cb, nullptr, &handle); // Lives as long as the instance
+		}
 		return res;
 	}
 }
