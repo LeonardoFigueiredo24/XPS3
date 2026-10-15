@@ -711,6 +711,9 @@ namespace uwp_frontend
 
 		void scan_worker()
 		{
+			// Disk scans over brokered FromApp file APIs; keep them behind a running game.
+			thread_ctrl::scoped_priority low_prio(-1);
+
 			std::vector<game_entry> games;
 			std::vector<game_entry> programs;
 			std::vector<install_entry> installs;
@@ -1479,7 +1482,11 @@ namespace uwp_frontend
 		g_ui = new ui_state();
 		g_ui->settings = make_settings();
 		g_ready = true;
-		rescan();
+
+		// Remote test runs (LocalState/autoboot) boot straight away: don't scan the drives
+		// alongside the boot; the menu's refresh button scans later.
+		if (!fs::is_file(g_host.local_dir + "autoboot"))
+			rescan();
 	}
 
 	bool boot(const std::string& path)
