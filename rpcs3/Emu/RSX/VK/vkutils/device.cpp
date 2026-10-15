@@ -730,9 +730,21 @@ namespace vk
 		device.ppEnabledExtensionNames = requested_extensions.data();
 		device.pEnabledFeatures = &enabled_features;
 
+		// Ask the driver which of the always-requested features it really has. Layered drivers
+		// such as Mesa Dozen (Vulkan on D3D12, used by the Xbox build) lack some of them.
+		VkPhysicalDeviceShaderUniformBufferUnsizedArrayFeaturesEXT supported_ubo_unsized{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_UNIFORM_BUFFER_UNSIZED_ARRAY_FEATURES_EXT };
+		VkPhysicalDeviceVulkan12Features supported_vulkan12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, .pNext = &supported_ubo_unsized };
+		VkPhysicalDeviceFeatures2 supported_features2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &supported_vulkan12 };
+		vkGetPhysicalDeviceFeatures2(*pgpu, &supported_features2);
+
 		VkPhysicalDeviceVulkan12Features vulkan12_features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
-		vulkan12_features.runtimeDescriptorArray = VK_TRUE;
-		vulkan12_features.uniformBufferStandardLayout = VK_TRUE;
+		vulkan12_features.runtimeDescriptorArray = supported_vulkan12.runtimeDescriptorArray;
+		vulkan12_features.uniformBufferStandardLayout = supported_vulkan12.uniformBufferStandardLayout;
+		if (!supported_vulkan12.runtimeDescriptorArray || !supported_vulkan12.uniformBufferStandardLayout)
+		{
+			rsx_log.error("Your GPU driver lacks runtimeDescriptorArray (%d) or uniformBufferStandardLayout (%d). Graphics may not render correctly.",
+				supported_vulkan12.runtimeDescriptorArray, supported_vulkan12.uniformBufferStandardLayout);
+		}
 		vulkan12_features.pNext = const_cast<void*>(device.pNext);
 		device.pNext = &vulkan12_features;
 
@@ -764,8 +776,15 @@ namespace vk
 		VkPhysicalDeviceShaderUniformBufferUnsizedArrayFeaturesEXT ubo_unsized_array_feature{};
 		ubo_unsized_array_feature.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_UNIFORM_BUFFER_UNSIZED_ARRAY_FEATURES_EXT;
 		ubo_unsized_array_feature.shaderUniformBufferUnsizedArray = VK_TRUE;
-		ubo_unsized_array_feature.pNext = const_cast<void*>(device.pNext);
-		device.pNext = &ubo_unsized_array_feature;
+		if (supported_ubo_unsized.shaderUniformBufferUnsizedArray)
+		{
+			ubo_unsized_array_feature.pNext = const_cast<void*>(device.pNext);
+			device.pNext = &ubo_unsized_array_feature;
+		}
+		else
+		{
+			rsx_log.error("Your GPU driver does not support unsized uniform buffer arrays. The shader interpreter will not work.");
+		}
 
 		VkPhysicalDeviceCustomBorderColorFeaturesEXT custom_border_color_features{};
 		if (pgpu->custom_border_color_support)
