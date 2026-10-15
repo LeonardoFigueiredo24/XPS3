@@ -65,6 +65,15 @@ namespace rsx
 					return;
 				}
 
+				if (RSX(ctx)->new_get_put != u64{umax})
+				{
+					// The guest is resetting FIFO GET/PUT (sys_rsx_context_attribute 0x1) and waits
+					// for the RSX to take it: drop this wait instead of blocking the caller until the
+					// 1 s driver timeout (vsh does this once while booting the XMB).
+					rsx_log.warning("nv406e::semaphore_acquire abandoned for a FIFO reset. semaphore_address=0x%X", addr);
+					break;
+				}
+
 				if (const auto tdr = static_cast<u64>(g_cfg.video.driver_recovery_timeout))
 				{
 					const u64 current = get_system_time();
