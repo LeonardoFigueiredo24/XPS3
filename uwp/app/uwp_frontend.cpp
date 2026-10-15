@@ -564,6 +564,10 @@ namespace uwp_frontend
 
 			std::sort(games.begin(), games.end(), [](const game_entry& a, const game_entry& b) { return a.title < b.title; });
 
+			// The PS3 system menu (XMB) once firmware is installed, as desktop RPCS3's "Boot VSH".
+			if (const std::string vsh = g_cfg_vfs.get_dev_flash() + "vsh/module/vsh.self"; fs::is_file(vsh))
+				games.insert(games.begin(), {"PS3 System Menu (XMB)", "from the installed firmware", vsh});
+
 			// Loose programs in LocalState/boot, then the bundled test programs.
 			for (const auto& e : fs::dir(boot_dir))
 			{
