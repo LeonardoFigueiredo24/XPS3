@@ -442,7 +442,9 @@ namespace
 			IDXGISwapChain1* sc = nullptr;
 			ID3D11RenderTargetView* rtv = nullptr;
 			D3D_FEATURE_LEVEL fl = D3D_FEATURE_LEVEL_11_0;
-			if (SUCCEEDED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, &fl, 1, D3D11_SDK_VERSION, &dev, nullptr, &ctx)))
+			const HRESULT hr_dev = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, &fl, 1, D3D11_SDK_VERSION, &dev, nullptr, &ctx);
+			sys_log.notice("UWP: D3D11CreateDevice: 0x%08x", static_cast<u32>(hr_dev));
+			if (SUCCEEDED(hr_dev))
 			{
 				IDXGIDevice* dxdev = nullptr;
 				IDXGIAdapter* adapter = nullptr;
@@ -459,7 +461,9 @@ namespace
 				desc.BufferCount = 2;
 				desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
 				desc.Scaling = DXGI_SCALING_STRETCH;
-				if (SUCCEEDED(factory->CreateSwapChainForCoreWindow(dev, reinterpret_cast<IUnknown*>(window), &desc, nullptr, &sc)))
+				const HRESULT hr_sc = factory->CreateSwapChainForCoreWindow(dev, reinterpret_cast<IUnknown*>(window), &desc, nullptr, &sc);
+				sys_log.notice("UWP: CreateSwapChainForCoreWindow: 0x%08x", static_cast<u32>(hr_sc));
+				if (SUCCEEDED(hr_sc))
 				{
 					ID3D11Texture2D* backbuffer = nullptr;
 					sc->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&backbuffer));
@@ -482,7 +486,15 @@ namespace
 				static const float blue[4] = {0.10f, 0.25f, 0.60f, 1}, green[4] = {0.10f, 0.55f, 0.20f, 1}, red[4] = {0.70f, 0.12f, 0.12f, 1};
 				const shell_state st = g_state;
 				ctx->ClearRenderTargetView(rtv, st == shell_state::failed ? red : st == shell_state::finished ? green : blue);
-				sc->Present(1, 0);
+				const HRESULT hr_present = sc->Present(1, 0);
+
+				static u32 frames = 0;
+				static shell_state last_logged = shell_state::booting;
+				if (++frames == 1 || FAILED(hr_present) || st != last_logged)
+				{
+					sys_log.notice("UWP: frame %u, state %u, Present: 0x%08x", frames, static_cast<u32>(st), static_cast<u32>(hr_present));
+					last_logged = st;
+				}
 			}
 			return S_OK;
 		}
