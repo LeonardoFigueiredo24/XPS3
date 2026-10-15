@@ -910,9 +910,55 @@ bool jit_compiler::try_add(std::unique_ptr<llvm::Module> _module, std::string& e
 	return true;
 }
 
+static shared_mutex s_prefetch_mutex;
+static std::unordered_map<std::string, std::unique_ptr<llvm::MemoryBuffer>> s_prefetched;
+
+void jit_compiler::prefetch(const std::vector<std::string>& paths)
+{
+	if (paths.size() < 2)
+	{
+		return;
+	}
+
+	atomic_t<usz> next = 0;
+	const u32 count = std::min<u32>(::size32(paths), std::max<u32>(utils::get_thread_count(), 2));
+
+	named_thread_group workers("LLVM Prefetch ", count, [&]
+	{
+		for (usz i; (i = next++) < paths.size();)
+		{
+			auto buf = ObjectCache::load(paths[i]);
+
+			if (!buf)
+			{
+				continue;
+			}
+
+			std::lock_guard lock(s_prefetch_mutex);
+			s_prefetched[paths[i]] = std::move(buf);
+		}
+	});
+
+	workers.join();
+}
+
 bool jit_compiler::add(const std::string& path)
 {
-	auto cache = ObjectCache::load(path);
+	std::unique_ptr<llvm::MemoryBuffer> cache;
+	{
+		std::lock_guard lock(s_prefetch_mutex);
+
+		if (auto found = s_prefetched.find(path); found != s_prefetched.end())
+		{
+			cache = std::move(found->second);
+			s_prefetched.erase(found);
+		}
+	}
+
+	if (!cache)
+	{
+		cache = ObjectCache::load(path);
+	}
 
 	if (!cache)
 	{

@@ -5816,6 +5816,7 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 	}
 
 	bool failed_to_load = false;
+	u64 load_start = 0;
 	{
 		if (!is_being_used_in_emulation || (cpu ? cpu->state.all_of(cpu_flag::exit) : Emu.IsStopped()))
 		{
@@ -5833,6 +5834,23 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 		usz mod_index = umax;
 
 		ppu_log.notice("Loading %u modules", link_workload.size());
+
+		load_start = get_system_time();
+
+		// Read and unpack the cached objects in parallel; adding them stays in order.
+		if (link_workload.size() > 1)
+		{
+			std::vector<std::string> paths;
+			paths.reserve(link_workload.size());
+
+			for (const auto& [obj_name, is_compiled] : link_workload)
+			{
+				paths.emplace_back(cache_path + obj_name);
+			}
+
+			jit_compiler::prefetch(paths);
+			ppu_log.notice("Read %u module files in %.3fs", paths.size(), (get_system_time() - load_start) / 1'000'000.);
+		}
 
 		for (const auto& [obj_name, is_compiled] : link_workload)
 		{
@@ -5871,6 +5889,9 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 	{
 		return compiled_new;
 	}
+
+	const u64 link_start = get_system_time();
+	ppu_log.notice("Loaded %u modules in %.3fs", link_workload.size(), (link_start - load_start) / 1'000'000.);
 
 	// Jit can be null if the loop doesn't ever enter.
 #ifdef __APPLE__
@@ -5953,6 +5974,8 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 		sym_worker();
 #endif
 	}
+
+	ppu_log.notice("Linked and resolved PPU modules in %.3fs", (get_system_time() - link_start) / 1'000'000.);
 
 	// Find a BLR-only function in order to copy it to all BLRs (some games need it)
 	for (const auto& func : info.get_funcs())

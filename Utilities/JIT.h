@@ -576,6 +576,10 @@ public:
 	// Add object (path to obj file)
 	bool add(const std::string& path);
 
+	// Read and unpack cached object files on several threads ahead of add(path), which then
+	// takes the prepared buffer (loading is otherwise one file at a time).
+	static void prefetch(const std::vector<std::string>& paths);
+
 	// Update global mapping for a single value
 	void update_global_mapping(const std::string& name, u64 addr);
 
