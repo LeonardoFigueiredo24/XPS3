@@ -8,6 +8,7 @@
 #include "uwp_input.h"
 
 #include "Emu/Io/pad_config.h"
+#include "Input/xinput_pad_handler.h"
 #include "Emu/system_utils.hpp"
 #include "Utilities/File.h"
 #include "util/logs.hpp"
@@ -396,17 +397,26 @@ void uwp_input_attach_view()
 void uwp_input_default_config()
 {
 	const std::string path = rpcs3::utils::get_input_config_dir() + g_cfg_input_configs.default_config + ".yml";
-	// Keep a config that already maps controllers (an earlier run wrote it, or a user edited it).
-	// Builds without controller support ran with every pad on Null; replace those.
-	if (fs::file f(path); f && f.to_string().find("Handler: XInput") != umax)
-		return;
+
+	// Earlier builds wrote the file with every button binding empty (the XInput handler's
+	// defaults were never applied) or with every pad on Null, so the XMB got no input. Rewrite those.
+	if (fs::is_file(path))
+	{
+		g_cfg_input.load("", g_cfg_input_configs.default_config);
+		if (!g_cfg_input.player[0]->config.cross.to_string().empty())
+			return;
+		uwp_input_log.warning("Input config has no button bindings, rewriting it: %s", path);
+	}
 
 	g_cfg_input.from_default();
+	xinput_pad_handler xinput;
 	for (u32 i = 0; i < XUSER_MAX_COUNT; i++)
 	{
 		g_cfg_input.player[i]->handler.set(pad_handler::xinput);
 		g_cfg_input.player[i]->device.from_string(fmt::format("XInput Pad #%u", i + 1));
 		g_cfg_input.player[i]->buddy_device.from_string("");
+		// Standard XInput mapping (A = Cross, ...); PS = Guide or View + Menu (Guide is the console's).
+		xinput.init_config(&g_cfg_input.player[i]->config);
 	}
 	g_cfg_input.save("", g_cfg_input_configs.default_config);
 	uwp_input_log.notice("Wrote default input config with controllers 1-4: %s", path);
