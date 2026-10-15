@@ -7,6 +7,7 @@
 // While a game boots or runs the screen shows its frames, or a status color when there are
 // none: blue = booting/running, green = exited cleanly, red = boot failed or fatal error.
 
+#include <algorithm>
 #include "stdafx.h"
 #include "winrt_min.h"
 #include "uwp_frontend.h"
@@ -332,6 +333,24 @@ namespace
 		g_emu_callbacks.make_video_source = []() -> std::unique_ptr<video_source> { return nullptr; };
 		g_emu_callbacks.enable_gamemode = [](bool) {};
 		g_emu_callbacks.get_database_config = [](const std::string&) -> std::string { return {}; };
+
+		// Desktop resolves paths with Qt's canonicalFilePath (forward slashes, no trailing slash,
+		// empty if missing). Boot code relies on that, e.g. "/dev_flash" + path.substr(resolved
+		// dev_flash size) for firmware executables, which lost its '/' with the default callback.
+		g_emu_callbacks.resolve_path_may_not_exist = [](std::string_view sv) -> std::string
+		{
+			std::string path(sv);
+			std::replace(path.begin(), path.end(), '\\', '/');
+			while (path.size() > 1 && path.back() == '/' && !(path.size() == 3 && path[1] == ':'))
+				path.pop_back();
+			return path;
+		};
+		g_emu_callbacks.resolve_path = [](std::string_view sv) -> std::string
+		{
+			if (!fs::exists(std::string(sv)))
+				return {};
+			return g_emu_callbacks.resolve_path_may_not_exist(sv);
+		};
 	}
 
 	DWORD WINAPI emulator_thread(void*)
