@@ -120,7 +120,10 @@ namespace rsx
 			{
 				result.font_names.emplace_back("Arial.ttf");
 				result.font_names.emplace_back("arial.ttf");
-#ifdef __APPLE__
+#if defined(RPCS3_UWP)
+				// Xbox has no system fonts reachable from a UWP app; the package ships DejaVu Sans.
+				result.font_names.emplace_back("DejaVuSans.ttf");
+#elif defined(__APPLE__)
 				result.font_names.emplace_back("DejaVuSans.ttf");
 				result.font_names.emplace_back("NotoSans-Regular.ttf");
 				result.font_names.emplace_back("Roboto-Regular.ttf");
@@ -157,6 +160,9 @@ namespace rsx
 				result.font_names.emplace_back("simsun.ttc");
 				result.font_names.emplace_back("SimsunExtG.ttf");
 #endif
+#ifdef RPCS3_UWP
+				result.font_names.emplace_back("DejaVuSans.ttf"); // No CJK glyphs, but avoids a fatal error
+#endif
 				break;
 			}
 			case language_class::hangul:
@@ -170,6 +176,9 @@ namespace rsx
 				// Known system font as last fallback
 				result.font_names.emplace_back("Malgun Gothic.ttf");
 				result.font_names.emplace_back("malgun.ttf");
+#ifdef RPCS3_UWP
+				result.font_names.emplace_back("DejaVuSans.ttf"); // No CJK glyphs, but avoids a fatal error
+#endif
 				break;
 			}
 			}

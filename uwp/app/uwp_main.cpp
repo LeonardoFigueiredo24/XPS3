@@ -319,7 +319,7 @@ namespace
 		g_emu_callbacks.play_sound = [](const std::string&, std::optional<f32>) {};
 		g_emu_callbacks.get_image_info = [](const std::string&, std::string&, s32&, s32&, s32&) { return false; };
 		g_emu_callbacks.get_scaled_image = [](const std::string&, s32, s32, s32&, s32&, u8*, bool) { return false; };
-		g_emu_callbacks.get_font_dirs = []() { return std::vector<std::string>{}; };
+		g_emu_callbacks.get_font_dirs = []() { return std::vector<std::string>{get_package_dir() + "fonts/"}; };
 		g_emu_callbacks.on_install_pkgs = [](const std::vector<std::string>&, bool) { return false; };
 		g_emu_callbacks.add_breakpoint = [](u32) {};
 		g_emu_callbacks.display_sleep_control_supported = []() { return false; };
@@ -368,8 +368,9 @@ namespace
 			if (FILE* f = std::freopen((g_local_dir + "mesa.log").c_str(), "w", stderr))
 				std::setvbuf(f, nullptr, _IONBF, 0);
 			_putenv_s("MESA_LOG_LEVEL", "info");
-			// D3D12 debug layer for Dozen, if the console has it; LocalState/no_d3d12_debug turns it off.
-			if (!fs::is_file(g_local_dir + "no_d3d12_debug"))
+			// D3D12 debug layer for Dozen only on request (LocalState/d3d12_debug). On the Xbox it is
+			// only partly present and runs since it was enabled by default (builds 12-18) hit heap corruption.
+			if (fs::is_file(g_local_dir + "d3d12_debug"))
 				_putenv_s("DZN_DEBUG", "d3d12");
 
 			// Errors and warnings from the Vulkan driver (Mesa Dozen), with Mesa's source file:line.
