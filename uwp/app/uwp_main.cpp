@@ -576,6 +576,7 @@ namespace
 			g_cfg.video.perf_overlay.font_size.set(14);
 			g_cfg.video.perf_overlay.margin_x.set(3);
 			g_cfg.video.perf_overlay.margin_y.set(4);
+			g_cfg.video.perf_overlay.opacity.set(90); // the XMB clock under it showed through at 70
 			if (!fs::is_file(g_local_dir + "stats_overlay_defaults"))
 			{
 				g_cfg.video.perf_overlay.level.set(detail_level::high);
