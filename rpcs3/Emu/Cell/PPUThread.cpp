@@ -4119,6 +4119,14 @@ extern void ppu_finalize(const ppu_module<lv2_obj>& info, bool force_mem_release
 #endif
 }
 
+// Set by a caller that precompiles while a program runs: libraries only. Executables are
+// precompiled by swapping out the main module, which must not happen under a running program.
+thread_local bool g_ppu_precompile_prx_only = false;
+
+// Set on background compile workers: compile on the calling thread only, holding one JIT core,
+// so the running game's own compiles are never starved of cores.
+static thread_local bool g_ppu_compile_background = false;
+
 extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_module<lv2_obj>*>* loaded_modules, bool is_fast_compilation)
 {
 	if (g_cfg.core.ppu_decoder != ppu_decoder_type::llvm)
@@ -4130,6 +4138,8 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_
 	{
 		return;
 	}
+
+	const bool prx_only = g_ppu_precompile_prx_only;
 
 	std::optional<scoped_progress_dialog> progress_dialog(std::in_place, get_localized_string(localized_string_id::PROGRESS_DIALOG_SCANNING_PPU_EXECUTABLE));
 
@@ -4252,7 +4262,7 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_
 			}
 
 			// Check ELF filename
-			if ((upper.ends_with(".ELF") || upper.ends_with(".SELF")) && Emu.GetBoot() != dir_queue[i] + entry.name)
+			if ((upper.ends_with(".ELF") || upper.ends_with(".SELF")) && Emu.GetBoot() != dir_queue[i] + entry.name && !prx_only)
 			{
 				// Get full path
 				file_queue.emplace_back(dir_queue[i] + entry.name, 0, entry.size);
@@ -4302,7 +4312,7 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_
 									continue;
 								}
 
-								if (upper.find(".SELF") != umax || upper.find(".ELF") != umax)
+								if ((upper.find(".SELF") != umax || upper.find(".ELF") != umax) && !prx_only)
 								{
 									// .self inside .mself found
 									file_queue.emplace_back(dir_queue[i] + entry.name, rec.off, rec.size);
@@ -4395,9 +4405,10 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_
 		}
 	}
 
-	named_thread_group workers("SPRX Worker ", std::min<u32>(software_thread_limit, cpu_thread_limit), [&]
+	named_thread_group workers("SPRX Worker ", prx_only ? 1u : std::min<u32>(software_thread_limit, cpu_thread_limit), [&]
 	{
 		jit_write_guard jit_guard;
+		g_ppu_compile_background = prx_only;
 
 		// Set low priority
 		thread_ctrl::scoped_priority low_prio(-1);
@@ -4598,6 +4609,12 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_
 				{
 					continue;
 				}
+			}
+
+			if (prx_only)
+			{
+				ppu_log.notice("Failed to precompile '%s' (prx: %s, ovl: %s), libraries only", path, prx_err, ovl_err);
+				continue;
 			}
 
 			ppu_log.notice("Failed to precompile '%s' (prx: %s, ovl: %s): Attempting compilation as executable file", path, prx_err, ovl_err);
@@ -5668,7 +5685,7 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 
 		*progress_dialog = get_localized_string(localized_string_id::PROGRESS_DIALOG_COMPILING_PPU_MODULES);
 
-		const u32 thread_count = std::max<u32>(std::min<u32>(::size32(workload), rpcs3::utils::get_max_threads()), 1) - 1;
+		const u32 thread_count = g_ppu_compile_background ? 0 : std::max<u32>(std::min<u32>(::size32(workload), rpcs3::utils::get_max_threads()), 1) - 1;
 
 		struct thread_index_allocator
 		{
@@ -5816,6 +5833,7 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 	}
 
 	bool failed_to_load = false;
+	u64 load_start = 0;
 	{
 		if (!is_being_used_in_emulation || (cpu ? cpu->state.all_of(cpu_flag::exit) : Emu.IsStopped()))
 		{
@@ -5833,6 +5851,23 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 		usz mod_index = umax;
 
 		ppu_log.notice("Loading %u modules", link_workload.size());
+
+		load_start = get_system_time();
+
+		// Read and unpack the cached objects in parallel; adding them stays in order.
+		if (link_workload.size() > 1)
+		{
+			std::vector<std::string> paths;
+			paths.reserve(link_workload.size());
+
+			for (const auto& [obj_name, is_compiled] : link_workload)
+			{
+				paths.emplace_back(cache_path + obj_name);
+			}
+
+			jit_compiler::prefetch(paths);
+			ppu_log.notice("Read %u module files in %.3fs", paths.size(), (get_system_time() - load_start) / 1'000'000.);
+		}
 
 		for (const auto& [obj_name, is_compiled] : link_workload)
 		{
@@ -5871,6 +5906,9 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 	{
 		return compiled_new;
 	}
+
+	const u64 link_start = get_system_time();
+	ppu_log.notice("Loaded %u modules in %.3fs", link_workload.size(), (link_start - load_start) / 1'000'000.);
 
 	// Jit can be null if the loop doesn't ever enter.
 #ifdef __APPLE__
@@ -5953,6 +5991,8 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 		sym_worker();
 #endif
 	}
+
+	ppu_log.notice("Linked and resolved PPU modules in %.3fs", (get_system_time() - link_start) / 1'000'000.);
 
 	// Find a BLR-only function in order to copy it to all BLRs (some games need it)
 	for (const auto& func : info.get_funcs())
