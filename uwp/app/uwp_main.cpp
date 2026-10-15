@@ -477,7 +477,7 @@ namespace
 
 			for (;;)
 			{
-				dispatcher->ProcessEvents(0 /* ProcessAllIfPresent */);
+				dispatcher->ProcessEvents(3 /* CoreProcessEventsOption::ProcessAllIfPresent: don't wait for input */);
 				if (!sc || !rtv)
 				{
 					Sleep(100);
