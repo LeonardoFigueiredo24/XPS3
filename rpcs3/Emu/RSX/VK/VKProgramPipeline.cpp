@@ -267,6 +267,8 @@ namespace vk
 			create_pipeline_layout();
 			ensure(m_pipeline_layout);
 
+			const auto pipe_start = std::chrono::steady_clock::now();
+
 			if (is_graphics_pipe)
 			{
 				VkGraphicsPipelineCreateInfo create_info = *p_graphics_info;
@@ -278,6 +280,16 @@ namespace vk
 				VkComputePipelineCreateInfo create_info = *p_compute_info;
 				create_info.layout = m_pipeline_layout;
 				CHECK_RESULT(vkCreateComputePipelines(m_device, pipeline_cache, 1, &create_info, nullptr, &m_pipeline));
+			}
+
+			// Startup stall timing: slow pipelines and a running total
+			{
+				static atomic_t<u64> s_count = 0, s_us = 0;
+				const u64 us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - pipe_start).count();
+				const u64 n = ++s_count, total = s_us += us;
+
+				if (us >= 50'000 || (n & (n - 1)) == 0)
+					rsx_log.always()("VK: %s pipeline took %.3fs (%u pipelines, %.3fs total)", is_graphics_pipe ? "graphics" : "compute", us / 1e6, n, total / 1e6);
 			}
 
 			m_linked = true;
