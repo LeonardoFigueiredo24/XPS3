@@ -9,9 +9,16 @@ set(CMAKE_RANLIB ${CMAKE_CURRENT_LIST_DIR}/zig-ranlib)
 find_program(CMAKE_RC_COMPILER NAMES llvm-windres llvm-windres-18 llvm-windres-19 llvm-windres-20)
 execute_process(COMMAND python3 -c "import ziglang, os; print(os.path.dirname(ziglang.__file__))"
     OUTPUT_VARIABLE ZIG_DIR OUTPUT_STRIP_TRAILING_WHITESPACE)
-set(CMAKE_RC_FLAGS_INIT "--target=pe-x86-64 -I${ZIG_DIR}/lib/libc/include/any-windows-any")
+# Case-insensitive include shims for mixed-case Windows header names.
+set(UWP_CASE_INCLUDES ${CMAKE_BINARY_DIR}/uwp-case-includes)
+if(NOT EXISTS ${UWP_CASE_INCLUDES})
+    execute_process(COMMAND python3 ${CMAKE_CURRENT_LIST_DIR}/mkcaselinks.py
+        ${ZIG_DIR}/lib/libc/include/any-windows-any ${CMAKE_CURRENT_LIST_DIR}/../.. ${UWP_CASE_INCLUDES})
+endif()
+set(CMAKE_RC_FLAGS_INIT "--target=pe-x86-64 -I${ZIG_DIR}/lib/libc/include/any-windows-any -I${UWP_CASE_INCLUDES}")
 # libpng generates pnglibconf with the C preprocessor and needs the bundled zlib headers.
-set(CMAKE_C_FLAGS_INIT "-I${CMAKE_CURRENT_LIST_DIR}/../../3rdparty/zlib/zlib")
+set(CMAKE_C_FLAGS_INIT "-I${CMAKE_CURRENT_LIST_DIR}/../../3rdparty/zlib/zlib -idirafter ${UWP_CASE_INCLUDES}")
+set(CMAKE_CXX_FLAGS_INIT "-idirafter ${UWP_CASE_INCLUDES}")
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
