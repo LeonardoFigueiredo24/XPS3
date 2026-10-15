@@ -1,5 +1,5 @@
 diff --git a/src/microsoft/vulkan/dzn_cmd_buffer.c b/src/microsoft/vulkan/dzn_cmd_buffer.c
-index fd85f88..857b0a7 100644
+index fd85f88..4524669 100644
 --- a/src/microsoft/vulkan/dzn_cmd_buffer.c
 +++ b/src/microsoft/vulkan/dzn_cmd_buffer.c
 @@ -30,6 +30,9 @@
@@ -154,6 +154,78 @@ index fd85f88..857b0a7 100644
        ID3D12GraphicsCommandList1_SetViewInstanceMask(cmdbuf->cmdlist, view_instance_mask);
  }
  
+@@ -3728,13 +3797,22 @@ dzn_cmd_buffer_triangle_fan_rewrite_index(struct dzn_cmd_buffer *cmdbuf,
+    return VK_SUCCESS;
+ }
+ 
+-static void
++static bool
+ dzn_cmd_buffer_prepare_draw(struct dzn_cmd_buffer *cmdbuf, bool indexed)
+ {
+    if (indexed)
+       dzn_cmd_buffer_update_ibview(cmdbuf);
+ 
+    dzn_cmd_buffer_update_pipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS);
++
++   /* A pipeline whose D3D12 state failed to create (logged at creation) can't draw;
++    * skip the draw instead of dereferencing a NULL pipeline. */
++   if (!cmdbuf->state.pipeline || !cmdbuf->state.pipeline->state) {
++      static unsigned skipped;
++      if (skipped++ < 8)
++         mesa_loge("dzn: skipping draw: no valid D3D12 pipeline state bound");
++      return false;
++   }
+    dzn_cmd_buffer_update_heaps(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS);
+    dzn_cmd_buffer_update_sysvals(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS);
+    dzn_cmd_buffer_update_viewports(cmdbuf);
+@@ -3749,6 +3827,7 @@ dzn_cmd_buffer_prepare_draw(struct dzn_cmd_buffer *cmdbuf, bool indexed)
+    /* Reset the dirty states */
+    cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].dirty &= DZN_CMD_BINDPOINT_DIRTY_HEAPS;
+    cmdbuf->state.dirty = 0;
++   return true;
+ }
+ 
+ static uint32_t
+@@ -4085,7 +4164,8 @@ dzn_cmd_buffer_indirect_draw(struct dzn_cmd_buffer *cmdbuf,
+       cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].dirty |=
+          DZN_CMD_BINDPOINT_DIRTY_SYSVALS;
+ 
+-      dzn_cmd_buffer_prepare_draw(cmdbuf, indexed);
++      if (!dzn_cmd_buffer_prepare_draw(cmdbuf, indexed))
++         continue;
+ 
+       ID3D12GraphicsCommandList1_ExecuteIndirect(cmdbuf->cmdlist, cmdsig,
+                                                  max_draw_count,
+@@ -5300,7 +5380,8 @@ dzn_CmdDraw(VkCommandBuffer commandBuffer,
+          cmdbuf->state.sysvals.gfx.view_index = view;
+          cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].dirty |=
+             DZN_CMD_BINDPOINT_DIRTY_SYSVALS;
+-         dzn_cmd_buffer_prepare_draw(cmdbuf, true);
++         if (!dzn_cmd_buffer_prepare_draw(cmdbuf, true))
++         continue;
+          ID3D12GraphicsCommandList1_DrawIndexedInstanced(cmdbuf->cmdlist, vertexCount, instanceCount, 0,
+                                                 firstVertex, firstInstance);
+       }
+@@ -5316,7 +5397,8 @@ dzn_CmdDraw(VkCommandBuffer commandBuffer,
+          cmdbuf->state.sysvals.gfx.view_index = view;
+          cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].dirty |=
+             DZN_CMD_BINDPOINT_DIRTY_SYSVALS;
+-         dzn_cmd_buffer_prepare_draw(cmdbuf, false);
++         if (!dzn_cmd_buffer_prepare_draw(cmdbuf, false))
++            continue;
+          ID3D12GraphicsCommandList1_DrawInstanced(cmdbuf->cmdlist, vertexCount, instanceCount,
+                                           firstVertex, firstInstance);
+       }
+@@ -5394,7 +5476,8 @@ dzn_CmdDrawIndexed(VkCommandBuffer commandBuffer,
+       cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].dirty |=
+          DZN_CMD_BINDPOINT_DIRTY_SYSVALS;
+ 
+-      dzn_cmd_buffer_prepare_draw(cmdbuf, true);
++      if (!dzn_cmd_buffer_prepare_draw(cmdbuf, true))
++         continue;
+       ID3D12GraphicsCommandList1_DrawIndexedInstanced(cmdbuf->cmdlist, indexCount, instanceCount, firstIndex,
+                                             vertexOffset, firstInstance);
+    }
 diff --git a/src/microsoft/vulkan/dzn_device.c b/src/microsoft/vulkan/dzn_device.c
 index 4a4dde5..c97ebc6 100644
 --- a/src/microsoft/vulkan/dzn_device.c
@@ -203,6 +275,35 @@ index 4a4dde5..c97ebc6 100644
     };
  }
  
+diff --git a/src/microsoft/vulkan/dzn_pipeline.c b/src/microsoft/vulkan/dzn_pipeline.c
+index 65ccc0e..7b8f058 100644
+--- a/src/microsoft/vulkan/dzn_pipeline.c
++++ b/src/microsoft/vulkan/dzn_pipeline.c
+@@ -2061,6 +2061,7 @@ dzn_graphics_pipeline_create(struct dzn_device *device,
+                                                &IID_ID3D12PipelineState,
+                                                (void **)&pipeline->base.state);
+       if (FAILED(hres)) {
++         mesa_loge("dzn: CreatePipelineState for a graphics pipeline failed: 0x%08x", (unsigned)hres);
+          ret = vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+          goto out;
+       }
+@@ -2236,10 +2237,12 @@ dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
+ 
+       update_stencil_state(pdev, pipeline, stream_buf, &masked_key);
+ 
+-      ASSERTED HRESULT hres = ID3D12Device4_CreatePipelineState(device->dev, &stream_desc,
+-                                                                &IID_ID3D12PipelineState,
+-                                                                (void**)(&variant->state));
+-      assert(!FAILED(hres));
++      HRESULT hres = ID3D12Device4_CreatePipelineState(device->dev, &stream_desc,
++                                                       &IID_ID3D12PipelineState,
++                                                       (void**)(&variant->state));
++      if (FAILED(hres))
++         mesa_loge("dzn: CreatePipelineState for a pipeline variant failed: 0x%08x (strip cut %d)",
++                   (unsigned)hres, (int)masked_key.ib_strip_cut);
+       he = _mesa_hash_table_insert(pipeline->variants, &variant->key, variant);
+       assert(he);
+    } else {
 diff --git a/src/microsoft/vulkan/dzn_private.h b/src/microsoft/vulkan/dzn_private.h
 index 9b1f5ab..d3aaaa0 100644
 --- a/src/microsoft/vulkan/dzn_private.h
