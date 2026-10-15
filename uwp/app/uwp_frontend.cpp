@@ -523,6 +523,16 @@ namespace uwp_frontend
 
 		std::unique_ptr<modal> g_pending_modal; // from worker threads, guarded by g_data_mutex
 
+		// Games-tab entry to select once it is listed (the last played game), guarded by g_data_mutex.
+		// Empty with g_select_pending set: select the top once the scan is done.
+		std::string g_select_path;
+		bool g_select_pending = true;
+
+		std::string last_game_file()
+		{
+			return g_host.local_dir + "rpcs3/last_game.txt";
+		}
+
 		// Running install job (firmware or package); done/total drive the progress bar.
 		std::unique_ptr<uwp_firmware::progress> g_job;
 		std::string g_job_title; // set on the UI thread before the job starts
@@ -1144,8 +1154,12 @@ namespace uwp_frontend
 			if (ui.current == tab::games)
 			{
 				const game_entry game = g_games[sel];
+				g_select_path = game.path;
 				lock.unlock();
 				ui_log.notice("UI: boot '%s' (%s)", game.title, game.path);
+				// Remembered so the next start of the app selects it again.
+				fs::write_file(last_game_file(), fs::rewrite, game.path);
+
 				set_status(fmt::format("Starting %s...", game.title), col_dim);
 				g_in_game = true;
 				g_host.run_on_main([game]()
@@ -1479,6 +1493,12 @@ namespace uwp_frontend
 		g_host = host;
 		g_ui = new ui_state();
 		g_ui->settings = make_settings();
+		{
+			std::lock_guard lock(g_data_mutex);
+			if (fs::file f{last_game_file()})
+				g_select_path = f.to_string();
+			g_select_pending = true;
+		}
 		g_ready = true;
 		rescan();
 	}
@@ -1615,6 +1635,21 @@ namespace uwp_frontend
 			{
 				ui.dialog = std::move(g_pending_modal);
 				ui.dirty = true;
+			}
+
+			// Start on the last played game once the list has it, else on the top entry.
+			if (g_select_pending)
+			{
+				const auto it = g_select_path.empty() ? g_games.end() :
+					std::find_if(g_games.begin(), g_games.end(), [](const game_entry& g) { return g.path == g_select_path; });
+				if (it != g_games.end() || !g_scanning)
+				{
+					const int idx = it == g_games.end() ? 0 : static_cast<int>(it - g_games.begin());
+					ui.sel[static_cast<int>(tab::games)] = idx;
+					ui.scroll[static_cast<int>(tab::games)] = std::max(0, idx - 2);
+					g_select_pending = false;
+					ui.dirty = true;
+				}
 			}
 		}
 
