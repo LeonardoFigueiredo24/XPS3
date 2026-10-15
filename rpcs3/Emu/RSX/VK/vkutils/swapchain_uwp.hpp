@@ -1,6 +1,9 @@
 #pragma once
 
 #include "swapchain_core.h"
+#include "util/logs.hpp"
+
+LOG_CHANNEL(uwp_present_log, "UWPPRESENT");
 
 // UWP has no Vulkan window-system integration (Dozen only presents to HWNDs). Frames are
 // copied to host memory like the other native swapchains and handed to the app shell,
@@ -10,8 +13,58 @@ extern void uwp_present_frame(const void* bgra_pixels, u32 width, u32 height);
 
 namespace vk
 {
+	void acquire_global_submit_lock();
+	void release_global_submit_lock();
+
 	class swapchain_UWP : public native_swapchain_base
 	{
+		// present() runs right after the frame's commands are submitted, before the GPU has
+		// copied the image to its host buffer. Reading it then shows an old or half-written
+		// frame (judder). Instead each present queues a fence behind the frame and hands the
+		// previous frame to the shell once its fence has signalled (one frame of latency).
+		std::vector<VkFence> m_fences;
+		s32 m_pending = -1;
+
+		// Frame pacing stats, logged every c_stats_frames presents.
+		static constexpr u32 c_stats_frames = 300;
+		u64 m_last_present_us = 0;
+		u64 m_interval_sum_us = 0, m_interval_max_us = 0, m_wait_sum_us = 0, m_copy_sum_us = 0;
+		u32 m_stats_count = 0;
+
+		static u64 now_us()
+		{
+			LARGE_INTEGER t, f;
+			QueryPerformanceCounter(&t);
+			QueryPerformanceFrequency(&f);
+			return static_cast<u64>(t.QuadPart) * 1000000 / static_cast<u64>(f.QuadPart);
+		}
+
+		void hand_over(u32 image)
+		{
+			const u64 t0 = now_us();
+			vkWaitForFences(dev, 1, &m_fences[image], VK_TRUE, 1'000'000'000ull);
+			const u64 t1 = now_us();
+			auto& src = swapchain_images[image];
+			uwp_present_frame(src.second->get_pixels(), m_width, m_height);
+			src.second->free_pixels();
+			src.first = false;
+			m_wait_sum_us += t1 - t0;
+			m_copy_sum_us += now_us() - t1;
+		}
+
+		void release_fences()
+		{
+			if (m_pending >= 0)
+			{
+				vkWaitForFences(dev, 1, &m_fences[m_pending], VK_TRUE, 1'000'000'000ull);
+				swapchain_images[m_pending].first = false;
+				m_pending = -1;
+			}
+			for (VkFence f : m_fences)
+				vkDestroyFence(dev, f, nullptr);
+			m_fences.clear();
+		}
+
 	public:
 		using native_swapchain_base::native_swapchain_base;
 
@@ -22,6 +75,13 @@ namespace vk
 
 			uwp_get_display_size(m_width, m_height);
 			init_swapchain_images(dev, 3);
+
+			m_fences.resize(swapchain_images.size());
+			for (VkFence& f : m_fences)
+			{
+				const VkFenceCreateInfo info{ .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+				vkCreateFence(dev, &info, nullptr, &f);
+			}
 			return true;
 		}
 
@@ -32,6 +92,7 @@ namespace vk
 
 		void destroy(bool full = true) override
 		{
+			release_fences();
 			swapchain_images.clear();
 
 			if (full)
@@ -40,10 +101,32 @@ namespace vk
 
 		VkResult present(VkSemaphore /*semaphore*/, u32 image) override
 		{
-			auto& src = swapchain_images[image];
-			uwp_present_frame(src.second->get_pixels(), m_width, m_height);
-			src.second->free_pixels();
-			src.first = false;
+			// Fence behind this frame's work (queue order: signals once the copy is done).
+			vkResetFences(dev, 1, &m_fences[image]);
+			acquire_global_submit_lock();
+			vkQueueSubmit(dev.get_graphics_queue(), 0, nullptr, m_fences[image]);
+			release_global_submit_lock();
+
+			if (m_pending >= 0)
+				hand_over(static_cast<u32>(m_pending));
+			m_pending = static_cast<s32>(image);
+
+			const u64 now = now_us();
+			if (m_last_present_us)
+			{
+				const u64 interval = now - m_last_present_us;
+				m_interval_sum_us += interval;
+				m_interval_max_us = std::max(m_interval_max_us, interval);
+				if (++m_stats_count == c_stats_frames)
+				{
+					uwp_present_log.notice(" %.1f fps avg, frame interval avg %.1f ms max %.1f ms, GPU wait %.2f ms, copy %.2f ms",
+						1e6 * m_stats_count / m_interval_sum_us, m_interval_sum_us / 1000.0 / m_stats_count, m_interval_max_us / 1000.0,
+						m_wait_sum_us / 1000.0 / m_stats_count, m_copy_sum_us / 1000.0 / m_stats_count);
+					m_stats_count = 0;
+					m_interval_sum_us = m_interval_max_us = m_wait_sum_us = m_copy_sum_us = 0;
+				}
+			}
+			m_last_present_us = now;
 			return VK_SUCCESS;
 		}
 	};

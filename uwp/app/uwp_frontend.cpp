@@ -564,6 +564,10 @@ namespace uwp_frontend
 
 			std::sort(games.begin(), games.end(), [](const game_entry& a, const game_entry& b) { return a.title < b.title; });
 
+			// The PS3 system menu (XMB) once firmware is installed, as desktop RPCS3's "Boot VSH".
+			if (const std::string vsh = g_cfg_vfs.get_dev_flash() + "vsh/module/vsh.self"; fs::is_file(vsh))
+				games.insert(games.begin(), {"PS3 System Menu (XMB)", "from the installed firmware", vsh});
+
 			// Loose programs in LocalState/boot, then the bundled test programs.
 			for (const auto& e : fs::dir(boot_dir))
 			{
@@ -668,8 +672,6 @@ namespace uwp_frontend
 				{"Write color buffers", &g_cfg.video.write_color_buffers, {"false", "true"}, "Needed by some games for correct visuals; costs speed."},
 				{"Performance overlay", &g_cfg.video.perf_overlay.enabled, {"false", "true"}, "Shows FPS and CPU usage in the corner."},
 #ifdef LLVM_AVAILABLE
-				{"PPU decoder", &g_cfg.core.ppu_decoder, {}, "Recompiler (LLVM) is much faster; the first boot of a game compiles its code."},
-				{"SPU decoder", &g_cfg.core.spu_decoder, {}, "Recompiler (LLVM) is the fastest; ASMJIT compiles quicker and uses less memory."},
 				{"LLVM compile threads", &g_cfg.core.llvm_threads, {"0", "1", "2", "3", "4", "6"}, "0 = automatic. Fewer threads use less memory while compiling."},
 #endif
 				{"Preferred SPU threads", &g_cfg.core.preferred_spu_threads, {"0", "1", "2", "3", "4", "5", "6"}, "0 = automatic."},

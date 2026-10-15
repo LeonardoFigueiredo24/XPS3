@@ -1,6 +1,7 @@
 # UWP shell executable for the Xbox port: CoreWindow app with a controller menu.
 add_executable(rpcs3_uwp WIN32
     uwp_main.cpp
+    uwp_input.cpp
     uwp_frontend.cpp
     uwp_firmware.cpp
     uwp_stubs.cpp

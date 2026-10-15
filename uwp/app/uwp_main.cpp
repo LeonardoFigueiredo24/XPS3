@@ -3,11 +3,14 @@
 // On launch it sets up RPCS3's folders in the app's LocalState and shows the controller
 // menu (uwp_frontend.cpp): game list, firmware installer, settings. An empty
 // LocalState/autoboot file skips the menu and boots the first program in LocalState/boot/
-// (or the bundled test ELF) like the earlier test builds. RPCS3.log goes to LocalState/rpcs3.
+// (or the bundled test ELF) like the earlier test builds, or the XMB if it contains "xmb".
+// With firmware installed and no LocalState/menu file, the XMB boots at startup. RPCS3.log goes to LocalState/rpcs3.
 // While a game boots or runs the screen shows its frames, or a status color when there are
 // none: blue = booting/running, green = exited cleanly, red = boot failed or fatal error.
 
 #include "stdafx.h"
+#include <algorithm>
+#include <winsock2.h>
 #include "winrt_min.h"
 #include "uwp_frontend.h"
 
@@ -33,6 +36,8 @@
 #include "Emu/Audio/AudioBackend.h"
 #include "Emu/Audio/Null/NullAudioBackend.h"
 #include "Emu/Audio/Null/null_enumerator.h"
+#include "Emu/Audio/XAudio2/XAudio2Backend.h"
+#include "uwp_input.h"
 #include "Input/pad_thread.h"
 #include "Utilities/File.h"
 #include "Utilities/Thread.h"
@@ -76,7 +81,11 @@ namespace
 
 	// Latest frame from the Vulkan renderer, picked up by the UI thread.
 	std::mutex g_frame_mutex;
-	std::vector<u8> g_frame_pixels;
+	// Triple buffer: the emulator fills g_frame_spare without the lock and swaps it into
+	// g_frame_pixels; the render loop swaps that out into its own buffer, so neither side
+	// holds the lock during an 8 MB copy.
+	std::vector<u8> g_frame_pixels, g_frame_spare;
+	std::mutex g_frame_spare_mutex; // only the emulator side; guards g_frame_spare
 	u32 g_frame_width = 0, g_frame_height = 0;
 	u64 g_frame_serial = 0;
 
@@ -266,7 +275,17 @@ namespace
 			ensure(g_fxo->init<named_thread<pad_thread>>(nullptr, nullptr, title_id));
 		};
 
-		g_emu_callbacks.get_audio = []() -> std::shared_ptr<AudioBackend> { return std::make_shared<NullAudioBackend>(); };
+		g_emu_callbacks.get_audio = []() -> std::shared_ptr<AudioBackend>
+		{
+			if (g_cfg.audio.renderer == audio_renderer::xaudio)
+			{
+				std::shared_ptr<AudioBackend> xaudio = std::make_shared<XAudio2Backend>();
+				if (xaudio->Initialized())
+					return xaudio;
+				sys_log.error("UWP: XAudio2 failed to start, no sound");
+			}
+			return std::make_shared<NullAudioBackend>();
+		};
 		g_emu_callbacks.get_audio_enumerator = [](u64) -> std::shared_ptr<audio_device_enumerator> { return std::make_shared<null_enumerator>(); };
 
 		g_emu_callbacks.init_gs_render = [](utils::serial* ar)
@@ -332,12 +351,39 @@ namespace
 		g_emu_callbacks.make_video_source = []() -> std::unique_ptr<video_source> { return nullptr; };
 		g_emu_callbacks.enable_gamemode = [](bool) {};
 		g_emu_callbacks.get_database_config = [](const std::string&) -> std::string { return {}; };
+
+		// Desktop resolves paths with Qt's canonicalFilePath (forward slashes, no trailing slash,
+		// empty if missing). Boot code relies on that, e.g. "/dev_flash" + path.substr(resolved
+		// dev_flash size) for firmware executables, which lost its '/' with the default callback.
+		g_emu_callbacks.resolve_path_may_not_exist = [](std::string_view sv) -> std::string
+		{
+			std::string path(sv);
+			std::replace(path.begin(), path.end(), '\\', '/');
+			while (path.size() > 1 && path.back() == '/' && !(path.size() == 3 && path[1] == ':'))
+				path.pop_back();
+			return path;
+		};
+		g_emu_callbacks.resolve_path = [](std::string_view sv) -> std::string
+		{
+			if (!fs::exists(std::string(sv)))
+				return {};
+			return g_emu_callbacks.resolve_path_may_not_exist(sv);
+		};
 	}
 
 	DWORD WINAPI emulator_thread(void*)
 	{
 		{
 			g_local_dir = get_local_state_dir();
+
+			// Desktop RPCS3 starts Winsock in main(); without it every guest socket call fails
+			// with WSANOTINITIALISED (10093), which sys_net treats as fatal (seen in the XMB).
+			{
+				WSADATA wsa_data{};
+				const int wsa_res = ::WSAStartup(MAKEWORD(2, 2), &wsa_data);
+				if (wsa_res != 0)
+					OutputDebugStringA("UWP: WSAStartup failed\n");
+			}
 			{
 				const std::string guard_log = g_local_dir + "heap_guard.log";
 				std::wstring wpath(guard_log.size() + 1, L'\0');
@@ -415,19 +461,28 @@ namespace
 			else if (g_cfg.video.renderer != video_renderer::null)
 				g_cfg.video.renderer.set(video_renderer::vulkan);
 			sys_log.always()("UWP: renderer: %s", g_cfg.video.renderer.get());
-			g_cfg.audio.renderer.set(audio_renderer::null);
+			// XAudio2 sound; an empty LocalState/null_audio file turns it off.
+			const bool null_audio = fs::is_file(g_local_dir + "null_audio");
+			g_cfg.audio.renderer.set(null_audio ? audio_renderer::null : audio_renderer::xaudio);
+			sys_log.always()("UWP: audio: %s", null_audio ? "null" : "XAudio2");
+			// Controllers 1-4 as PS3 pads 1-4 (written once; the XMB and games read it at boot).
+			uwp_input_default_config();
 			g_cfg.audio.music.set(music_handler::null);
 			g_cfg.io.camera.set(camera_handler::null);
 
+			// PPU on the LLVM recompiler when LLVM is linked, else the interpreter; SPU on the ASMJIT
+			// recompiler. Empty files in LocalState switch decoders for tests: ppu_interpreter,
+			// spu_interpreter, spu_llvm, or interpreter (both interpreters).
+			const bool all_interp = fs::is_file(g_local_dir + "interpreter");
+			const bool spu_interp = all_interp || fs::is_file(g_local_dir + "spu_interpreter");
 #ifdef LLVM_AVAILABLE
-			// PPU and SPU decoders come from config.yml (default: LLVM recompilers). An empty
-			// LocalState/interpreter file forces the interpreters, to tell JIT faults apart.
-			if (fs::is_file(g_local_dir + "interpreter"))
+			const bool ppu_llvm = !all_interp && !fs::is_file(g_local_dir + "ppu_interpreter");
+			const bool spu_llvm = !spu_interp && fs::is_file(g_local_dir + "spu_llvm");
+#else
+			const bool ppu_llvm = false, spu_llvm = false;
 #endif
-			{
-				g_cfg.core.ppu_decoder.set(ppu_decoder_type::_static);
-				g_cfg.core.spu_decoder.set(spu_decoder_type::_static);
-			}
+			g_cfg.core.ppu_decoder.set(ppu_llvm ? ppu_decoder_type::llvm : ppu_decoder_type::_static);
+			g_cfg.core.spu_decoder.set(spu_interp ? spu_decoder_type::_static : spu_llvm ? spu_decoder_type::llvm : spu_decoder_type::asmjit);
 			sys_log.always()("UWP: PPU decoder: %s, SPU decoder: %s, LLVM threads: %u",
 				g_cfg.core.ppu_decoder.get(), g_cfg.core.spu_decoder.get(), g_cfg.core.llvm_threads.get());
 
@@ -438,10 +493,21 @@ namespace
 				g_emu_callbacks.call_from_main_thread(std::move(func), nullptr);
 			}});
 
+			// With firmware installed the app boots the PS3 system menu (XMB) straight away;
+			// an empty LocalState/menu file opens the controller menu instead.
+			const std::string xmb_path = g_cfg_vfs.get_dev_flash() + "vsh/module/vsh.self";
 			if (fs::is_file(g_local_dir + "autoboot"))
 			{
-				const std::string target = find_boot_target();
+				fs::file f(g_local_dir + "autoboot");
+				const std::string what = f ? fmt::trim(f.to_string(), " \t\r\n") : std::string();
+				const std::string target = what == "xmb" ? xmb_path : find_boot_target();
 				if (!uwp_frontend::boot(target))
+					g_state = shell_state::failed;
+			}
+			else if (!fs::is_file(g_local_dir + "menu") && fs::is_file(xmb_path))
+			{
+				sys_log.always()("UWP: firmware installed, booting the XMB (create LocalState/menu to open the menu instead)");
+				if (!uwp_frontend::boot(xmb_path))
 					g_state = shell_state::failed;
 			}
 
@@ -534,6 +600,7 @@ namespace
 		HRESULT STDMETHODCALLTYPE Run() override
 		{
 			window->Activate();
+			uwp_input_attach_view();
 			winrt_min::ICoreDispatcher* dispatcher = nullptr;
 			window->get_Dispatcher(&dispatcher);
 
@@ -625,7 +692,8 @@ namespace
 				// Show the emulator's latest frame while it runs; otherwise the status color.
 				static u64 shown_serial = 0;
 				static ID3D11Texture2D* frame_tex = nullptr;
-				bool have_frame = false;
+				static std::vector<u8> shown_pixels;
+				bool have_frame = false, upload = false;
 				if (st == shell_state::running || st == shell_state::booting)
 				{
 					std::lock_guard lock(g_frame_mutex);
@@ -645,12 +713,15 @@ namespace
 						}
 						if (frame_tex && shown_serial != g_frame_serial)
 						{
-							ctx->UpdateSubresource(frame_tex, 0, nullptr, g_frame_pixels.data(), g_frame_width * 4, 0);
+							g_frame_pixels.swap(shown_pixels);
 							shown_serial = g_frame_serial;
+							upload = true;
 						}
 						have_frame = frame_tex != nullptr;
 					}
 				}
+				if (upload)
+					ctx->UpdateSubresource(frame_tex, 0, nullptr, shown_pixels.data(), c_display_width * 4, 0);
 
 				if (have_frame)
 				{
@@ -698,8 +769,10 @@ void uwp_get_display_size(u32& width, u32& height)
 
 void uwp_present_frame(const void* bgra_pixels, u32 width, u32 height)
 {
+	std::lock_guard spare_lock(g_frame_spare_mutex);
+	g_frame_spare.assign(static_cast<const u8*>(bgra_pixels), static_cast<const u8*>(bgra_pixels) + usz{width} * height * 4);
 	std::lock_guard lock(g_frame_mutex);
-	g_frame_pixels.assign(static_cast<const u8*>(bgra_pixels), static_cast<const u8*>(bgra_pixels) + usz{width} * height * 4);
+	g_frame_pixels.swap(g_frame_spare);
 	g_frame_width = width;
 	g_frame_height = height;
 	g_frame_serial++;
