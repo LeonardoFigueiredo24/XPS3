@@ -1,6 +1,8 @@
-# UWP shell executable for the Xbox port (milestone 1: headless boot with the null renderer).
+# UWP shell executable for the Xbox port: CoreWindow app with a controller menu.
 add_executable(rpcs3_uwp WIN32
     uwp_main.cpp
+    uwp_frontend.cpp
+    uwp_firmware.cpp
     uwp_stubs.cpp
     uwp_sysstubs.c
     uwp_heap_guard.cpp
@@ -29,7 +31,7 @@ target_include_directories(rpcs3_uwp PRIVATE
 
 target_compile_definitions(rpcs3_uwp PRIVATE UNICODE _UNICODE)
 target_link_libraries(rpcs3_uwp PRIVATE
-    rpcs3_emu 3rdparty::hidapi 3rdparty::libusb 3rdparty::stblib 3rdparty::opencv 3rdparty::fusion
+    rpcs3_emu 3rdparty::hidapi 3rdparty::zlib 3rdparty::libusb 3rdparty::stblib 3rdparty::opencv 3rdparty::fusion
     d3d11 dxgi winmm
     # WinRT activation/strings and the UWP *FromApp APIs (import libs from mkimplibs.sh)
     winrt_activation winrt_string uwp_memory_6 uwp_memory_5 uwp_memory_3 uwp_memory_1 uwp_file_fromapp)
