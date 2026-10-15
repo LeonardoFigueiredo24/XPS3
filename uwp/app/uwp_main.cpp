@@ -36,6 +36,8 @@
 #include "Emu/Audio/AudioBackend.h"
 #include "Emu/Audio/Null/NullAudioBackend.h"
 #include "Emu/Audio/Null/null_enumerator.h"
+#include "Emu/Audio/XAudio2/XAudio2Backend.h"
+#include "uwp_input.h"
 #include "Input/pad_thread.h"
 #include "Utilities/File.h"
 #include "Utilities/Thread.h"
@@ -269,7 +271,17 @@ namespace
 			ensure(g_fxo->init<named_thread<pad_thread>>(nullptr, nullptr, title_id));
 		};
 
-		g_emu_callbacks.get_audio = []() -> std::shared_ptr<AudioBackend> { return std::make_shared<NullAudioBackend>(); };
+		g_emu_callbacks.get_audio = []() -> std::shared_ptr<AudioBackend>
+		{
+			if (g_cfg.audio.renderer == audio_renderer::xaudio)
+			{
+				std::shared_ptr<AudioBackend> xaudio = std::make_shared<XAudio2Backend>();
+				if (xaudio->Initialized())
+					return xaudio;
+				sys_log.error("UWP: XAudio2 failed to start, no sound");
+			}
+			return std::make_shared<NullAudioBackend>();
+		};
 		g_emu_callbacks.get_audio_enumerator = [](u64) -> std::shared_ptr<audio_device_enumerator> { return std::make_shared<null_enumerator>(); };
 
 		g_emu_callbacks.init_gs_render = [](utils::serial* ar)
@@ -445,7 +457,12 @@ namespace
 			else if (g_cfg.video.renderer != video_renderer::null)
 				g_cfg.video.renderer.set(video_renderer::vulkan);
 			sys_log.always()("UWP: renderer: %s", g_cfg.video.renderer.get());
-			g_cfg.audio.renderer.set(audio_renderer::null);
+			// XAudio2 sound; an empty LocalState/null_audio file turns it off.
+			const bool null_audio = fs::is_file(g_local_dir + "null_audio");
+			g_cfg.audio.renderer.set(null_audio ? audio_renderer::null : audio_renderer::xaudio);
+			sys_log.always()("UWP: audio: %s", null_audio ? "null" : "XAudio2");
+			// Controllers 1-4 as PS3 pads 1-4 (written once; the XMB and games read it at boot).
+			uwp_input_default_config();
 			g_cfg.audio.music.set(music_handler::null);
 			g_cfg.io.camera.set(camera_handler::null);
 
@@ -567,6 +584,7 @@ namespace
 		HRESULT STDMETHODCALLTYPE Run() override
 		{
 			window->Activate();
+			uwp_input_attach_view();
 			winrt_min::ICoreDispatcher* dispatcher = nullptr;
 			window->get_Dispatcher(&dispatcher);
 

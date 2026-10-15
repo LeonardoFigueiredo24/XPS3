@@ -76,12 +76,15 @@ XAudio2Backend::XAudio2Backend()
 		XAudio.error("RegisterForCallbacks() failed: %s (0x%08x)", std::system_category().message(hr), static_cast<u32>(hr));
 	}
 
+#ifndef RPCS3_UWP
 	// Try to register a listener for device changes
+	// (UWP apps can't create MMDeviceEnumerator; XAudio2 follows the default device there by itself)
 	if (HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&enumerator)); FAILED(hr))
 	{
 		XAudio.error("CoCreateInstance() failed: %s (0x%08x)", std::system_category().message(hr), static_cast<u32>(hr));
 		return;
 	}
+#endif
 
 	// All succeeded, "commit"
 	m_xaudio2_instance = std::move(instance);
@@ -159,7 +162,10 @@ void XAudio2Backend::CloseUnlocked()
 		m_master_voice = nullptr;
 	}
 
-	m_device_enumerator->UnregisterEndpointNotificationCallback(this);
+	if (m_device_enumerator != nullptr)
+	{
+		m_device_enumerator->UnregisterEndpointNotificationCallback(this);
+	}
 
 	m_playing = false;
 	m_last_sample.fill(0);
@@ -211,7 +217,7 @@ bool XAudio2Backend::Open(std::string_view dev_id, AudioFreq freq, AudioSampleSi
 	const bool use_default_device = dev_id.empty() || dev_id == audio_device_enumerator::DEFAULT_DEV_ID;
 	std::string selected_dev_id{};
 
-	if (use_default_device)
+	if (use_default_device && m_device_enumerator != nullptr)
 	{
 		Microsoft::WRL::ComPtr<IMMDevice> default_dev{};
 		if (HRESULT hr = m_device_enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &default_dev); FAILED(hr))
@@ -236,7 +242,7 @@ bool XAudio2Backend::Open(std::string_view dev_id, AudioFreq freq, AudioSampleSi
 		}
 	}
 
-	if (HRESULT hr = m_xaudio2_instance->CreateMasteringVoice(&m_master_voice, 0, 0, 0, utf8_to_wchar(use_default_device ? selected_dev_id : dev_id).c_str()); FAILED(hr))
+	if (HRESULT hr = m_xaudio2_instance->CreateMasteringVoice(&m_master_voice, 0, 0, 0, selected_dev_id.empty() && use_default_device ? nullptr : utf8_to_wchar(use_default_device ? selected_dev_id : dev_id).c_str()); FAILED(hr))
 	{
 		XAudio.error("CreateMasteringVoice() failed: %s (0x%08x)", std::system_category().message(hr), static_cast<u32>(hr));
 		m_master_voice = nullptr;
@@ -283,7 +289,7 @@ bool XAudio2Backend::Open(std::string_view dev_id, AudioFreq freq, AudioSampleSi
 		return false;
 	}
 
-	if (HRESULT hr = m_device_enumerator->RegisterEndpointNotificationCallback(this); FAILED(hr))
+	if (HRESULT hr = m_device_enumerator ? m_device_enumerator->RegisterEndpointNotificationCallback(this) : S_OK; FAILED(hr))
 	{
 		XAudio.error("RegisterEndpointNotificationCallback() failed: %s (0x%08x)", std::system_category().message(hr), static_cast<u32>(hr));
 		CloseUnlocked();
