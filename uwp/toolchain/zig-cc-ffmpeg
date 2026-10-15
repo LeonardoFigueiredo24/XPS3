@@ -1,0 +1,11 @@
+#!/bin/sh
+# zig cc for FFmpeg's configure: drop MinGW linker flags that Zig's linker rejects.
+tc=$(dirname "$(realpath "$0")")
+for a; do
+	shift
+	case "$a" in
+		-Wl,--pic-executable,-e,mainCRTStartup|-Wl,--image-base,*|-Wl,--nxcompat,--dynamicbase) ;;
+		*) set -- "$@" "$a" ;;
+	esac
+done
+exec "$tc/zig-cc" "$@"

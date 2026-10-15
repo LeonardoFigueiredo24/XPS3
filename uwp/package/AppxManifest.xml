@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+         IgnorableNamespaces="uap rescap">
+  <!-- Publisher must match the signing certificate (the probe's test certificate). -->
+  <Identity Name="RPCS3Xbox" Publisher="CN=RPCS3XboxProbe" Version="0.1.0.0" ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>RPCS3 Xbox (test)</DisplayName>
+    <PublisherDisplayName>RPCS3 Xbox port project</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.17763.0" MaxVersionTested="10.0.22621.0" />
+  </Dependencies>
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+  <Applications>
+    <Application Id="App" Executable="rpcs3_uwp.exe" EntryPoint="RPCS3Xbox.App">
+      <uap:VisualElements DisplayName="RPCS3 Xbox (test)" Description="RPCS3 PS3 emulator, Xbox UWP port test build"
+                          BackgroundColor="#1A1A1F" Square150x150Logo="Assets\Square150x150Logo.png" Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
+        <uap:SplashScreen Image="Assets\SplashScreen.png" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+  <Capabilities>
+    <Capability Name="codeGeneration" />
+    <Capability Name="internetClient" />
+    <rescap:Capability Name="broadFileSystemAccess" />
+    <uap:Capability Name="removableStorage" />
+  </Capabilities>
+</Package>

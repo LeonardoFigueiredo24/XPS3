@@ -18,6 +18,11 @@ else()
 	set(USE_LIBIDN2 OFF CACHE INTERNAL "") # Disabled because MacOS CI doesn't work otherwise
 	set(CURL_CA_PATH "none" CACHE INTERNAL "")
 	set(CURL_DISABLE_INSTALL ON CACHE INTERNAL "")
+	if(RPCS3_UWP)
+		# wldap32 is not available to UWP apps on Xbox
+		set(CURL_DISABLE_LDAP ON CACHE INTERNAL "")
+		set(USE_WIN32_LDAP OFF CACHE INTERNAL "")
+	endif()
 	if(WIN32)
 		set(ENABLE_UNICODE ON CACHE INTERNAL "")
 	endif()

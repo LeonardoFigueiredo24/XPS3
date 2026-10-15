@@ -12,6 +12,7 @@
 #include "Emu/System.h"
 #include "Emu/system_config.h"
 #include "Emu/system_utils.hpp"
+#include "Emu/vfs_config.h"
 #include "Emu/emu_callbacks.h"
 #include "Emu/IdManager.h"
 #include "Emu/RSX/Null/NullGSRender.h"
@@ -35,8 +36,13 @@
 #include "util/sysinfo.hpp"
 #include "util/video_source.h"
 
+#include <map>
+#include <set>
 #include <d3d11_1.h>
 #include <dxgi1_2.h>
+
+// Firmware library list (Emu/Cell/PPUModule.cpp): true = HLE by default.
+extern const std::map<std::string_view, int> g_prx_list;
 
 LOG_CHANNEL(sys_log, "SYS");
 
@@ -263,6 +269,24 @@ namespace
 
 			g_cfg.video.renderer.set(video_renderer::null);
 			g_cfg.audio.renderer.set(audio_renderer::null);
+
+			// No firmware installed yet: use RPCS3's built-in (HLE) version of every firmware
+			// library, otherwise the boot stops with "firmware missing".
+			if (!fs::is_file(g_cfg_vfs.get_dev_flash() + "sys/external/liblv2.sprx"))
+			{
+				std::set<std::string> libs;
+				for (const auto& [name, hle] : g_prx_list)
+				{
+					if (!hle)
+						libs.emplace(std::string(name) + ":hle");
+				}
+
+				g_cfg.core.libraries_control.set_set(std::move(libs));
+				sys_log.warning("UWP: no firmware installed, using HLE for all firmware libraries");
+			}
+
+			// BootGame reloads the global config file, so store these settings there.
+			Emulator::SaveSettings(g_cfg.to_string(), {});
 
 			const std::string target = find_boot_target();
 			sys_log.always()("UWP: booting '%s'", target);
