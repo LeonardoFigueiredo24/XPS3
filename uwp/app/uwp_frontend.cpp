@@ -441,6 +441,7 @@ namespace uwp_frontend
 		u32 g_status_color = col_dim;
 		atomic_t<u64> g_data_serial{1};
 		atomic_t<bool> g_scanning{false};
+		atomic_t<bool> g_scanning_usb{false}; // local entries are listed, USB drives still being read
 
 		std::unique_ptr<modal> g_pending_modal; // from worker threads, guarded by g_data_mutex
 
@@ -586,9 +587,39 @@ namespace uwp_frontend
 			return true;
 		}
 
+		// Publishes a scan result: sorted games (XMB on top), then loose and bundled programs.
+		void publish_scan(std::vector<game_entry> games, const std::vector<game_entry>& programs, std::vector<install_entry> installs, bool final_pass)
+		{
+			std::sort(games.begin(), games.end(), [](const game_entry& a, const game_entry& b) { return a.title < b.title; });
+
+			// The PS3 system menu (XMB) once firmware is installed, as desktop RPCS3's "Boot VSH".
+			if (const std::string vsh = g_cfg_vfs.get_dev_flash() + "vsh/module/vsh.self"; fs::is_file(vsh))
+				games.insert(games.begin(), {"PS3 System Menu (XMB)", "from the installed firmware", vsh});
+
+			games.insert(games.end(), programs.begin(), programs.end());
+
+			// Firmware first, then packages, then licenses.
+			std::stable_sort(installs.begin(), installs.end(), [](const install_entry& a, const install_entry& b) { return a.type < b.type; });
+
+			const std::string fw = utils::get_firmware_version();
+			ui_log.notice("UI: %u games/programs, %u installable files, installed firmware '%s'%s", games.size(), installs.size(), fw, final_pass ? "" : " (USB drives not scanned yet)");
+
+			std::lock_guard lock(g_data_mutex);
+			g_games = std::move(games);
+			g_installs = std::move(installs);
+			g_fw_version = fw;
+			if (final_pass)
+			{
+				g_scanning = false;
+				g_scanning_usb = false;
+			}
+			g_data_serial++;
+		}
+
 		void scan_worker()
 		{
 			std::vector<game_entry> games;
+			std::vector<game_entry> programs;
 			std::vector<install_entry> installs;
 
 			const std::string games_dir = g_host.local_dir + "games/";
@@ -600,7 +631,9 @@ namespace uwp_frontend
 			fs::create_path(fw_dir);
 			fs::create_path(pkg_dir);
 
-			// Disc and HDD game folders copied to LocalState/games, ISOs and loose programs.
+			// Pass 1, local only (fast): game folders, ISOs and programs in LocalState/games,
+			// games installed into the emulated HDD, LocalState/boot, the bundled test programs,
+			// and firmware/packages/licenses in LocalState, LocalState/firmware and LocalState/packages.
 			for (const auto& e : fs::dir(games_dir))
 			{
 				if (e.name == "." || e.name == "..")
@@ -610,10 +643,9 @@ namespace uwp_frontend
 				else if (upper_ext(e.name) == ".ISO")
 					add_iso(games, games_dir + e.name, "games folder");
 				else if (is_program_file(e.name))
-					games.push_back({e.name, "program  ·  games folder", games_dir + e.name});
+					programs.push_back({e.name, "program  ·  games folder", games_dir + e.name});
 			}
 
-			// Games installed into the emulated HDD (PKG installs).
 			const std::string hdd_game = rpcs3::utils::get_hdd0_dir() + "game/";
 			for (const auto& e : fs::dir(hdd_game))
 			{
@@ -621,7 +653,24 @@ namespace uwp_frontend
 					add_game_folder(games, hdd_game + e.name, "installed");
 			}
 
-			// USB drives (needs broadFileSystemAccess; Utilities/File.cpp uses the *FromApp file APIs on UWP):
+			for (const auto& e : fs::dir(boot_dir))
+			{
+				if (!e.is_directory && is_program_file(e.name))
+					programs.push_back({e.name, "program  ·  boot folder", boot_dir + e.name});
+			}
+			for (const auto& e : fs::dir(g_host.package_dir + "test/"))
+			{
+				if (!e.is_directory && is_program_file(e.name))
+					programs.push_back({e.name, "bundled test program", g_host.package_dir + "test/" + e.name});
+			}
+
+			for (const std::string& dir : {g_host.local_dir, fw_dir, pkg_dir})
+				scan_install_dir(installs, dir);
+
+			g_scanning_usb = true;
+			publish_scan(games, programs, installs, false);
+
+			// Pass 2, USB drives (slow: brokered *FromApp file APIs, see Utilities/File.cpp):
 			// game folders and ISOs in GAMES/ and PS3ISO/ (the multiMAN/webMAN layout) or the root,
 			// firmware, packages and licenses in the root, PS3/UPDATE/, PKG/, packages/ and exdata/.
 			for (char d = 'D'; d <= 'Z'; d++)
@@ -648,40 +697,7 @@ namespace uwp_frontend
 					scan_install_dir(installs, dir);
 			}
 
-			std::sort(games.begin(), games.end(), [](const game_entry& a, const game_entry& b) { return a.title < b.title; });
-
-			// The PS3 system menu (XMB) once firmware is installed, as desktop RPCS3's "Boot VSH".
-			if (const std::string vsh = g_cfg_vfs.get_dev_flash() + "vsh/module/vsh.self"; fs::is_file(vsh))
-				games.insert(games.begin(), {"PS3 System Menu (XMB)", "from the installed firmware", vsh});
-
-			// Loose programs in LocalState/boot, then the bundled test programs.
-			for (const auto& e : fs::dir(boot_dir))
-			{
-				if (!e.is_directory && is_program_file(e.name))
-					games.push_back({e.name, "program  ·  boot folder", boot_dir + e.name});
-			}
-			for (const auto& e : fs::dir(g_host.package_dir + "test/"))
-			{
-				if (!e.is_directory && is_program_file(e.name))
-					games.push_back({e.name, "bundled test program", g_host.package_dir + "test/" + e.name});
-			}
-
-			// Firmware, packages and licenses in LocalState, LocalState/firmware and LocalState/packages.
-			for (const std::string& dir : {g_host.local_dir, fw_dir, pkg_dir})
-				scan_install_dir(installs, dir);
-
-			// Firmware first, then packages, then licenses.
-			std::stable_sort(installs.begin(), installs.end(), [](const install_entry& a, const install_entry& b) { return a.type < b.type; });
-
-			const std::string fw = utils::get_firmware_version();
-			ui_log.notice("UI: %u games/programs, %u installable files, installed firmware '%s'", games.size(), installs.size(), fw);
-
-			std::lock_guard lock(g_data_mutex);
-			g_games = std::move(games);
-			g_installs = std::move(installs);
-			g_fw_version = fw;
-			g_scanning = false;
-			g_data_serial++;
+			publish_scan(std::move(games), programs, std::move(installs), true);
 		}
 
 		void rescan()
@@ -1120,6 +1136,11 @@ namespace uwp_frontend
 				tx += tw + 60;
 			}
 			cv.text(tx, margin_y + 78, "LB / RB", 26, 0xff5c6270);
+			if (g_scanning_usb)
+			{
+				constexpr std::string_view usb_hint = "Reading USB drives...";
+				cv.text(canvas_width - margin_x - cv.text_width(usb_hint, 28), margin_y + 78, usb_hint, 28, col_warn);
+			}
 
 			const int top = margin_y + 150;
 			const int bottom = canvas_height - margin_y - 80;
