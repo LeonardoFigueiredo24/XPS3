@@ -358,6 +358,9 @@ namespace
 			if (FILE* f = std::freopen((g_local_dir + "mesa.log").c_str(), "w", stderr))
 				std::setvbuf(f, nullptr, _IONBF, 0);
 			_putenv_s("MESA_LOG_LEVEL", "info");
+			// D3D12 debug layer for Dozen, if the console has it; LocalState/no_d3d12_debug turns it off.
+			if (!fs::is_file(g_local_dir + "no_d3d12_debug"))
+				_putenv_s("DZN_DEBUG", "d3d12");
 
 			// Errors and warnings from the Vulkan driver (Mesa Dozen), with Mesa's source file:line.
 			uwp_vkshim_log = [](const char* where, const char* text)
@@ -520,9 +523,10 @@ namespace
 			ID3D11DeviceContext* ctx = nullptr;
 			IDXGISwapChain1* sc = nullptr;
 			ID3D11RenderTargetView* rtv = nullptr;
-			D3D_FEATURE_LEVEL fl = D3D_FEATURE_LEVEL_11_0;
-			const HRESULT hr_dev = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, &fl, 1, D3D11_SDK_VERSION, &dev, nullptr, &ctx);
-			sys_log.notice("UWP: D3D11CreateDevice: 0x%08x", static_cast<u32>(hr_dev));
+			const D3D_FEATURE_LEVEL fls[] = { D3D_FEATURE_LEVEL_12_1, D3D_FEATURE_LEVEL_12_0, D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0 };
+			D3D_FEATURE_LEVEL got_fl{};
+			const HRESULT hr_dev = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, fls, 4, D3D11_SDK_VERSION, &dev, &got_fl, &ctx);
+			sys_log.notice("UWP: D3D11CreateDevice: 0x%08x, feature level 0x%x", static_cast<u32>(hr_dev), static_cast<u32>(got_fl));
 			if (SUCCEEDED(hr_dev))
 			{
 				IDXGIDevice* dxdev = nullptr;

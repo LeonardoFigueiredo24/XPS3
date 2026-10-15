@@ -1,21 +1,53 @@
 diff --git a/src/microsoft/vulkan/dzn_cmd_buffer.c b/src/microsoft/vulkan/dzn_cmd_buffer.c
-index fd85f88..1e8fe73 100644
+index fd85f88..8109dce 100644
 --- a/src/microsoft/vulkan/dzn_cmd_buffer.c
 +++ b/src/microsoft/vulkan/dzn_cmd_buffer.c
-@@ -1078,8 +1078,10 @@ dzn_EndCommandBuffer(VkCommandBuffer commandBuffer)
+@@ -1069,6 +1069,30 @@ dzn_cmd_buffer_gather_queries(struct dzn_cmd_buffer *cmdbuf)
+    return VK_SUCCESS;
+ }
+ 
++/* Print what the D3D12 debug layer recorded (only available when it is enabled, DZN_DEBUG=d3d12). */
++static void
++dzn_log_d3d12_messages(struct dzn_device *device)
++{
++   ID3D12InfoQueue *info_queue;
++   if (FAILED(ID3D12Device1_QueryInterface(device->dev, &IID_ID3D12InfoQueue, (void **)&info_queue))) {
++      mesa_loge("dzn: no D3D12 info queue (debug layer not available)");
++      return;
++   }
++
++   UINT64 count = ID3D12InfoQueue_GetNumStoredMessages(info_queue);
++   for (UINT64 i = 0; i < count; i++) {
++      SIZE_T size = 0;
++      if (FAILED(ID3D12InfoQueue_GetMessage(info_queue, i, NULL, &size)) || !size)
++         continue;
++      D3D12_MESSAGE *msg = malloc(size);
++      if (msg && SUCCEEDED(ID3D12InfoQueue_GetMessage(info_queue, i, msg, &size)))
++         mesa_loge("dzn: D3D12 [%d/%d] %s", (int)msg->Severity, (int)msg->ID, msg->pDescription);
++      free(msg);
++   }
++   ID3D12InfoQueue_ClearStoredMessages(info_queue);
++   ID3D12InfoQueue_Release(info_queue);
++}
++
+ VKAPI_ATTR VkResult VKAPI_CALL
+ dzn_EndCommandBuffer(VkCommandBuffer commandBuffer)
+ {
+@@ -1078,8 +1102,11 @@ dzn_EndCommandBuffer(VkCommandBuffer commandBuffer)
        dzn_cmd_buffer_gather_events(cmdbuf);
        dzn_cmd_buffer_gather_queries(cmdbuf);
        HRESULT hres = ID3D12GraphicsCommandList1_Close(cmdbuf->cmdlist);
 -      if (FAILED(hres))
 +      if (FAILED(hres)) {
 +         mesa_loge("dzn: ID3D12GraphicsCommandList::Close failed: 0x%08x", (unsigned)hres);
++         dzn_log_d3d12_messages(container_of(cmdbuf->vk.base.device, struct dzn_device, vk));
           vk_command_buffer_set_error(&cmdbuf->vk, VK_ERROR_OUT_OF_HOST_MEMORY);
 +      }
     }
  
     return vk_command_buffer_end(&cmdbuf->vk);
 diff --git a/src/microsoft/vulkan/dzn_device.c b/src/microsoft/vulkan/dzn_device.c
-index 4a4dde5..efe9cc7 100644
+index 4a4dde5..c97ebc6 100644
 --- a/src/microsoft/vulkan/dzn_device.c
 +++ b/src/microsoft/vulkan/dzn_device.c
 @@ -153,6 +153,7 @@ dzn_physical_device_get_extensions(struct dzn_physical_device *pdev)
@@ -26,7 +58,23 @@ index 4a4dde5..efe9cc7 100644
        .EXT_subgroup_size_control             = true,
        .EXT_vertex_attribute_divisor          = true,
        .EXT_memory_budget                     = true,
-@@ -446,6 +447,10 @@ dzn_physical_device_cache_caps(struct dzn_physical_device *pdev)
+@@ -407,8 +408,14 @@ dzn_physical_device_cache_caps(struct dzn_physical_device *pdev)
+       .pFeatureLevelsRequested = checklist,
+    };
+ 
+-   ID3D12Device1_CheckFeatureSupport(pdev->dev, D3D12_FEATURE_FEATURE_LEVELS, &levels, sizeof(levels));
++   HRESULT fl_hr = ID3D12Device1_CheckFeatureSupport(pdev->dev, D3D12_FEATURE_FEATURE_LEVELS, &levels, sizeof(levels));
+    pdev->feature_level = levels.MaxSupportedFeatureLevel;
++   for (UINT i = 0; i < ARRAY_SIZE(checklist); ++i) {
++      D3D12_FEATURE_DATA_FEATURE_LEVELS one = { .NumFeatureLevels = 1, .pFeatureLevelsRequested = &checklist[i] };
++      HRESULT hr = ID3D12Device1_CheckFeatureSupport(pdev->dev, D3D12_FEATURE_FEATURE_LEVELS, &one, sizeof(one));
++      mesa_logi("dzn: %s: feature level 0x%x check: hr 0x%08x max 0x%x (all-levels hr 0x%08x)",
++                pdev->desc.description, checklist[i], (unsigned)hr, one.MaxSupportedFeatureLevel, (unsigned)fl_hr);
++   }
+ 
+    static const D3D_SHADER_MODEL valid_shader_models[] = {
+       D3D_SHADER_MODEL_6_8 ,D3D_SHADER_MODEL_6_7, D3D_SHADER_MODEL_6_6, D3D_SHADER_MODEL_6_5,
+@@ -446,6 +453,10 @@ dzn_physical_device_cache_caps(struct dzn_physical_device *pdev)
     ID3D12Device1_CheckFeatureSupport(pdev->dev, D3D12_FEATURE_D3D12_OPTIONS15, &pdev->options15, sizeof(pdev->options15));
     ID3D12Device1_CheckFeatureSupport(pdev->dev, D3D12_FEATURE_D3D12_OPTIONS16, &pdev->options16, sizeof(pdev->options16));
     ID3D12Device1_CheckFeatureSupport(pdev->dev, D3D12_FEATURE_D3D12_OPTIONS17, &pdev->options17, sizeof(pdev->options17));
@@ -37,7 +85,7 @@ index 4a4dde5..efe9cc7 100644
     if (FAILED(ID3D12Device1_CheckFeatureSupport(pdev->dev, D3D12_FEATURE_D3D12_OPTIONS19, &pdev->options19, sizeof(pdev->options19)))) {
        pdev->options19.MaxSamplerDescriptorHeapSize = D3D12_MAX_SHADER_VISIBLE_SAMPLER_HEAP_SIZE;
        pdev->options19.MaxSamplerDescriptorHeapSizeWithStaticSamplers = pdev->options19.MaxSamplerDescriptorHeapSize;
-@@ -808,6 +813,9 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
+@@ -808,6 +819,9 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
        .vertexAttributeInstanceRateDivisor = true,
        .vertexAttributeInstanceRateZeroDivisor = true,
        .shaderReplicatedComposites         = true,
