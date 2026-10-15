@@ -52,6 +52,7 @@
 extern const std::map<std::string_view, int> g_prx_list;
 
 LOG_CHANNEL(vk_drv_log, "DZN");
+extern "C" void uwp_heap_guard_open_log(const wchar_t* path);
 extern "C" void (*uwp_vkshim_log)(const char* where, const char* text);
 LOG_CHANNEL(sys_log, "SYS");
 
@@ -334,6 +335,12 @@ namespace
 	{
 		{
 			g_local_dir = get_local_state_dir();
+			{
+				const std::string guard_log = g_local_dir + "heap_guard.log";
+				std::wstring wpath(guard_log.size() + 1, L'\0');
+				wpath.resize(::MultiByteToWideChar(CP_UTF8, 0, guard_log.c_str(), -1, wpath.data(), static_cast<int>(wpath.size())));
+				uwp_heap_guard_open_log(wpath.c_str());
+			}
 			g_android_executable_dir = get_package_dir();
 			g_android_config_dir = g_local_dir + "rpcs3/";
 			g_android_cache_dir = g_local_dir + "rpcs3/cache/";

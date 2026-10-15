@@ -227,7 +227,7 @@ index fd85f88..4524669 100644
                                              vertexOffset, firstInstance);
     }
 diff --git a/src/microsoft/vulkan/dzn_device.c b/src/microsoft/vulkan/dzn_device.c
-index 4a4dde5..9a2d5a2 100644
+index 4a4dde5..c9c0e8e 100644
 --- a/src/microsoft/vulkan/dzn_device.c
 +++ b/src/microsoft/vulkan/dzn_device.c
 @@ -146,13 +146,14 @@ dzn_physical_device_get_extensions(struct dzn_physical_device *pdev)
@@ -283,8 +283,53 @@ index 4a4dde5..9a2d5a2 100644
     };
  }
  
+@@ -2496,6 +2510,44 @@ dzn_device_create_root_sig(struct dzn_device *device,
+                                      &IID_ID3D12RootSignature,
+                                      (void **)&root_sig);
+    ID3D10Blob_Release(sig);
++
++   /* Xbox UWP diagnostics: summarize root signatures so a failing PSO can be matched to one. */
++   static unsigned logged;
++   if (logged < 64) {
++      logged++;
++      const D3D12_ROOT_PARAMETER1 *params;
++      unsigned nparams, nsamplers, flags;
++      if (desc->Version >= D3D_ROOT_SIGNATURE_VERSION_1_2) {
++         params = desc->Desc_1_2.pParameters; nparams = desc->Desc_1_2.NumParameters;
++         nsamplers = desc->Desc_1_2.NumStaticSamplers; flags = desc->Desc_1_2.Flags;
++      } else {
++         params = desc->Desc_1_1.pParameters; nparams = desc->Desc_1_1.NumParameters;
++         nsamplers = desc->Desc_1_1.NumStaticSamplers; flags = desc->Desc_1_1.Flags;
++      }
++      mesa_loge("dzn: root sig %p: version 0x%x flags 0x%x, %u params, %u static samplers",
++                (void *)root_sig, (unsigned)desc->Version, flags, nparams, nsamplers);
++      for (unsigned i = 0; i < nparams; i++) {
++         const D3D12_ROOT_PARAMETER1 *rp = &params[i];
++         if (rp->ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE) {
++            char buf[512]; int n = 0;
++            buf[0] = 0;
++            for (unsigned r = 0; r < rp->DescriptorTable.NumDescriptorRanges && n < 440; r++) {
++               const D3D12_DESCRIPTOR_RANGE1 *dr = &rp->DescriptorTable.pDescriptorRanges[r];
++               n += snprintf(buf + n, sizeof(buf) - n, " [t%d n%d r%u s%u f0x%x o%u]",
++                             (int)dr->RangeType, (int)dr->NumDescriptors, dr->BaseShaderRegister,
++                             dr->RegisterSpace, (unsigned)dr->Flags, dr->OffsetInDescriptorsFromTableStart);
++            }
++            mesa_loge("dzn:   param %u table vis %d:%s", i, (int)rp->ShaderVisibility, buf);
++         } else if (rp->ParameterType == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS) {
++            mesa_loge("dzn:   param %u constants vis %d r%u s%u n%u", i, (int)rp->ShaderVisibility,
++                      rp->Constants.ShaderRegister, rp->Constants.RegisterSpace, rp->Constants.Num32BitValues);
++         } else {
++            mesa_loge("dzn:   param %u descriptor type %d vis %d r%u s%u f0x%x", i, (int)rp->ParameterType,
++                      (int)rp->ShaderVisibility, rp->Descriptor.ShaderRegister, rp->Descriptor.RegisterSpace,
++                      (unsigned)rp->Descriptor.Flags);
++         }
++      }
++   }
+    return root_sig;
+ }
+ 
 diff --git a/src/microsoft/vulkan/dzn_pipeline.c b/src/microsoft/vulkan/dzn_pipeline.c
-index 65ccc0e..05a0051 100644
+index 65ccc0e..448cd52 100644
 --- a/src/microsoft/vulkan/dzn_pipeline.c
 +++ b/src/microsoft/vulkan/dzn_pipeline.c
 @@ -1857,6 +1857,10 @@ dzn_graphics_pipeline_destroy(struct dzn_graphics_pipeline *pipeline,
@@ -307,7 +352,7 @@ index 65ccc0e..05a0051 100644
           ret = vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
           goto out;
        }
-@@ -2180,6 +2186,313 @@ update_stencil_state(struct dzn_physical_device *pdev,
+@@ -2180,6 +2186,346 @@ update_stencil_state(struct dzn_physical_device *pdev,
     }
  }
  
@@ -516,6 +561,39 @@ index 65ccc0e..05a0051 100644
 +                      struct dzn_graphics_pipeline *pipeline, const uintptr_t *src_buf, size_t size)
 +{
 +   static const char *const stage_names[] = { "VS", "HS", "DS", "GS", "PS" };
++   if (*(const D3D12_PIPELINE_STATE_SUBOBJECT_TYPE *)src_buf == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE) {
++      size_t off = 0;
++      dzn_pso_subobject_size(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE, &off);
++      mesa_loge("dzn:   root sig %p", *(void *const *)((const uint8_t *)src_buf + off));
++   }
++#ifdef _WIN32
++   {
++      struct dzn_instance *instance = container_of(device->vk.physical->instance, struct dzn_instance, vk);
++      static unsigned disasm_count;
++      for (unsigned st = 0; st < ARRAY_SIZE(stage_names) && disasm_count < 4; st++) {
++         const D3D12_SHADER_BYTECODE *bc = pipeline->templates.shaders[st].bc;
++         if (!bc || !bc->pShaderBytecode)
++            continue;
++         disasm_count++;
++         char *disasm = dxil_disasm_module(instance->dxil_validator, (void *)bc->pShaderBytecode, bc->BytecodeLength);
++         if (!disasm) {
++            mesa_loge("dzn:   %s disassembly failed", stage_names[st]);
++            continue;
++         }
++         /* Only the comment lines: header, signatures, resource bindings, required features. */
++         mesa_loge("dzn:   == %s disassembly (comments) ==", stage_names[st]);
++         char *save = NULL;
++         unsigned lines = 0;
++         for (char *line = strtok_r(disasm, "\n", &save); line && lines < 200; line = strtok_r(NULL, "\n", &save)) {
++            if (line[0] == ';' || !strncmp(line, "!dx.", 4)) {
++               mesa_loge("dzn:   | %s", line);
++               lines++;
++            }
++         }
++         ralloc_free(disasm);
++      }
++   }
++#endif
 +   mesa_loge("dzn:   options14 independent stencil masks %d, options16 dynamic depth bias %d, "
 +             "options19 narrow quad lines %d, offsets cut %u rast %u ds %u, stream %zu bytes",
 +             (int)pdev->options14.IndependentFrontAndBackStencilRefMaskSupported,
@@ -621,7 +699,7 @@ index 65ccc0e..05a0051 100644
  ID3D12PipelineState *
  dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
                                  const struct dzn_graphics_pipeline_variant_key *key)
-@@ -2236,10 +2549,14 @@ dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
+@@ -2236,10 +2582,14 @@ dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
  
        update_stencil_state(pdev, pipeline, stream_buf, &masked_key);
  
