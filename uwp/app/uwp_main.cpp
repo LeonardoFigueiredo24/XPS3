@@ -7,8 +7,9 @@
 // While a game boots or runs the screen shows its frames, or a status color when there are
 // none: blue = booting/running, green = exited cleanly, red = boot failed or fatal error.
 
-#include <algorithm>
 #include "stdafx.h"
+#include <algorithm>
+#include <winsock2.h>
 #include "winrt_min.h"
 #include "uwp_frontend.h"
 
@@ -357,6 +358,15 @@ namespace
 	{
 		{
 			g_local_dir = get_local_state_dir();
+
+			// Desktop RPCS3 starts Winsock in main(); without it every guest socket call fails
+			// with WSANOTINITIALISED (10093), which sys_net treats as fatal (seen in the XMB).
+			{
+				WSADATA wsa_data{};
+				const int wsa_res = ::WSAStartup(MAKEWORD(2, 2), &wsa_data);
+				if (wsa_res != 0)
+					OutputDebugStringA("UWP: WSAStartup failed\n");
+			}
 			{
 				const std::string guard_log = g_local_dir + "heap_guard.log";
 				std::wstring wpath(guard_log.size() + 1, L'\0');
