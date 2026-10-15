@@ -398,10 +398,25 @@ index 4a4dde5..0d809cc 100644
  }
  
 diff --git a/src/microsoft/vulkan/dzn_pipeline.c b/src/microsoft/vulkan/dzn_pipeline.c
-index 65ccc0e..2a4c53e 100644
+index 65ccc0e..52f0b4b 100644
 --- a/src/microsoft/vulkan/dzn_pipeline.c
 +++ b/src/microsoft/vulkan/dzn_pipeline.c
-@@ -408,6 +408,30 @@ enum dxil_shader_model
+@@ -246,6 +246,14 @@ dzn_pipeline_get_nir_shader(struct dzn_device *device,
+    if (result != VK_SUCCESS)
+       return result;
+ 
++   /* When the app did not require a subgroup size, the runtime still pins compute shaders to
++    * the device's wave size if WaveLaneCountMin == Max (64 on Xbox). nir_to_dxil then emits a
++    * WaveSize tag that the PSV0 part does not match, and DXIL validation fails (seen with
++    * RPCS3's XMB compute shaders on Xbox, SM 6.4). Only keep a fixed size the app asked for. */
++   if ((*nir)->info.stage == MESA_SHADER_COMPUTE &&
++       !vk_find_struct_const(stage_info->pNext, PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO))
++      (*nir)->info.api_subgroup_size = 0;
++
+    struct dxil_spirv_runtime_conf conf = {
+       .runtime_data_cbv = {
+          .register_space = DZN_REGISTER_SPACE_SYSVALS,
+@@ -408,6 +416,30 @@ enum dxil_shader_model
     return ((pdev->shader_model & 0xf0) << 12) | (pdev->shader_model & 0xf);
  }
  
@@ -432,7 +447,7 @@ index 65ccc0e..2a4c53e 100644
  static VkResult
  dzn_pipeline_compile_shader(struct dzn_device *device,
                              nir_shader *nir,
-@@ -420,11 +444,11 @@ dzn_pipeline_compile_shader(struct dzn_device *device,
+@@ -420,11 +452,11 @@ dzn_pipeline_compile_shader(struct dzn_device *device,
        container_of(device->vk.physical, struct dzn_physical_device, vk);
     struct nir_to_dxil_options opts = {
        .environment = DXIL_ENVIRONMENT_VULKAN,
@@ -449,7 +464,7 @@ index 65ccc0e..2a4c53e 100644
        .shader_model_max = dzn_get_shader_model(pdev),
        .input_clip_size = input_clip_size,
        .advanced_texture_ops = pdev->options14.AdvancedTextureOpsSupported,
-@@ -473,6 +497,12 @@ dzn_pipeline_compile_shader(struct dzn_device *device,
+@@ -473,6 +505,12 @@ dzn_pipeline_compile_shader(struct dzn_device *device,
     }
  
     if (!res && !(instance->debug_flags & DZN_DEBUG_EXPERIMENTAL)) {
@@ -462,7 +477,7 @@ index 65ccc0e..2a4c53e 100644
        if (err) {
           mesa_loge(
                 "== VALIDATION ERROR =============================================\n"
-@@ -1857,6 +1887,10 @@ dzn_graphics_pipeline_destroy(struct dzn_graphics_pipeline *pipeline,
+@@ -1857,6 +1895,10 @@ dzn_graphics_pipeline_destroy(struct dzn_graphics_pipeline *pipeline,
     vk_free2(&pipeline->base.base.device->alloc, alloc, pipeline);
  }
  
@@ -473,7 +488,7 @@ index 65ccc0e..2a4c53e 100644
  static VkResult
  dzn_graphics_pipeline_create(struct dzn_device *device,
                               VkPipelineCache cache,
-@@ -2061,6 +2095,8 @@ dzn_graphics_pipeline_create(struct dzn_device *device,
+@@ -2061,6 +2103,8 @@ dzn_graphics_pipeline_create(struct dzn_device *device,
                                                 &IID_ID3D12PipelineState,
                                                 (void **)&pipeline->base.state);
        if (FAILED(hres)) {
@@ -482,7 +497,7 @@ index 65ccc0e..2a4c53e 100644
           ret = vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
           goto out;
        }
-@@ -2180,6 +2216,364 @@ update_stencil_state(struct dzn_physical_device *pdev,
+@@ -2180,6 +2224,364 @@ update_stencil_state(struct dzn_physical_device *pdev,
     }
  }
  
@@ -847,7 +862,7 @@ index 65ccc0e..2a4c53e 100644
  ID3D12PipelineState *
  dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
                                  const struct dzn_graphics_pipeline_variant_key *key)
-@@ -2236,10 +2630,14 @@ dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
+@@ -2236,10 +2638,14 @@ dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
  
        update_stencil_state(pdev, pipeline, stream_buf, &masked_key);
  
