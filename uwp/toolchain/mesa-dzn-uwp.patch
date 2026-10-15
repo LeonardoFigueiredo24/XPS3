@@ -1,5 +1,5 @@
 diff --git a/src/microsoft/vulkan/dzn_cmd_buffer.c b/src/microsoft/vulkan/dzn_cmd_buffer.c
-index fd85f88..c02b0b0 100644
+index fd85f88..857b0a7 100644
 --- a/src/microsoft/vulkan/dzn_cmd_buffer.c
 +++ b/src/microsoft/vulkan/dzn_cmd_buffer.c
 @@ -30,6 +30,9 @@
@@ -85,7 +85,50 @@ index fd85f88..c02b0b0 100644
     }
  
     return vk_command_buffer_end(&cmdbuf->vk);
-@@ -3180,6 +3217,14 @@ dzn_cmd_buffer_resolve_region(struct dzn_cmd_buffer *cmdbuf,
+@@ -2381,6 +2418,16 @@ dzn_cmd_buffer_clear_zs(struct dzn_cmd_buffer *cmdbuf,
+    }
+ }
+ 
++static void
++dzn_log_empty_copy(const VkBufferImageCopy2 *region)
++{
++   static unsigned count;
++   if (count++ < 4)
++      mesa_logw("dzn: skipping empty buffer/image copy (extent %ux%ux%u, row length %u, image height %u)",
++                region->imageExtent.width, region->imageExtent.height, region->imageExtent.depth,
++                region->bufferRowLength, region->bufferImageHeight);
++}
++
+ static void
+ dzn_cmd_buffer_copy_buf2img_region(struct dzn_cmd_buffer *cmdbuf,
+                                    const VkCopyBufferToImageInfo2 *info,
+@@ -2396,6 +2443,12 @@ dzn_cmd_buffer_copy_buf2img_region(struct dzn_cmd_buffer *cmdbuf,
+    ID3D12GraphicsCommandList1 *cmdlist = cmdbuf->cmdlist;
+ 
+    VkBufferImageCopy2 region = info->pRegions[r];
++   /* Empty regions copy nothing; D3D12 on the Xbox rejects zero-sized footprints/boxes
++    * (CopyTextureRegion -> Close() E_INVALIDARG), so skip them. */
++   if (!region.imageExtent.width || !region.imageExtent.height || !region.imageExtent.depth) {
++      dzn_log_empty_copy(&region);
++      return;
++   }
+    enum pipe_format pfmt = vk_format_to_pipe_format(dst_image->vk.format);
+    uint32_t blkh = util_format_get_blockheight(pfmt);
+    uint32_t blkd = util_format_get_blockdepth(pfmt);
+@@ -2477,6 +2530,12 @@ dzn_cmd_buffer_copy_img2buf_region(struct dzn_cmd_buffer *cmdbuf,
+    ID3D12GraphicsCommandList1 *cmdlist = cmdbuf->cmdlist;
+ 
+    VkBufferImageCopy2 region = info->pRegions[r];
++   /* Empty regions copy nothing; D3D12 on the Xbox rejects zero-sized footprints/boxes
++    * (CopyTextureRegion -> Close() E_INVALIDARG), so skip them. */
++   if (!region.imageExtent.width || !region.imageExtent.height || !region.imageExtent.depth) {
++      dzn_log_empty_copy(&region);
++      return;
++   }
+    enum pipe_format pfmt = vk_format_to_pipe_format(src_image->vk.format);
+    uint32_t blkh = util_format_get_blockheight(pfmt);
+    uint32_t blkd = util_format_get_blockdepth(pfmt);
+@@ -3180,6 +3239,14 @@ dzn_cmd_buffer_resolve_region(struct dzn_cmd_buffer *cmdbuf,
     }
  }
  
@@ -100,7 +143,7 @@ index fd85f88..c02b0b0 100644
  static void
  dzn_cmd_buffer_update_pipeline(struct dzn_cmd_buffer *cmdbuf, uint32_t bindpoint)
  {
-@@ -3246,7 +3291,9 @@ dzn_cmd_buffer_update_pipeline(struct dzn_cmd_buffer *cmdbuf, uint32_t bindpoint
+@@ -3246,7 +3313,9 @@ dzn_cmd_buffer_update_pipeline(struct dzn_cmd_buffer *cmdbuf, uint32_t bindpoint
  
     /* Deferring this until after the pipeline has been set due to an NVIDIA driver bug
      * when view instancing mask is set with no pipeline bound. */

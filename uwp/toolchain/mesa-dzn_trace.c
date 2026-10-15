@@ -49,7 +49,7 @@ dzn_trace_dump(const void *list, unsigned last)
 
 /* ---- Scratch-list probing ----------------------------------------------------------------
  * Each self-contained call is replayed on its own scratch command list, which is closed right
- * away: if Close() fails, that call alone is invalid on this device. Disabled by DZN_NO_PROBE. */
+ * away: if Close() fails, that call alone is invalid on this device. Enabled by DZN_PROBE. */
 #define COBJMACROS
 #include <stdlib.h>
 #include "c11/threads.h"
@@ -77,7 +77,7 @@ void *
 dzn_probe_begin(void *list)
 {
    if (probe_enabled < 0)
-      probe_enabled = getenv("DZN_NO_PROBE") == NULL; /* diagnostics builds: on unless DZN_NO_PROBE */
+      probe_enabled = getenv("DZN_PROBE") != NULL;
    if (!probe_enabled || probe_failures >= 32 || probe_count >= 200000)
       return NULL;
 

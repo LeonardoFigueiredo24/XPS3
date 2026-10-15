@@ -340,6 +340,16 @@ namespace
 			fs::create_path(g_android_config_dir);
 			fs::create_path(g_android_cache_dir);
 
+			// Overlay UI icons ship in the package; RPCS3 looks for them in its config dir.
+			const std::string icons_src = get_package_dir() + "Icons/ui/";
+			const std::string icons_dst = g_android_config_dir + "Icons/ui/";
+			fs::create_path(icons_dst);
+			for (const auto& entry : fs::dir(icons_src))
+			{
+				if (!entry.is_directory && !fs::is_file(icons_dst + entry.name))
+					fs::copy_file(icons_src + entry.name, icons_dst + entry.name, false);
+			}
+
 			static std::unique_ptr<logs::listener> log_file = logs::make_file_listener(g_android_config_dir + "RPCS3.log", 256 * 1024 * 1024);
 
 			// Any fatal log line (e.g. a dying RSX thread, which doesn't stop the emulator) turns the screen red.
