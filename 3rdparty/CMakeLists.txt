@@ -232,11 +232,15 @@ if(USE_SDL)
 endif()
 
 # OpenAL
-if (NOT ANDROID)
+if (NOT ANDROID AND NOT RPCS3_UWP)
 	add_subdirectory(OpenAL EXCLUDE_FROM_ALL)
 else()
 	add_library(3rdparty_openal INTERFACE)
 	target_compile_definitions(3rdparty_openal INTERFACE WITHOUT_OPENAL=1)
+	if (RPCS3_UWP)
+		# cellMic.h includes alc.h for its types even without OpenAL support.
+		target_include_directories(3rdparty_openal SYSTEM INTERFACE OpenAL/openal-soft/include/AL)
+	endif()
 endif()
 
 # FAudio

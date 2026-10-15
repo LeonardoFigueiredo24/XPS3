@@ -145,9 +145,9 @@ namespace utils
 #define CreateFileMappingW utils::uwp_mem::create_file_mapping
 #define MapViewOfFileEx utils::uwp_mem::map_view_ex
 
-	inline constexpr auto VirtualAlloc2 = &::VirtualAlloc2FromApp;
-	inline constexpr auto MapViewOfFile3 = &uwp_mem::map_view_3;
-	inline constexpr auto UnmapViewOfFile2 = &::UnmapViewOfFile2;
+	inline const auto VirtualAlloc2 = &::VirtualAlloc2FromApp;
+	inline const auto MapViewOfFile3 = &uwp_mem::map_view_3;
+	inline const auto UnmapViewOfFile2 = &::UnmapViewOfFile2;
 
 	bool has_win10_memory_mapping_api()
 	{
