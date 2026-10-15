@@ -803,7 +803,15 @@ jit_compiler::jit_compiler(const std::unordered_map<std::string, u64>& _link, st
 
 	if (fs::statfs(fs::get_cache_dir(), stats))
 	{
+#ifdef RPCS3_UWP
+		// UWP reports a small per-app figure for LocalState, far below what the app can actually
+		// write, so the cache budget ran out and modules were left uncached. Don't budget there.
+		static atomic_t<bool> s_logged = false;
+		if (!s_logged.exchange(true))
+			jit_log.notice("LLVM: cache drive reports 0x%x bytes free (not used as a budget on UWP)", stats.avail_free);
+#else
 		m_disk_space = stats.avail_free / 4;
+#endif
 	}
 }
 

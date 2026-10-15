@@ -18,6 +18,7 @@
 #include "Emu/system_config.h"
 #include "Emu/system_utils.hpp"
 #include "Emu/vfs_config.h"
+#include "Emu/system_progress.hpp"
 #include "Emu/emu_callbacks.h"
 #include "Emu/IdManager.h"
 #include "Emu/RSX/Null/NullGSRender.h"
@@ -45,6 +46,7 @@
 #include "util/sysinfo.hpp"
 #include "util/video_source.h"
 
+#include <chrono>
 #include <cstdio>
 #include <deque>
 #include <functional>
@@ -554,6 +556,68 @@ namespace
 		return 0;
 	}
 
+	// While a game boots without a frame (first boots compile PPU code for minutes), show
+	// RPCS3's progress text instead of a plain color so it doesn't look hung.
+	bool show_loading_screen(ID3D11Device* dev, ID3D11DeviceContext* ctx, ID3D11RenderTargetView* rtv, shell_state st)
+	{
+		if (st != shell_state::booting && st != shell_state::running)
+			return false;
+
+		static bool showing = false;
+		static auto since = std::chrono::steady_clock::now();
+		static u32 tick = 0;
+
+		const u32 total = g_progr_ptotal, done = g_progr_pdone;
+		const std::string text = g_progr_text;
+		if (text.empty() && !total)
+		{
+			showing = false;
+			return false;
+		}
+		if (!showing)
+		{
+			showing = true;
+			since = std::chrono::steady_clock::now();
+			tick = 0;
+		}
+
+		static ID3D11Texture2D* tex = nullptr;
+		if (!tex)
+		{
+			D3D11_TEXTURE2D_DESC td{};
+			td.Width = uwp_frontend::canvas_width;
+			td.Height = uwp_frontend::canvas_height;
+			td.MipLevels = 1;
+			td.ArraySize = 1;
+			td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+			td.SampleDesc.Count = 1;
+			td.Usage = D3D11_USAGE_DEFAULT;
+			if (FAILED(dev->CreateTexture2D(&td, nullptr, &tex)))
+				return false;
+		}
+
+		// Redraw a few times a second; the text and counters change slowly.
+		if (tick++ % 15 == 0)
+		{
+			const u64 secs = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - since).count();
+			std::string detail;
+			if (total)
+				detail = fmt::format("%u of %u done. ", done, total);
+			detail += fmt::format("%u:%02u elapsed.\n\nThe first start of a game or the system menu compiles its code for this console, "
+				"which can take several minutes. Later starts reuse it.", secs / 60, secs % 60);
+			const u32* pixels = nullptr;
+			if (!uwp_frontend::loading_frame(text, detail, done, total, pixels))
+				return false;
+			ctx->UpdateSubresource(tex, 0, nullptr, pixels, uwp_frontend::canvas_width * 4, 0);
+		}
+
+		ID3D11Resource* target = nullptr;
+		rtv->GetResource(&target);
+		ctx->CopyResource(target, tex);
+		target->Release();
+		return true;
+	}
+
 	template <typename I>
 	struct inspectable_impl : I
 	{
@@ -749,7 +813,7 @@ namespace
 					ctx->CopyResource(target, frame_tex);
 					target->Release();
 				}
-				else
+				else if (!show_loading_screen(dev, ctx, rtv, st))
 				{
 					ctx->ClearRenderTargetView(rtv, st == shell_state::failed ? red : st == shell_state::finished ? green : blue);
 				}

@@ -1332,6 +1332,37 @@ namespace uwp_frontend
 		}
 	}
 
+	bool loading_frame(const std::string& title, const std::string& detail, u32 done, u32 total, const u32*& pixels)
+	{
+		if (!g_ready)
+			return false;
+
+		ui_state& ui = *g_ui;
+		if (!ui.fonts_loaded || ui.fonts_need_reload)
+		{
+			load_fonts(ui.cv);
+			ui.fonts_loaded = true;
+			ui.fonts_need_reload = false;
+		}
+
+		canvas& cv = ui.cv;
+		cv.fill(0, 0, canvas_width, canvas_height, col_bg);
+		const int x = margin_x, w = canvas_width - margin_x * 2;
+		int y = canvas_height / 2 - 120;
+		cv.text(x, y, title.empty() ? "Loading" : title, 44, col_text, w);
+		y += 80;
+		if (total)
+		{
+			cv.fill(x, y, w, 16, col_header);
+			cv.fill(x, y, static_cast<int>(static_cast<u64>(w) * std::min(done, total) / total), 16, col_accent);
+			y += 40;
+		}
+		cv.paragraph(x, y, detail, 28, col_dim, w);
+		ui.dirty = true; // the menu redraws when it comes back
+		pixels = cv.px.data();
+		return true;
+	}
+
 	bool frame(IInspectable* core_window, const u32*& pixels, bool& changed)
 	{
 		changed = false;
