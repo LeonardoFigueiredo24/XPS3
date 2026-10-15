@@ -555,6 +555,9 @@ namespace
 #endif
 			g_cfg.core.ppu_decoder.set(ppu_llvm ? ppu_decoder_type::llvm : ppu_decoder_type::_static);
 			g_cfg.core.spu_decoder.set(spu_interp ? spu_decoder_type::_static : spu_llvm ? spu_decoder_type::llvm : spu_decoder_type::asmjit);
+			// 8 LLVM threads peaked at 4.4 of the 5 GB while the XMB compiled; use 6 unless set.
+			if (g_cfg.core.llvm_threads == 0)
+				g_cfg.core.llvm_threads.set(6);
 			sys_log.always()("UWP: PPU decoder: %s, SPU decoder: %s, LLVM threads: %u",
 				g_cfg.core.ppu_decoder.get(), g_cfg.core.spu_decoder.get(), g_cfg.core.llvm_threads.get());
 			// LLVM precompilation compiles every module in dev_flash (~580) before the XMB starts:
@@ -682,6 +685,7 @@ namespace
 
 		static bool showing = false;
 		static auto since = std::chrono::steady_clock::now();
+		static auto last_shown = std::chrono::steady_clock::now();
 		static u32 tick = 0;
 
 		// The module/file counters belong to the compile in progress; the progress text can
@@ -704,12 +708,17 @@ namespace
 			showing = false;
 			return false;
 		}
+		// The elapsed time covers the whole compile: a compile runs file by file and stage by
+		// stage, with short gaps between them, so only restart it after 10 s without a screen.
+		const auto now = std::chrono::steady_clock::now();
 		if (!showing)
 		{
 			showing = true;
-			since = std::chrono::steady_clock::now();
+			if (now - last_shown > std::chrono::seconds(10))
+				since = now;
 			tick = 0;
 		}
+		last_shown = now;
 
 		static ID3D11Texture2D* tex = nullptr;
 		if (!tex)
