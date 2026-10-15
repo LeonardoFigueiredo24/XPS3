@@ -91,7 +91,7 @@ namespace
 		h->size = size;
 		h->caller = caller;
 		h->raw = raw;
-		h->align = align > 16 ? static_cast<std::uint32_t>(align) : 0;
+		h->align = static_cast<std::uint32_t>(align); // 0 only for plain new (aligned new may ask for <= 16)
 		h->pad = 0;
 		h->magic = c_magic_live;
 		h->magic_inv = ~c_magic_live;

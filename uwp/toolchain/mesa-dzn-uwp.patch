@@ -226,8 +226,32 @@ index fd85f88..4524669 100644
        ID3D12GraphicsCommandList1_DrawIndexedInstanced(cmdbuf->cmdlist, indexCount, instanceCount, firstIndex,
                                              vertexOffset, firstInstance);
     }
+diff --git a/src/microsoft/vulkan/dzn_descriptor_set.c b/src/microsoft/vulkan/dzn_descriptor_set.c
+index c8821c9..df8e78b 100644
+--- a/src/microsoft/vulkan/dzn_descriptor_set.c
++++ b/src/microsoft/vulkan/dzn_descriptor_set.c
+@@ -774,6 +774,19 @@ dzn_pipeline_layout_create(struct dzn_device *device,
+                   range_ptr[k].OffsetInDescriptorsFromTableStart +=
+                      layout->sets[j].heap_offsets[type];
+                }
++               /* Below feature level 11_1 only pixel and compute shaders can access UAVs, and a
++                * root signature that exposes UAV ranges to other stages makes graphics PSO
++                * creation fail (seen on Xbox, FL 11_0). Storage buffers get an SRV range too,
++                * which read-only access from those stages uses. */
++               if (pdev->feature_level < D3D_FEATURE_LEVEL_11_1 &&
++                   i != D3D12_SHADER_VISIBILITY_ALL && i != D3D12_SHADER_VISIBILITY_PIXEL) {
++                  uint32_t kept = 0;
++                  for (uint32_t k = 0; k < range_count; k++) {
++                     if (range_ptr[k].RangeType != D3D12_DESCRIPTOR_RANGE_TYPE_UAV)
++                        range_ptr[kept++] = range_ptr[k];
++                  }
++                  range_count = kept;
++               }
+                root_param->DescriptorTable.NumDescriptorRanges += range_count;
+                range_ptr += range_count;
+             }
 diff --git a/src/microsoft/vulkan/dzn_device.c b/src/microsoft/vulkan/dzn_device.c
-index 4a4dde5..c9c0e8e 100644
+index 4a4dde5..18d601d 100644
 --- a/src/microsoft/vulkan/dzn_device.c
 +++ b/src/microsoft/vulkan/dzn_device.c
 @@ -146,13 +146,14 @@ dzn_physical_device_get_extensions(struct dzn_physical_device *pdev)
@@ -273,6 +297,15 @@ index 4a4dde5..c9c0e8e 100644
     if (FAILED(ID3D12Device1_CheckFeatureSupport(pdev->dev, D3D12_FEATURE_D3D12_OPTIONS19, &pdev->options19, sizeof(pdev->options19)))) {
        pdev->options19.MaxSamplerDescriptorHeapSize = D3D12_MAX_SHADER_VISIBLE_SAMPLER_HEAP_SIZE;
        pdev->options19.MaxSamplerDescriptorHeapSizeWithStaticSamplers = pdev->options19.MaxSamplerDescriptorHeapSize;
+@@ -694,7 +705,7 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
+       .textureCompressionBC = true,
+       .occlusionQueryPrecise = true,
+       .pipelineStatisticsQuery = true,
+-      .vertexPipelineStoresAndAtomics = true,
++      .vertexPipelineStoresAndAtomics = pdev->feature_level >= D3D_FEATURE_LEVEL_11_1,
+       .fragmentStoresAndAtomics = true,
+       .shaderTessellationAndGeometryPointSize = false,
+       .shaderImageGatherExtended = true,
 @@ -808,6 +819,9 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
        .vertexAttributeInstanceRateDivisor = true,
        .vertexAttributeInstanceRateZeroDivisor = true,
