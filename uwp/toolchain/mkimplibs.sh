@@ -16,3 +16,7 @@ for v in 1 3 5 6; do
 	"$dlltool" -m i386:x86-64 -d "$defs/api-ms-win-core-memory-l1-1-$v.def" -l "$out/libuwp_memory_$v.a"
 done
 "$dlltool" -m i386:x86-64 -d "$defs/api-ms-win-core-file-fromapp-l1-1-0.def" -l "$out/libuwp_file_fromapp.a"
+# WaitOnAddress & co. (Mesa links -lsynchronization)
+"$dlltool" -m i386:x86-64 -d "$defs/api-ms-win-core-synch-l1-2-0.def" -l "$out/libsynchronization.a"
+# Desktop-only function stubs linked into Mesa's vulkan_dzn.dll (see meson-cross-uwp.ini)
+"$(dirname "$0")/zig-cc" -O2 -c "$(dirname "$0")/mesa_sysstubs.c" -o "$out/mesa_sysstubs.o"

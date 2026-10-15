@@ -24,6 +24,10 @@ open(os.path.join(out, 'rpcs3_uwp.exe'), 'wb').write(data)
 
 shutil.copy(os.path.join(here, 'AppxManifest.xml'), out)
 shutil.copy(os.path.join(os.path.dirname(exe), 'rpcs3_uwp_importcheck.exe'), out)
+# Graphics driver (Mesa Dozen: Vulkan on D3D12) and Microsoft's DXIL signer, if given.
+for extra in os.environ.get('UWP_EXTRA_FILES', '').split(os.pathsep):
+    if extra:
+        shutil.copy(extra, out)
 for name, (w, h) in {'StoreLogo': (50, 50), 'Square150x150Logo': (150, 150), 'Square44x44Logo': (44, 44),
                      'Wide310x150Logo': (310, 150), 'SplashScreen': (620, 300)}.items():
     open(os.path.join(out, 'Assets', name + '.png'), 'wb').write(png(w, h, (26, 26, 31)))

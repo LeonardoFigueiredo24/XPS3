@@ -12,6 +12,7 @@ typedef unsigned long long u64;
 
 /* user32 */
 UWP_STUB(MessageBoxA, 0)
+UWP_STUB(MonitorFromWindow, 0) // fullscreen-exclusive path in the Vulkan swapchain; no monitors on UWP
 UWP_STUB(MessageBoxW, 0)
 UWP_STUB(GetKeyNameTextW, 0)
 

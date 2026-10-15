@@ -16,6 +16,8 @@
 #include "Emu/emu_callbacks.h"
 #include "Emu/IdManager.h"
 #include "Emu/RSX/Null/NullGSRender.h"
+#include "Emu/RSX/GSFrameBase.h"
+#include "Emu/RSX/VK/VKGSRender.h"
 #include "Emu/Cell/Modules/cellMsgDialog.h"
 #include "Emu/Cell/Modules/cellOskDialog.h"
 #include "Emu/Cell/Modules/cellSaveData.h"
@@ -40,6 +42,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <vector>
 #include <set>
 #include <d3d11_1.h>
 #include <dxgi1_2.h>
@@ -64,6 +67,46 @@ namespace
 	};
 
 	atomic_t<shell_state> g_state{shell_state::booting};
+
+	// Output size of the emulated display; matches the CoreWindow swapchain.
+	constexpr u32 c_display_width = 1920;
+	constexpr u32 c_display_height = 1080;
+
+	// Latest frame from the Vulkan renderer, picked up by the UI thread.
+	std::mutex g_frame_mutex;
+	std::vector<u8> g_frame_pixels;
+	u32 g_frame_width = 0, g_frame_height = 0;
+	u64 g_frame_serial = 0;
+
+	// Stand-in for the desktop game window: fixed size, no native handle. The Vulkan
+	// renderer presents through swapchain_UWP, which calls uwp_present_frame().
+	class uwp_gs_frame final : public GSFrameBase
+	{
+	public:
+		void close() override {}
+		void reset() override {}
+		bool shown() override { return true; }
+		void hide() override {}
+		void show() override {}
+		void toggle_fullscreen() override {}
+
+		void delete_context(draw_context_t) override {}
+		draw_context_t make_context() override { return nullptr; }
+		void set_current(draw_context_t) override {}
+		void flip(draw_context_t, bool) override {}
+		int client_width() override { return c_display_width; }
+		int client_height() override { return c_display_height; }
+		f64 client_display_rate() override { return 60.0; }
+		bool has_alpha() override { return false; }
+
+		display_handle_t handle() const override { return nullptr; }
+
+		bool can_consume_frame() const override { return false; }
+		void present_frame(std::vector<u8>&&, u32, u32, u32, bool) const override {}
+		void take_screenshot(std::vector<u8>&&, u32, u32, bool) override {}
+
+		void update_title(double) override {}
+	};
 
 	// The emulator thread plays the role of desktop RPCS3's Qt main thread: requests from
 	// other threads are queued and run by its loop, never on the requesting thread (the
@@ -154,7 +197,7 @@ namespace
 		}
 	}
 
-	// Pick what to boot: first file in LocalState/boot/, else the bundled test ELF.
+	// Pick what to boot: first file in LocalState/boot/, else the bundled test ELF (a GCM triangle).
 	std::string find_boot_target()
 	{
 		const std::string boot_dir = g_local_dir + "boot/";
@@ -168,7 +211,7 @@ namespace
 			}
 		}
 
-		return get_package_dir() + "test/ppu_thread.elf";
+		return get_package_dir() + "test/gs_gcm_basic_triangle.elf";
 	}
 
 	void create_callbacks()
@@ -226,10 +269,13 @@ namespace
 
 		g_emu_callbacks.init_gs_render = [](utils::serial* ar)
 		{
-			g_fxo->init<rsx::thread, named_thread<NullGSRender>>(ar);
+			if (g_cfg.video.renderer == video_renderer::vulkan)
+				g_fxo->init<rsx::thread, named_thread<VKGSRender>>(ar);
+			else
+				g_fxo->init<rsx::thread, named_thread<NullGSRender>>(ar);
 		};
 		g_emu_callbacks.close_gs_frame = []() {};
-		g_emu_callbacks.get_gs_frame = []() -> std::unique_ptr<GSFrameBase> { return {}; };
+		g_emu_callbacks.get_gs_frame = []() -> std::unique_ptr<GSFrameBase> { return std::make_unique<uwp_gs_frame>(); };
 		g_emu_callbacks.get_camera_handler = []() -> std::shared_ptr<camera_handler_base> { return std::make_shared<null_camera_handler>(); };
 		g_emu_callbacks.get_music_handler = []() -> std::shared_ptr<music_handler_base> { return std::make_shared<null_music_handler>(); };
 
@@ -301,13 +347,20 @@ namespace
 			g_main_thread_id = GetCurrentThreadId();
 			create_callbacks();
 
+			Emu.SetSupportedRenderers({video_renderer::null, video_renderer::vulkan});
 			Emu.SetHasGui(false);
-			Emu.SetHeadless(true);
+			Emu.SetHeadless(false); // headless mode would force the null renderer
 			Emu.SetUsr("00000001");
 			Emu.Init();
 
-			g_cfg.video.renderer.set(video_renderer::null);
+			// Vulkan through Mesa's Dozen (D3D12). An empty LocalState/null_renderer file
+			// switches back to the null renderer for CPU-only tests.
+			const bool use_null = fs::is_file(g_local_dir + "null_renderer");
+			g_cfg.video.renderer.set(use_null ? video_renderer::null : video_renderer::vulkan);
+			sys_log.always()("UWP: renderer: %s", use_null ? "null" : "Vulkan (Dozen on D3D12)");
 			g_cfg.audio.renderer.set(audio_renderer::null);
+			g_cfg.audio.music.set(music_handler::null);
+			g_cfg.io.camera.set(camera_handler::null);
 
 			// Built without LLVM: run PPU and SPU code on the interpreters.
 			g_cfg.core.ppu_decoder.set(ppu_decoder_type::_static);
@@ -485,7 +538,48 @@ namespace
 				}
 				static const float blue[4] = {0.10f, 0.25f, 0.60f, 1}, green[4] = {0.10f, 0.55f, 0.20f, 1}, red[4] = {0.70f, 0.12f, 0.12f, 1};
 				const shell_state st = g_state;
-				ctx->ClearRenderTargetView(rtv, st == shell_state::failed ? red : st == shell_state::finished ? green : blue);
+
+				// Show the emulator's latest frame while it runs; otherwise the status color.
+				static u64 shown_serial = 0;
+				static ID3D11Texture2D* frame_tex = nullptr;
+				bool have_frame = false;
+				if (st == shell_state::running || st == shell_state::booting)
+				{
+					std::lock_guard lock(g_frame_mutex);
+					if (g_frame_serial && g_frame_width == c_display_width && g_frame_height == c_display_height)
+					{
+						if (!frame_tex)
+						{
+							D3D11_TEXTURE2D_DESC td{};
+							td.Width = c_display_width;
+							td.Height = c_display_height;
+							td.MipLevels = 1;
+							td.ArraySize = 1;
+							td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+							td.SampleDesc.Count = 1;
+							td.Usage = D3D11_USAGE_DEFAULT;
+							dev->CreateTexture2D(&td, nullptr, &frame_tex);
+						}
+						if (frame_tex && shown_serial != g_frame_serial)
+						{
+							ctx->UpdateSubresource(frame_tex, 0, nullptr, g_frame_pixels.data(), g_frame_width * 4, 0);
+							shown_serial = g_frame_serial;
+						}
+						have_frame = frame_tex != nullptr;
+					}
+				}
+
+				if (have_frame)
+				{
+					ID3D11Resource* target = nullptr;
+					rtv->GetResource(&target);
+					ctx->CopyResource(target, frame_tex);
+					target->Release();
+				}
+				else
+				{
+					ctx->ClearRenderTargetView(rtv, st == shell_state::failed ? red : st == shell_state::finished ? green : blue);
+				}
 				const HRESULT hr_present = sc->Present(1, 0);
 
 				static u32 frames = 0;
@@ -510,6 +604,22 @@ namespace
 			return S_OK;
 		}
 	};
+}
+
+// Used by the Vulkan renderer's UWP swapchain (Emu/RSX/VK/vkutils/swapchain_uwp.hpp).
+void uwp_get_display_size(u32& width, u32& height)
+{
+	width = c_display_width;
+	height = c_display_height;
+}
+
+void uwp_present_frame(const void* bgra_pixels, u32 width, u32 height)
+{
+	std::lock_guard lock(g_frame_mutex);
+	g_frame_pixels.assign(static_cast<const u8*>(bgra_pixels), static_cast<const u8*>(bgra_pixels) + usz{width} * height * 4);
+	g_frame_width = width;
+	g_frame_height = height;
+	g_frame_serial++;
 }
 
 // Called by the emulator for unrecoverable errors.

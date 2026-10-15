@@ -154,7 +154,9 @@ namespace vk
 				extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 			}
 
-#ifdef _WIN32
+#if defined(_WIN32) && defined(RPCS3_UWP)
+			// No surface extension: frames are presented through the app shell (swapchain_uwp.hpp)
+#elif defined(_WIN32)
 			extensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
 #elif defined(__APPLE__)
 			extensions.push_back(VK_EXT_METAL_SURFACE_EXTENSION_NAME);
@@ -286,6 +288,23 @@ namespace vk
 
 	swapchain_base* instance::create_swapchain(display_handle_t window_handle, vk::physical_device& dev)
 	{
+#ifdef RPCS3_UWP
+		// No WSI on UWP: always use the shell-presented native swapchain on a graphics queue.
+		for (u32 i = 0; i < dev.get_queue_count(); i++)
+		{
+			const auto flags = dev.get_queue_properties(i).queueFlags;
+			if ((flags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) == (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT))
+			{
+				auto swapchain = new swapchain_NATIVE(dev, -1, i, -1);
+				swapchain->create(window_handle);
+				return swapchain;
+			}
+		}
+
+		rsx_log.fatal("Failed to find a suitable graphics queue");
+		return nullptr;
+#endif
+
 		WSI_config surface_config
 		{
 			.supports_automatic_wm_reports = true

@@ -182,8 +182,29 @@ if(USE_VULKAN)
 		endif()
 	endif()
 
+	if(RPCS3_UWP)
+		# No Vulkan loader on UWP: a small shim loads Mesa's Dozen (Vulkan on D3D12) from the
+		# package. Headers come from Khronos Vulkan-Headers (RPCS3_UWP_VULKAN_INCLUDE_DIR).
+		set(UWP_VKSHIM_THUNKS ${CMAKE_BINARY_DIR}/uwp_vkshim/vkshim_thunks.c)
+		add_custom_command(
+			OUTPUT ${UWP_VKSHIM_THUNKS}
+			COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/uwp_vkshim
+			COMMAND python3 ${CMAKE_SOURCE_DIR}/uwp/vkshim/gen_vkshim.py ${UWP_VKSHIM_THUNKS}
+				${RPCS3_UWP_VULKAN_INCLUDE_DIR}/vulkan/vulkan_core.h ${RPCS3_UWP_VULKAN_INCLUDE_DIR}/vulkan/vulkan_win32.h
+			DEPENDS ${CMAKE_SOURCE_DIR}/uwp/vkshim/gen_vkshim.py)
+		add_library(uwp_vkshim STATIC ${CMAKE_SOURCE_DIR}/uwp/vkshim/vkshim.cpp ${UWP_VKSHIM_THUNKS})
+		target_include_directories(uwp_vkshim SYSTEM PUBLIC ${RPCS3_UWP_VULKAN_INCLUDE_DIR})
+		target_compile_definitions(uwp_vkshim PRIVATE VK_USE_PLATFORM_WIN32_KHR)
+
+		add_library(3rdparty_vulkan INTERFACE)
+		target_compile_definitions(3rdparty_vulkan INTERFACE -DHAVE_VULKAN)
+		target_link_libraries(3rdparty_vulkan INTERFACE uwp_vkshim)
+		set(VULKAN_TARGET 3rdparty_vulkan)
+	else()
 	find_package(Vulkan)
-	if(VULKAN_FOUND)
+	endif()
+	if(RPCS3_UWP)
+	elseif(VULKAN_FOUND)
 		add_library(3rdparty_vulkan INTERFACE)
 		target_compile_definitions(3rdparty_vulkan INTERFACE -DHAVE_VULKAN)
 		target_link_libraries(3rdparty_vulkan INTERFACE Vulkan::Vulkan)

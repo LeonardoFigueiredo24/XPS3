@@ -1,6 +1,8 @@
 #pragma once
 
-#if defined (_WIN32)
+#if defined (_WIN32) && defined (RPCS3_UWP)
+#include "swapchain_uwp.hpp"
+#elif defined (_WIN32)
 #include "swapchain_win32.hpp"
 #elif defined (ANDROID)
 #include "swapchain_android.hpp"
