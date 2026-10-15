@@ -1,5 +1,5 @@
 diff --git a/src/microsoft/vulkan/dzn_cmd_buffer.c b/src/microsoft/vulkan/dzn_cmd_buffer.c
-index fd85f88..5204ca6 100644
+index fd85f88..c02b0b0 100644
 --- a/src/microsoft/vulkan/dzn_cmd_buffer.c
 +++ b/src/microsoft/vulkan/dzn_cmd_buffer.c
 @@ -30,6 +30,9 @@
@@ -85,6 +85,32 @@ index fd85f88..5204ca6 100644
     }
  
     return vk_command_buffer_end(&cmdbuf->vk);
+@@ -3180,6 +3217,14 @@ dzn_cmd_buffer_resolve_region(struct dzn_cmd_buffer *cmdbuf,
+    }
+ }
+ 
++static bool
++device_supports_view_instancing(struct dzn_cmd_buffer *cmdbuf)
++{
++   struct dzn_device *device = container_of(cmdbuf->vk.base.device, struct dzn_device, vk);
++   struct dzn_physical_device *pdev = container_of(device->vk.physical, struct dzn_physical_device, vk);
++   return pdev->options3.ViewInstancingTier > D3D12_VIEW_INSTANCING_TIER_NOT_SUPPORTED;
++}
++
+ static void
+ dzn_cmd_buffer_update_pipeline(struct dzn_cmd_buffer *cmdbuf, uint32_t bindpoint)
+ {
+@@ -3246,7 +3291,9 @@ dzn_cmd_buffer_update_pipeline(struct dzn_cmd_buffer *cmdbuf, uint32_t bindpoint
+ 
+    /* Deferring this until after the pipeline has been set due to an NVIDIA driver bug
+     * when view instancing mask is set with no pipeline bound. */
+-   if (view_instance_mask)
++   /* Without view instancing support (e.g. Xbox UWP, feature level 11_0) SetViewInstanceMask puts
++    * the command list in an error state and Close() fails with E_INVALIDARG. */
++   if (view_instance_mask && device_supports_view_instancing(cmdbuf))
+       ID3D12GraphicsCommandList1_SetViewInstanceMask(cmdbuf->cmdlist, view_instance_mask);
+ }
+ 
 diff --git a/src/microsoft/vulkan/dzn_device.c b/src/microsoft/vulkan/dzn_device.c
 index 4a4dde5..c97ebc6 100644
 --- a/src/microsoft/vulkan/dzn_device.c
