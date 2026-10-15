@@ -1,8 +1,27 @@
 diff --git a/src/microsoft/vulkan/dzn_cmd_buffer.c b/src/microsoft/vulkan/dzn_cmd_buffer.c
-index fd85f88..8109dce 100644
+index fd85f88..a6f7d88 100644
 --- a/src/microsoft/vulkan/dzn_cmd_buffer.c
 +++ b/src/microsoft/vulkan/dzn_cmd_buffer.c
-@@ -1069,6 +1069,30 @@ dzn_cmd_buffer_gather_queries(struct dzn_cmd_buffer *cmdbuf)
+@@ -30,6 +30,10 @@
+ 
+ #include "dxil_spirv_nir.h"
+ 
++/* dzn_trace.c: D3D12 command list call tracer (diagnostics for the Xbox UWP port) */
++void dzn_trace_wrap(void *obj, unsigned slots);
++void dzn_trace_dump(unsigned last);
++
+ static void
+ dzn_cmd_buffer_exec_transition_barriers(struct dzn_cmd_buffer *cmdbuf,
+                                         D3D12_RESOURCE_BARRIER *barriers,
+@@ -670,6 +674,7 @@ dzn_cmd_buffer_create(const VkCommandBufferAllocateInfo *info,
+ 
+       (void)ID3D12GraphicsCommandList_QueryInterface(cmdbuf->cmdlist, &IID_ID3D12GraphicsCommandList8, (void **)&cmdbuf->cmdlist8);
+       (void)ID3D12GraphicsCommandList_QueryInterface(cmdbuf->cmdlist, &IID_ID3D12GraphicsCommandList9, (void **)&cmdbuf->cmdlist9);
++      dzn_trace_wrap(cmdbuf->cmdlist, cmdbuf->cmdlist9 ? 84 : cmdbuf->cmdlist8 ? 82 : 66);
+    }
+ 
+    cmdbuf->type = type;
+@@ -1069,6 +1074,30 @@ dzn_cmd_buffer_gather_queries(struct dzn_cmd_buffer *cmdbuf)
     return VK_SUCCESS;
  }
  
@@ -33,7 +52,7 @@ index fd85f88..8109dce 100644
  VKAPI_ATTR VkResult VKAPI_CALL
  dzn_EndCommandBuffer(VkCommandBuffer commandBuffer)
  {
-@@ -1078,8 +1102,11 @@ dzn_EndCommandBuffer(VkCommandBuffer commandBuffer)
+@@ -1078,8 +1107,12 @@ dzn_EndCommandBuffer(VkCommandBuffer commandBuffer)
        dzn_cmd_buffer_gather_events(cmdbuf);
        dzn_cmd_buffer_gather_queries(cmdbuf);
        HRESULT hres = ID3D12GraphicsCommandList1_Close(cmdbuf->cmdlist);
@@ -41,6 +60,7 @@ index fd85f88..8109dce 100644
 +      if (FAILED(hres)) {
 +         mesa_loge("dzn: ID3D12GraphicsCommandList::Close failed: 0x%08x", (unsigned)hres);
 +         dzn_log_d3d12_messages(container_of(cmdbuf->vk.base.device, struct dzn_device, vk));
++         dzn_trace_dump(400);
           vk_command_buffer_set_error(&cmdbuf->vk, VK_ERROR_OUT_OF_HOST_MEMORY);
 +      }
     }
@@ -95,3 +115,15 @@ index 4a4dde5..c97ebc6 100644
     };
  }
  
+diff --git a/src/microsoft/vulkan/meson.build b/src/microsoft/vulkan/meson.build
+index 800fdc2..56a58cd 100644
+--- a/src/microsoft/vulkan/meson.build
++++ b/src/microsoft/vulkan/meson.build
+@@ -28,6 +28,7 @@ dzn_drirc = custom_target(
+ 
+ libdzn_files = files(
+   'dzn_cmd_buffer.c',
++  'dzn_trace.c',
+   'dzn_descriptor_set.c',
+   'dzn_device.c',
+   'dzn_dxcore.cpp',

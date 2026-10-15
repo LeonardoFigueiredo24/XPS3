@@ -1,2 +1,2 @@
 #!/bin/sh
-exec python3 -m ziglang c++ -target x86_64-windows-gnu -mcpu=znver2 "$@"
+exec python3 -m ziglang c++ -target x86_64-windows-gnu -mcpu=${UWP_MCPU:-x86_64_v3} "$@"
