@@ -322,7 +322,7 @@ namespace
 		g_emu_callbacks.play_sound = [](const std::string&, std::optional<f32>) {};
 		g_emu_callbacks.get_image_info = [](const std::string&, std::string&, s32&, s32&, s32&) { return false; };
 		g_emu_callbacks.get_scaled_image = [](const std::string&, s32, s32, s32&, s32&, u8*, bool) { return false; };
-		g_emu_callbacks.get_font_dirs = []() { return std::vector<std::string>{}; };
+		g_emu_callbacks.get_font_dirs = []() { return std::vector<std::string>{get_package_dir() + "fonts/"}; };
 		g_emu_callbacks.on_install_pkgs = [](const std::vector<std::string>&, bool) { return false; };
 		g_emu_callbacks.add_breakpoint = [](u32) {};
 		g_emu_callbacks.display_sleep_control_supported = []() { return false; };
@@ -343,6 +343,16 @@ namespace
 			fs::create_path(g_android_config_dir);
 			fs::create_path(g_android_cache_dir);
 
+			// Overlay UI icons ship in the package; RPCS3 looks for them in its config dir.
+			const std::string icons_src = get_package_dir() + "Icons/ui/";
+			const std::string icons_dst = g_android_config_dir + "Icons/ui/";
+			fs::create_path(icons_dst);
+			for (const auto& entry : fs::dir(icons_src))
+			{
+				if (!entry.is_directory && !fs::is_file(icons_dst + entry.name))
+					fs::copy_file(icons_src + entry.name, icons_dst + entry.name, false);
+			}
+
 			static std::unique_ptr<logs::listener> log_file = logs::make_file_listener(g_android_config_dir + "RPCS3.log", 256 * 1024 * 1024);
 
 			// Any fatal log line (e.g. a dying RSX thread, which doesn't stop the emulator) turns the screen red.
@@ -361,9 +371,14 @@ namespace
 			if (FILE* f = std::freopen((g_local_dir + "mesa.log").c_str(), "w", stderr))
 				std::setvbuf(f, nullptr, _IONBF, 0);
 			_putenv_s("MESA_LOG_LEVEL", "info");
-			// D3D12 debug layer for Dozen, if the console has it; LocalState/no_d3d12_debug turns it off.
-			if (!fs::is_file(g_local_dir + "no_d3d12_debug"))
+			// D3D12 debug layer for Dozen only on request (LocalState/d3d12_debug). On the Xbox it is
+			// only partly present and runs since it was enabled by default (builds 12-18) hit heap corruption.
+			if (fs::is_file(g_local_dir + "d3d12_debug"))
 				_putenv_s("DZN_DEBUG", "d3d12");
+			// VK_EXT_external_memory_host (D3D12 heaps opened on PS3 memory) only on request
+			// (LocalState/ext_host_mem) while it is a suspect for the startup heap corruption.
+			if (fs::is_file(g_local_dir + "ext_host_mem"))
+				_putenv_s("DZN_EXT_HOST_MEM", "1");
 
 			// Errors and warnings from the Vulkan driver (Mesa Dozen), with Mesa's source file:line.
 			uwp_vkshim_log = [](const char* where, const char* text)

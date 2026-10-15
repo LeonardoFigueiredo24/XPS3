@@ -1,8 +1,46 @@
 diff --git a/src/microsoft/vulkan/dzn_cmd_buffer.c b/src/microsoft/vulkan/dzn_cmd_buffer.c
-index fd85f88..8109dce 100644
+index fd85f88..4524669 100644
 --- a/src/microsoft/vulkan/dzn_cmd_buffer.c
 +++ b/src/microsoft/vulkan/dzn_cmd_buffer.c
-@@ -1069,6 +1069,30 @@ dzn_cmd_buffer_gather_queries(struct dzn_cmd_buffer *cmdbuf)
+@@ -30,6 +30,9 @@
+ 
+ #include "dxil_spirv_nir.h"
+ 
++/* dzn_trace.c: D3D12 command list call tracer (diagnostics for the Xbox UWP port) */
++void dzn_trace_dump(const void *list, unsigned last);
++
+ static void
+ dzn_cmd_buffer_exec_transition_barriers(struct dzn_cmd_buffer *cmdbuf,
+                                         D3D12_RESOURCE_BARRIER *barriers,
+@@ -508,8 +511,11 @@ dzn_cmd_buffer_reset(struct vk_command_buffer *cbuf, VkCommandBufferResetFlags f
+ 
+    vk_command_buffer_reset(&cmdbuf->vk);
+ 
+-   if (cmdbuf->vk.level == VK_COMMAND_BUFFER_LEVEL_PRIMARY)
+-      ID3D12CommandAllocator_Reset(cmdbuf->cmdalloc);
++   if (cmdbuf->vk.level == VK_COMMAND_BUFFER_LEVEL_PRIMARY) {
++      HRESULT hres = ID3D12CommandAllocator_Reset(cmdbuf->cmdalloc);
++      if (FAILED(hres))
++         mesa_loge("dzn: ID3D12CommandAllocator::Reset failed: 0x%08x", (unsigned)hres);
++   }
+ }
+ 
+ static uint32_t
+@@ -718,8 +724,11 @@ dzn_BeginCommandBuffer(VkCommandBuffer commandBuffer,
+ {
+    VK_FROM_HANDLE(dzn_cmd_buffer, cmdbuf, commandBuffer);
+    vk_command_buffer_begin(&cmdbuf->vk, info);
+-   if (cmdbuf->vk.level == VK_COMMAND_BUFFER_LEVEL_PRIMARY)
+-      ID3D12GraphicsCommandList1_Reset(cmdbuf->cmdlist, cmdbuf->cmdalloc, NULL);
++   if (cmdbuf->vk.level == VK_COMMAND_BUFFER_LEVEL_PRIMARY) {
++      HRESULT hres = ID3D12GraphicsCommandList1_Reset(cmdbuf->cmdlist, cmdbuf->cmdalloc, NULL);
++      if (FAILED(hres))
++         mesa_loge("dzn: ID3D12GraphicsCommandList::Reset failed: 0x%08x (list type %d)", (unsigned)hres, (int)cmdbuf->type);
++   }
+    return vk_command_buffer_get_record_result(&cmdbuf->vk);
+ }
+ 
+@@ -1069,6 +1078,30 @@ dzn_cmd_buffer_gather_queries(struct dzn_cmd_buffer *cmdbuf)
     return VK_SUCCESS;
  }
  
@@ -33,7 +71,7 @@ index fd85f88..8109dce 100644
  VKAPI_ATTR VkResult VKAPI_CALL
  dzn_EndCommandBuffer(VkCommandBuffer commandBuffer)
  {
-@@ -1078,8 +1102,11 @@ dzn_EndCommandBuffer(VkCommandBuffer commandBuffer)
+@@ -1078,8 +1111,12 @@ dzn_EndCommandBuffer(VkCommandBuffer commandBuffer)
        dzn_cmd_buffer_gather_events(cmdbuf);
        dzn_cmd_buffer_gather_queries(cmdbuf);
        HRESULT hres = ID3D12GraphicsCommandList1_Close(cmdbuf->cmdlist);
@@ -41,16 +79,166 @@ index fd85f88..8109dce 100644
 +      if (FAILED(hres)) {
 +         mesa_loge("dzn: ID3D12GraphicsCommandList::Close failed: 0x%08x", (unsigned)hres);
 +         dzn_log_d3d12_messages(container_of(cmdbuf->vk.base.device, struct dzn_device, vk));
++         dzn_trace_dump(cmdbuf->cmdlist, 400);
           vk_command_buffer_set_error(&cmdbuf->vk, VK_ERROR_OUT_OF_HOST_MEMORY);
 +      }
     }
  
     return vk_command_buffer_end(&cmdbuf->vk);
+@@ -2381,6 +2418,16 @@ dzn_cmd_buffer_clear_zs(struct dzn_cmd_buffer *cmdbuf,
+    }
+ }
+ 
++static void
++dzn_log_empty_copy(const VkBufferImageCopy2 *region)
++{
++   static unsigned count;
++   if (count++ < 4)
++      mesa_logw("dzn: skipping empty buffer/image copy (extent %ux%ux%u, row length %u, image height %u)",
++                region->imageExtent.width, region->imageExtent.height, region->imageExtent.depth,
++                region->bufferRowLength, region->bufferImageHeight);
++}
++
+ static void
+ dzn_cmd_buffer_copy_buf2img_region(struct dzn_cmd_buffer *cmdbuf,
+                                    const VkCopyBufferToImageInfo2 *info,
+@@ -2396,6 +2443,12 @@ dzn_cmd_buffer_copy_buf2img_region(struct dzn_cmd_buffer *cmdbuf,
+    ID3D12GraphicsCommandList1 *cmdlist = cmdbuf->cmdlist;
+ 
+    VkBufferImageCopy2 region = info->pRegions[r];
++   /* Empty regions copy nothing; D3D12 on the Xbox rejects zero-sized footprints/boxes
++    * (CopyTextureRegion -> Close() E_INVALIDARG), so skip them. */
++   if (!region.imageExtent.width || !region.imageExtent.height || !region.imageExtent.depth) {
++      dzn_log_empty_copy(&region);
++      return;
++   }
+    enum pipe_format pfmt = vk_format_to_pipe_format(dst_image->vk.format);
+    uint32_t blkh = util_format_get_blockheight(pfmt);
+    uint32_t blkd = util_format_get_blockdepth(pfmt);
+@@ -2477,6 +2530,12 @@ dzn_cmd_buffer_copy_img2buf_region(struct dzn_cmd_buffer *cmdbuf,
+    ID3D12GraphicsCommandList1 *cmdlist = cmdbuf->cmdlist;
+ 
+    VkBufferImageCopy2 region = info->pRegions[r];
++   /* Empty regions copy nothing; D3D12 on the Xbox rejects zero-sized footprints/boxes
++    * (CopyTextureRegion -> Close() E_INVALIDARG), so skip them. */
++   if (!region.imageExtent.width || !region.imageExtent.height || !region.imageExtent.depth) {
++      dzn_log_empty_copy(&region);
++      return;
++   }
+    enum pipe_format pfmt = vk_format_to_pipe_format(src_image->vk.format);
+    uint32_t blkh = util_format_get_blockheight(pfmt);
+    uint32_t blkd = util_format_get_blockdepth(pfmt);
+@@ -3180,6 +3239,14 @@ dzn_cmd_buffer_resolve_region(struct dzn_cmd_buffer *cmdbuf,
+    }
+ }
+ 
++static bool
++device_supports_view_instancing(struct dzn_cmd_buffer *cmdbuf)
++{
++   struct dzn_device *device = container_of(cmdbuf->vk.base.device, struct dzn_device, vk);
++   struct dzn_physical_device *pdev = container_of(device->vk.physical, struct dzn_physical_device, vk);
++   return pdev->options3.ViewInstancingTier > D3D12_VIEW_INSTANCING_TIER_NOT_SUPPORTED;
++}
++
+ static void
+ dzn_cmd_buffer_update_pipeline(struct dzn_cmd_buffer *cmdbuf, uint32_t bindpoint)
+ {
+@@ -3246,7 +3313,9 @@ dzn_cmd_buffer_update_pipeline(struct dzn_cmd_buffer *cmdbuf, uint32_t bindpoint
+ 
+    /* Deferring this until after the pipeline has been set due to an NVIDIA driver bug
+     * when view instancing mask is set with no pipeline bound. */
+-   if (view_instance_mask)
++   /* Without view instancing support (e.g. Xbox UWP, feature level 11_0) SetViewInstanceMask puts
++    * the command list in an error state and Close() fails with E_INVALIDARG. */
++   if (view_instance_mask && device_supports_view_instancing(cmdbuf))
+       ID3D12GraphicsCommandList1_SetViewInstanceMask(cmdbuf->cmdlist, view_instance_mask);
+ }
+ 
+@@ -3728,13 +3797,22 @@ dzn_cmd_buffer_triangle_fan_rewrite_index(struct dzn_cmd_buffer *cmdbuf,
+    return VK_SUCCESS;
+ }
+ 
+-static void
++static bool
+ dzn_cmd_buffer_prepare_draw(struct dzn_cmd_buffer *cmdbuf, bool indexed)
+ {
+    if (indexed)
+       dzn_cmd_buffer_update_ibview(cmdbuf);
+ 
+    dzn_cmd_buffer_update_pipeline(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS);
++
++   /* A pipeline whose D3D12 state failed to create (logged at creation) can't draw;
++    * skip the draw instead of dereferencing a NULL pipeline. */
++   if (!cmdbuf->state.pipeline || !cmdbuf->state.pipeline->state) {
++      static unsigned skipped;
++      if (skipped++ < 8)
++         mesa_loge("dzn: skipping draw: no valid D3D12 pipeline state bound");
++      return false;
++   }
+    dzn_cmd_buffer_update_heaps(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS);
+    dzn_cmd_buffer_update_sysvals(cmdbuf, VK_PIPELINE_BIND_POINT_GRAPHICS);
+    dzn_cmd_buffer_update_viewports(cmdbuf);
+@@ -3749,6 +3827,7 @@ dzn_cmd_buffer_prepare_draw(struct dzn_cmd_buffer *cmdbuf, bool indexed)
+    /* Reset the dirty states */
+    cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].dirty &= DZN_CMD_BINDPOINT_DIRTY_HEAPS;
+    cmdbuf->state.dirty = 0;
++   return true;
+ }
+ 
+ static uint32_t
+@@ -4085,7 +4164,8 @@ dzn_cmd_buffer_indirect_draw(struct dzn_cmd_buffer *cmdbuf,
+       cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].dirty |=
+          DZN_CMD_BINDPOINT_DIRTY_SYSVALS;
+ 
+-      dzn_cmd_buffer_prepare_draw(cmdbuf, indexed);
++      if (!dzn_cmd_buffer_prepare_draw(cmdbuf, indexed))
++         continue;
+ 
+       ID3D12GraphicsCommandList1_ExecuteIndirect(cmdbuf->cmdlist, cmdsig,
+                                                  max_draw_count,
+@@ -5300,7 +5380,8 @@ dzn_CmdDraw(VkCommandBuffer commandBuffer,
+          cmdbuf->state.sysvals.gfx.view_index = view;
+          cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].dirty |=
+             DZN_CMD_BINDPOINT_DIRTY_SYSVALS;
+-         dzn_cmd_buffer_prepare_draw(cmdbuf, true);
++         if (!dzn_cmd_buffer_prepare_draw(cmdbuf, true))
++         continue;
+          ID3D12GraphicsCommandList1_DrawIndexedInstanced(cmdbuf->cmdlist, vertexCount, instanceCount, 0,
+                                                 firstVertex, firstInstance);
+       }
+@@ -5316,7 +5397,8 @@ dzn_CmdDraw(VkCommandBuffer commandBuffer,
+          cmdbuf->state.sysvals.gfx.view_index = view;
+          cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].dirty |=
+             DZN_CMD_BINDPOINT_DIRTY_SYSVALS;
+-         dzn_cmd_buffer_prepare_draw(cmdbuf, false);
++         if (!dzn_cmd_buffer_prepare_draw(cmdbuf, false))
++            continue;
+          ID3D12GraphicsCommandList1_DrawInstanced(cmdbuf->cmdlist, vertexCount, instanceCount,
+                                           firstVertex, firstInstance);
+       }
+@@ -5394,7 +5476,8 @@ dzn_CmdDrawIndexed(VkCommandBuffer commandBuffer,
+       cmdbuf->state.bindpoint[VK_PIPELINE_BIND_POINT_GRAPHICS].dirty |=
+          DZN_CMD_BINDPOINT_DIRTY_SYSVALS;
+ 
+-      dzn_cmd_buffer_prepare_draw(cmdbuf, true);
++      if (!dzn_cmd_buffer_prepare_draw(cmdbuf, true))
++         continue;
+       ID3D12GraphicsCommandList1_DrawIndexedInstanced(cmdbuf->cmdlist, indexCount, instanceCount, firstIndex,
+                                             vertexOffset, firstInstance);
+    }
 diff --git a/src/microsoft/vulkan/dzn_device.c b/src/microsoft/vulkan/dzn_device.c
-index 4a4dde5..c97ebc6 100644
+index 4a4dde5..9a2d5a2 100644
 --- a/src/microsoft/vulkan/dzn_device.c
 +++ b/src/microsoft/vulkan/dzn_device.c
-@@ -153,6 +153,7 @@ dzn_physical_device_get_extensions(struct dzn_physical_device *pdev)
+@@ -146,13 +146,14 @@ dzn_physical_device_get_extensions(struct dzn_physical_device *pdev)
+       .EXT_debug_marker                      = true,
+       .EXT_descriptor_indexing               = pdev->shader_model >= D3D_SHADER_MODEL_6_6,
+ #if defined(_WIN32)
+-      .EXT_external_memory_host              = pdev->dev13,
++      .EXT_external_memory_host              = pdev->dev13 && os_get_option("DZN_EXT_HOST_MEM") != NULL,
+ #endif
+       .EXT_scalar_block_layout               = true,
+       .EXT_separate_stencil_usage            = true,
        .EXT_shader_replicated_composites      = true,
        .EXT_shader_subgroup_ballot            = true,
        .EXT_shader_subgroup_vote              = true,
@@ -95,3 +283,242 @@ index 4a4dde5..c97ebc6 100644
     };
  }
  
+diff --git a/src/microsoft/vulkan/dzn_pipeline.c b/src/microsoft/vulkan/dzn_pipeline.c
+index 65ccc0e..2306a6f 100644
+--- a/src/microsoft/vulkan/dzn_pipeline.c
++++ b/src/microsoft/vulkan/dzn_pipeline.c
+@@ -1857,6 +1857,10 @@ dzn_graphics_pipeline_destroy(struct dzn_graphics_pipeline *pipeline,
+    vk_free2(&pipeline->base.base.device->alloc, alloc, pipeline);
+ }
+ 
++static void
++dzn_pso_failure_probe(struct dzn_device *device, struct dzn_physical_device *pdev,
++                      struct dzn_graphics_pipeline *pipeline, const uintptr_t *src_buf, size_t size);
++
+ static VkResult
+ dzn_graphics_pipeline_create(struct dzn_device *device,
+                              VkPipelineCache cache,
+@@ -2061,6 +2065,8 @@ dzn_graphics_pipeline_create(struct dzn_device *device,
+                                                &IID_ID3D12PipelineState,
+                                                (void **)&pipeline->base.state);
+       if (FAILED(hres)) {
++         mesa_loge("dzn: CreatePipelineState for a graphics pipeline failed: 0x%08x", (unsigned)hres);
++         dzn_pso_failure_probe(device, pdev, pipeline, pipeline->templates.stream_buf, stream_desc->SizeInBytes);
+          ret = vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+          goto out;
+       }
+@@ -2180,6 +2186,171 @@ update_stencil_state(struct dzn_physical_device *pdev,
+    }
+ }
+ 
++
++
++#define DZN_SUBOBJ_SIZE(id, T) \
++   case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_##id: { struct { D3D12_PIPELINE_STATE_SUBOBJECT_TYPE t; T d; } w; return sizeof(w); }
++static size_t
++dzn_pso_subobject_size(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE type)
++{
++   switch (type) {
++   DZN_SUBOBJ_SIZE(ROOT_SIGNATURE, ID3D12RootSignature *)
++   DZN_SUBOBJ_SIZE(VS, D3D12_SHADER_BYTECODE)
++   DZN_SUBOBJ_SIZE(PS, D3D12_SHADER_BYTECODE)
++   DZN_SUBOBJ_SIZE(DS, D3D12_SHADER_BYTECODE)
++   DZN_SUBOBJ_SIZE(HS, D3D12_SHADER_BYTECODE)
++   DZN_SUBOBJ_SIZE(GS, D3D12_SHADER_BYTECODE)
++   DZN_SUBOBJ_SIZE(CS, D3D12_SHADER_BYTECODE)
++   DZN_SUBOBJ_SIZE(STREAM_OUTPUT, D3D12_STREAM_OUTPUT_DESC)
++   DZN_SUBOBJ_SIZE(BLEND, D3D12_BLEND_DESC)
++   DZN_SUBOBJ_SIZE(SAMPLE_MASK, UINT)
++   DZN_SUBOBJ_SIZE(RASTERIZER, D3D12_RASTERIZER_DESC)
++   DZN_SUBOBJ_SIZE(RASTERIZER1, D3D12_RASTERIZER_DESC1)
++   DZN_SUBOBJ_SIZE(RASTERIZER2, D3D12_RASTERIZER_DESC2)
++   DZN_SUBOBJ_SIZE(DEPTH_STENCIL, D3D12_DEPTH_STENCIL_DESC)
++   DZN_SUBOBJ_SIZE(DEPTH_STENCIL1, D3D12_DEPTH_STENCIL_DESC1)
++   DZN_SUBOBJ_SIZE(DEPTH_STENCIL2, D3D12_DEPTH_STENCIL_DESC2)
++   DZN_SUBOBJ_SIZE(INPUT_LAYOUT, D3D12_INPUT_LAYOUT_DESC)
++   DZN_SUBOBJ_SIZE(IB_STRIP_CUT_VALUE, D3D12_INDEX_BUFFER_STRIP_CUT_VALUE)
++   DZN_SUBOBJ_SIZE(PRIMITIVE_TOPOLOGY, D3D12_PRIMITIVE_TOPOLOGY_TYPE)
++   DZN_SUBOBJ_SIZE(RENDER_TARGET_FORMATS, struct D3D12_RT_FORMAT_ARRAY)
++   DZN_SUBOBJ_SIZE(DEPTH_STENCIL_FORMAT, DXGI_FORMAT)
++   DZN_SUBOBJ_SIZE(SAMPLE_DESC, DXGI_SAMPLE_DESC)
++   DZN_SUBOBJ_SIZE(NODE_MASK, UINT)
++   DZN_SUBOBJ_SIZE(CACHED_PSO, D3D12_CACHED_PIPELINE_STATE)
++   DZN_SUBOBJ_SIZE(FLAGS, D3D12_PIPELINE_STATE_FLAGS)
++   DZN_SUBOBJ_SIZE(VIEW_INSTANCING, D3D12_VIEW_INSTANCING_DESC)
++   default: return 0;
++   }
++}
++
++/* Xbox UWP diagnostics: there is no D3D12 debug layer on the console, so when a graphics PSO
++ * fails, retry with one setting changed at a time and log which change makes it valid. */
++static void
++dzn_log_dxil_version(const char *stage, const D3D12_SHADER_BYTECODE *bc)
++{
++   if (!bc || !bc->pShaderBytecode || bc->BytecodeLength < 32) {
++      mesa_loge("dzn:   %s: none", stage);
++      return;
++   }
++   const uint8_t *b = bc->pShaderBytecode;
++   for (size_t i = 0; i + 12 < bc->BytecodeLength; i += 4) {
++      if (!memcmp(b + i, "DXIL", 4)) {
++         uint32_t ver;
++         memcpy(&ver, b + i + 8, 4);
++         mesa_loge("dzn:   %s: %zu bytes, shader model %u.%u (kind %u)", stage, (size_t)bc->BytecodeLength,
++                   (ver >> 4) & 0xf, ver & 0xf, ver >> 16);
++         return;
++      }
++   }
++   mesa_loge("dzn:   %s: %zu bytes, no DXIL part", stage, (size_t)bc->BytecodeLength);
++}
++
++static void
++dzn_pso_failure_probe(struct dzn_device *device, struct dzn_physical_device *pdev,
++                      struct dzn_graphics_pipeline *pipeline, const uintptr_t *src_buf, size_t size)
++{
++   static const char *const stage_names[] = { "VS", "HS", "DS", "GS", "PS" };
++   mesa_loge("dzn:   options14 independent stencil masks %d, options16 dynamic depth bias %d, "
++             "options19 narrow quad lines %d, offsets cut %u rast %u ds %u, stream %zu bytes",
++             (int)pdev->options14.IndependentFrontAndBackStencilRefMaskSupported,
++             (int)pdev->options16.DynamicDepthBiasSupported,
++             (int)pdev->options19.NarrowQuadrilateralLinesSupported,
++             pipeline->templates.desc_offsets.ib_strip_cut, pipeline->templates.desc_offsets.rast,
++             pipeline->templates.desc_offsets.ds, size);
++   {
++      /* Walk the stream and list subobject types. */
++      const uint8_t *p = (const uint8_t *)src_buf, *end = p + size;
++      char types[256]; int n = 0;
++      types[0] = 0;
++      while (p < end && n < (int)sizeof(types) - 8) {
++         D3D12_PIPELINE_STATE_SUBOBJECT_TYPE t = *(const D3D12_PIPELINE_STATE_SUBOBJECT_TYPE *)p;
++         n += snprintf(types + n, sizeof(types) - n, "%d ", (int)t);
++         size_t sz = dzn_pso_subobject_size(t);
++         if (!sz) break;
++         p += ALIGN_POT(sz, sizeof(void *));
++      }
++      mesa_loge("dzn:   subobject types: %s", types);
++   }
++   for (unsigned st = 0; st < ARRAY_SIZE(stage_names); st++) {
++      const D3D12_SHADER_BYTECODE *bc = pipeline->templates.shaders[st].bc;
++      if (bc)
++         dzn_log_dxil_version(stage_names[st], bc);
++   }
++
++   for (unsigned m = 0; m < 7; m++) {
++      uintptr_t buf[MAX_GFX_PIPELINE_STATE_STREAM_SIZE / sizeof(uintptr_t)];
++      memcpy(buf, src_buf, size);
++      const char *what = NULL;
++
++      D3D12_INDEX_BUFFER_STRIP_CUT_VALUE *cut = dzn_graphics_pipeline_get_desc(pipeline, buf, ib_strip_cut);
++      D3D12_RASTERIZER_DESC *rast = dzn_graphics_pipeline_get_desc(pipeline, buf, rast);
++      void *ds = dzn_graphics_pipeline_get_desc(pipeline, buf, ds);
++      bool ds2 = pdev->options14.IndependentFrontAndBackStencilRefMaskSupported;
++      bool rast2 = pdev->options19.NarrowQuadrilateralLinesSupported;
++
++      switch (m) {
++      case 0:
++         if (cut) { *cut = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED; what = "strip cut disabled"; }
++         break;
++      case 1:
++         if (rast && rast2) {
++            D3D12_RASTERIZER_DESC2 *r2 = (D3D12_RASTERIZER_DESC2 *)rast;
++            r2->DepthBias = 0; r2->SlopeScaledDepthBias = 0; r2->DepthBiasClamp = 0;
++            r2->ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
++            r2->ForcedSampleCount = 0;
++            r2->LineRasterizationMode = D3D12_LINE_RASTERIZATION_MODE_ALIASED;
++            what = "rasterizer2 bias/conservative/forced samples cleared, aliased lines";
++         } else if (rast) {
++            rast->DepthBias = 0; rast->SlopeScaledDepthBias = 0; rast->DepthBiasClamp = 0;
++            rast->ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
++            rast->ForcedSampleCount = 0;
++            rast->MultisampleEnable = FALSE; rast->AntialiasedLineEnable = FALSE;
++            what = "rasterizer bias/conservative/forced samples/line AA cleared";
++         }
++         break;
++      case 2:
++         if (rast) { rast->FillMode = D3D12_FILL_MODE_SOLID; rast->CullMode = D3D12_CULL_MODE_NONE; rast->DepthClipEnable = TRUE; what = "rasterizer solid/no cull/depth clip"; }
++         break;
++      case 3:
++         if (ds) {
++            if (ds2) ((D3D12_DEPTH_STENCIL_DESC2 *)ds)->DepthBoundsTestEnable = FALSE;
++            else ((D3D12_DEPTH_STENCIL_DESC1 *)ds)->DepthBoundsTestEnable = FALSE;
++            what = "depth bounds test off";
++         }
++         break;
++      case 4:
++         if (ds) {
++            if (ds2) { ((D3D12_DEPTH_STENCIL_DESC2 *)ds)->StencilEnable = FALSE; ((D3D12_DEPTH_STENCIL_DESC2 *)ds)->DepthEnable = FALSE; }
++            else { ((D3D12_DEPTH_STENCIL_DESC1 *)ds)->StencilEnable = FALSE; ((D3D12_DEPTH_STENCIL_DESC1 *)ds)->DepthEnable = FALSE; }
++            what = "depth and stencil off";
++         }
++         break;
++      case 5:
++      case 6: {
++         /* Drop the pixel shader (5) or the geometry shader (6). */
++         const D3D12_SHADER_BYTECODE *bc = pipeline->templates.shaders[m == 5 ? MESA_SHADER_FRAGMENT : MESA_SHADER_GEOMETRY].bc;
++         if (bc) {
++            D3D12_SHADER_BYTECODE *copy = (D3D12_SHADER_BYTECODE *)((uint8_t *)buf + ((const uint8_t *)bc - (const uint8_t *)pipeline->templates.stream_buf));
++            copy->pShaderBytecode = NULL;
++            copy->BytecodeLength = 0;
++            what = m == 5 ? "no pixel shader" : "no geometry shader";
++         }
++         break;
++      }
++      }
++      if (!what)
++         continue;
++
++      D3D12_PIPELINE_STATE_STREAM_DESC desc = { .SizeInBytes = size, .pPipelineStateSubobjectStream = buf };
++      ID3D12PipelineState *state = NULL;
++      HRESULT hr = ID3D12Device4_CreatePipelineState(device->dev, &desc, &IID_ID3D12PipelineState, (void **)&state);
++      mesa_loge("dzn:   retry with %s: 0x%08x", what, (unsigned)hr);
++      if (state)
++         ID3D12PipelineState_Release(state);
++   }
++}
++
+ ID3D12PipelineState *
+ dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
+                                 const struct dzn_graphics_pipeline_variant_key *key)
+@@ -2236,10 +2407,14 @@ dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
+ 
+       update_stencil_state(pdev, pipeline, stream_buf, &masked_key);
+ 
+-      ASSERTED HRESULT hres = ID3D12Device4_CreatePipelineState(device->dev, &stream_desc,
+-                                                                &IID_ID3D12PipelineState,
+-                                                                (void**)(&variant->state));
+-      assert(!FAILED(hres));
++      HRESULT hres = ID3D12Device4_CreatePipelineState(device->dev, &stream_desc,
++                                                       &IID_ID3D12PipelineState,
++                                                       (void**)(&variant->state));
++      if (FAILED(hres)) {
++         mesa_loge("dzn: CreatePipelineState for a pipeline variant failed: 0x%08x (strip cut %d)",
++                   (unsigned)hres, (int)masked_key.ib_strip_cut);
++         dzn_pso_failure_probe(device, pdev, pipeline, stream_buf, stream_desc.SizeInBytes);
++      }
+       he = _mesa_hash_table_insert(pipeline->variants, &variant->key, variant);
+       assert(he);
+    } else {
+diff --git a/src/microsoft/vulkan/dzn_private.h b/src/microsoft/vulkan/dzn_private.h
+index 9b1f5ab..d3aaaa0 100644
+--- a/src/microsoft/vulkan/dzn_private.h
++++ b/src/microsoft/vulkan/dzn_private.h
+@@ -61,6 +61,7 @@
+ 
+ #include <unknwn.h>
+ #include <directx/d3d12.h>
++#include "dzn_trace_macros.h"
+ 
+ #include "spirv_to_dxil.h"
+ #include "dzn_abi_helper.h"
+diff --git a/src/microsoft/vulkan/meson.build b/src/microsoft/vulkan/meson.build
+index 800fdc2..56a58cd 100644
+--- a/src/microsoft/vulkan/meson.build
++++ b/src/microsoft/vulkan/meson.build
+@@ -28,6 +28,7 @@ dzn_drirc = custom_target(
+ 
+ libdzn_files = files(
+   'dzn_cmd_buffer.c',
++  'dzn_trace.c',
+   'dzn_descriptor_set.c',
+   'dzn_device.c',
+   'dzn_dxcore.cpp',

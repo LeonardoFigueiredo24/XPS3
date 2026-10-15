@@ -344,7 +344,12 @@ namespace vk
 			.imageExtent = { static_cast<u32>(w), static_cast<u32>(h), 1u }
 		};
 		change_image_layout(cmd, tex, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, range);
-		vkCmdCopyBufferToImage(cmd, upload_heap.heap->value, tex->value, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+		if (w && h)
+		{
+			// A missing overlay icon has no pixels; an empty copy region is invalid Vulkan
+			// (and breaks the command list on D3D12-backed drivers such as Dozen).
+			vkCmdCopyBufferToImage(cmd, upload_heap.heap->value, tex->value, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+		}
 		change_image_layout(cmd, tex, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, range);
 	}
 
