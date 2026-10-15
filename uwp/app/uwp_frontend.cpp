@@ -865,6 +865,9 @@ namespace uwp_frontend
 				{"Shader mode", &g_cfg.video.shadermode, {}, "Async with interpreter avoids stutter while shaders compile."},
 				{"Write color buffers", &g_cfg.video.write_color_buffers, {"false", "true"}, "Needed by some games for correct visuals; costs speed."},
 				{"Performance overlay", &g_cfg.video.perf_overlay.enabled, {"false", "true"}, "Shows FPS and CPU usage in the corner."},
+#ifdef LLVM_AVAILABLE
+				{"LLVM compile threads", &g_cfg.core.llvm_threads, {"0", "1", "2", "3", "4", "6"}, "0 = automatic. Fewer threads use less memory while compiling."},
+#endif
 				{"Preferred SPU threads", &g_cfg.core.preferred_spu_threads, {"0", "1", "2", "3", "4", "5", "6"}, "0 = automatic."},
 				{"System language", &g_cfg.sys.language, {}, {}},
 			};
@@ -1327,6 +1330,37 @@ namespace uwp_frontend
 			ui_log.notice("UI: emulation stopped, back to the menu");
 			set_status("Returned from the game", col_dim);
 		}
+	}
+
+	bool loading_frame(const std::string& title, const std::string& detail, u32 done, u32 total, const u32*& pixels)
+	{
+		if (!g_ready)
+			return false;
+
+		ui_state& ui = *g_ui;
+		if (!ui.fonts_loaded || ui.fonts_need_reload)
+		{
+			load_fonts(ui.cv);
+			ui.fonts_loaded = true;
+			ui.fonts_need_reload = false;
+		}
+
+		canvas& cv = ui.cv;
+		cv.fill(0, 0, canvas_width, canvas_height, col_bg);
+		const int x = margin_x, w = canvas_width - margin_x * 2;
+		int y = canvas_height / 2 - 120;
+		cv.text(x, y, title.empty() ? "Loading" : title, 44, col_text, w);
+		y += 80;
+		if (total)
+		{
+			cv.fill(x, y, w, 16, col_header);
+			cv.fill(x, y, static_cast<int>(static_cast<u64>(w) * std::min(done, total) / total), 16, col_accent);
+			y += 40;
+		}
+		cv.paragraph(x, y, detail, 28, col_dim, w);
+		ui.dirty = true; // the menu redraws when it comes back
+		pixels = cv.px.data();
+		return true;
 	}
 
 	bool frame(IInspectable* core_window, const u32*& pixels, bool& changed)

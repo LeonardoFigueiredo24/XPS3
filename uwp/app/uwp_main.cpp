@@ -18,6 +18,7 @@
 #include "Emu/system_config.h"
 #include "Emu/system_utils.hpp"
 #include "Emu/vfs_config.h"
+#include "Emu/system_progress.hpp"
 #include "Emu/emu_callbacks.h"
 #include "Emu/IdManager.h"
 #include "Emu/RSX/Null/NullGSRender.h"
@@ -45,6 +46,7 @@
 #include "util/sysinfo.hpp"
 #include "util/video_source.h"
 
+#include <chrono>
 #include <cstdio>
 #include <deque>
 #include <functional>
@@ -56,6 +58,7 @@
 
 LOG_CHANNEL(vk_drv_log, "DZN");
 extern "C" void uwp_heap_guard_open_log(const wchar_t* path);
+extern "C" void uwp_lazy_report(char* out, size_t size);
 extern "C" void (*uwp_vkshim_log)(const char* where, const char* text);
 LOG_CHANNEL(sys_log, "SYS");
 
@@ -499,6 +502,12 @@ namespace
 			sys_log.always()("RPCS3 UWP shell starting");
 			sys_log.always()("%s", utils::get_system_info());
 			log_app_memory("startup");
+			{
+				// Desktop functions LLVM imports are bound at runtime (uwp_lazyimports.c); list the missing ones.
+				char missing[2048];
+				uwp_lazy_report(missing, sizeof(missing));
+				sys_log.always()("UWP: system functions missing on this device (calls fail): %s", missing[0] ? missing : "none");
+			}
 
 			thread_ctrl::set_native_priority(0);
 			g_main_thread_id = GetCurrentThreadId();
@@ -527,12 +536,21 @@ namespace
 			g_cfg.audio.music.set(music_handler::null);
 			g_cfg.io.camera.set(camera_handler::null);
 
-			// Built without LLVM: PPU on the interpreter, SPU on the ASMJIT recompiler (needs no
-			// LLVM). An empty LocalState/spu_interpreter file falls back to the SPU interpreter.
-			const bool spu_interp = fs::is_file(g_local_dir + "spu_interpreter");
-			g_cfg.core.ppu_decoder.set(ppu_decoder_type::_static);
-			g_cfg.core.spu_decoder.set(spu_interp ? spu_decoder_type::_static : spu_decoder_type::asmjit);
-			sys_log.always()("UWP: SPU decoder: %s", g_cfg.core.spu_decoder.get());
+			// PPU on the LLVM recompiler when LLVM is linked, else the interpreter; SPU on the ASMJIT
+			// recompiler. Empty files in LocalState switch decoders for tests: ppu_interpreter,
+			// spu_interpreter, spu_llvm, or interpreter (both interpreters).
+			const bool all_interp = fs::is_file(g_local_dir + "interpreter");
+			const bool spu_interp = all_interp || fs::is_file(g_local_dir + "spu_interpreter");
+#ifdef LLVM_AVAILABLE
+			const bool ppu_llvm = !all_interp && !fs::is_file(g_local_dir + "ppu_interpreter");
+			const bool spu_llvm = !spu_interp && fs::is_file(g_local_dir + "spu_llvm");
+#else
+			const bool ppu_llvm = false, spu_llvm = false;
+#endif
+			g_cfg.core.ppu_decoder.set(ppu_llvm ? ppu_decoder_type::llvm : ppu_decoder_type::_static);
+			g_cfg.core.spu_decoder.set(spu_interp ? spu_decoder_type::_static : spu_llvm ? spu_decoder_type::llvm : spu_decoder_type::asmjit);
+			sys_log.always()("UWP: PPU decoder: %s, SPU decoder: %s, LLVM threads: %u",
+				g_cfg.core.ppu_decoder.get(), g_cfg.core.spu_decoder.get(), g_cfg.core.llvm_threads.get());
 			// Measured on the Xbox XMB: Mega SPU blocks are safe and marginally faster.
 			g_cfg.core.spu_block_size.set(spu_block_size_type::mega);
 			// The shader interpreter costs ~1.5 GB of the 5 GB and ~20 s of XMB load on the Xbox,
@@ -593,6 +611,68 @@ namespace
 
 		log_app_memory("end");
 		return 0;
+	}
+
+	// While a game boots without a frame (first boots compile PPU code for minutes), show
+	// RPCS3's progress text instead of a plain color so it doesn't look hung.
+	bool show_loading_screen(ID3D11Device* dev, ID3D11DeviceContext* ctx, ID3D11RenderTargetView* rtv, shell_state st)
+	{
+		if (st != shell_state::booting && st != shell_state::running)
+			return false;
+
+		static bool showing = false;
+		static auto since = std::chrono::steady_clock::now();
+		static u32 tick = 0;
+
+		const u32 total = g_progr_ptotal, done = g_progr_pdone;
+		const std::string text = g_progr_text;
+		if (text.empty() && !total)
+		{
+			showing = false;
+			return false;
+		}
+		if (!showing)
+		{
+			showing = true;
+			since = std::chrono::steady_clock::now();
+			tick = 0;
+		}
+
+		static ID3D11Texture2D* tex = nullptr;
+		if (!tex)
+		{
+			D3D11_TEXTURE2D_DESC td{};
+			td.Width = uwp_frontend::canvas_width;
+			td.Height = uwp_frontend::canvas_height;
+			td.MipLevels = 1;
+			td.ArraySize = 1;
+			td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+			td.SampleDesc.Count = 1;
+			td.Usage = D3D11_USAGE_DEFAULT;
+			if (FAILED(dev->CreateTexture2D(&td, nullptr, &tex)))
+				return false;
+		}
+
+		// Redraw a few times a second; the text and counters change slowly.
+		if (tick++ % 15 == 0)
+		{
+			const u64 secs = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - since).count();
+			std::string detail;
+			if (total)
+				detail = fmt::format("%u of %u done. ", done, total);
+			detail += fmt::format("%u:%02u elapsed.\n\nThe first start of a game or the system menu compiles its code for this console, "
+				"which can take several minutes. Later starts reuse it.", secs / 60, secs % 60);
+			const u32* pixels = nullptr;
+			if (!uwp_frontend::loading_frame(text, detail, done, total, pixels))
+				return false;
+			ctx->UpdateSubresource(tex, 0, nullptr, pixels, uwp_frontend::canvas_width * 4, 0);
+		}
+
+		ID3D11Resource* target = nullptr;
+		rtv->GetResource(&target);
+		ctx->CopyResource(target, tex);
+		target->Release();
+		return true;
 	}
 
 	template <typename I>
@@ -790,7 +870,7 @@ namespace
 					ctx->CopyResource(target, frame_tex);
 					target->Release();
 				}
-				else
+				else if (!show_loading_screen(dev, ctx, rtv, st))
 				{
 					ctx->ClearRenderTargetView(rtv, st == shell_state::failed ? red : st == shell_state::finished ? green : blue);
 				}

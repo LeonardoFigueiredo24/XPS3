@@ -35,6 +35,10 @@ namespace uwp_frontend
 	// BGRA canvas and `changed` says whether it differs from the previous frame.
 	bool frame(IInspectable* core_window, const u32*& pixels, bool& changed);
 
+	// UI thread, while a game boots without a frame to show: a loading screen with the
+	// emulator's progress text (e.g. PPU modules compiling). Same canvas as frame().
+	bool loading_frame(const std::string& title, const std::string& detail, u32 done, u32 total, const u32*& pixels);
+
 	// Emulator callbacks.
 	void on_emulation_started();
 	void on_emulation_stopped();
