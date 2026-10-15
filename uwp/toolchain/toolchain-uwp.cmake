@@ -15,6 +15,12 @@ if(NOT EXISTS ${UWP_CASE_INCLUDES})
     execute_process(COMMAND python3 ${CMAKE_CURRENT_LIST_DIR}/mkcaselinks.py
         ${ZIG_DIR}/lib/libc/include/any-windows-any ${CMAKE_CURRENT_LIST_DIR}/../.. ${UWP_CASE_INCLUDES})
 endif()
+# Import libraries Zig can't resolve on its own (see mkimplibs.sh).
+set(UWP_IMPLIBS ${CMAKE_BINARY_DIR}/uwp-implibs)
+if(NOT EXISTS ${UWP_IMPLIBS})
+    execute_process(COMMAND sh ${CMAKE_CURRENT_LIST_DIR}/mkimplibs.sh ${ZIG_DIR} ${UWP_IMPLIBS})
+endif()
+set(CMAKE_EXE_LINKER_FLAGS_INIT "-L${UWP_IMPLIBS}")
 set(CMAKE_RC_FLAGS_INIT "--target=pe-x86-64 -I${ZIG_DIR}/lib/libc/include/any-windows-any -I${UWP_CASE_INCLUDES}")
 # libpng generates pnglibconf with the C preprocessor and needs the bundled zlib headers.
 set(CMAKE_C_FLAGS_INIT "-I${CMAKE_CURRENT_LIST_DIR}/../../3rdparty/zlib/zlib -idirafter ${UWP_CASE_INCLUDES}")

@@ -239,7 +239,6 @@ namespace
 
 	DWORD WINAPI emulator_thread(void*)
 	{
-		try
 		{
 			g_local_dir = get_local_state_dir();
 			g_android_executable_dir = get_package_dir();
@@ -283,11 +282,6 @@ namespace
 				if (++seconds % 10 == 0)
 					log_app_memory("running");
 			}
-		}
-		catch (const std::exception& e)
-		{
-			sys_log.fatal("UWP: exception: %s", e.what());
-			g_state = shell_state::failed;
 		}
 
 		log_app_memory("end");
