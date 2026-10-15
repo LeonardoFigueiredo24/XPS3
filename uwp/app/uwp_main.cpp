@@ -470,9 +470,12 @@ namespace
 			g_cfg.audio.music.set(music_handler::null);
 			g_cfg.io.camera.set(camera_handler::null);
 
-			// Built without LLVM: run PPU and SPU code on the interpreters.
+			// Built without LLVM: PPU on the interpreter, SPU on the ASMJIT recompiler (needs no
+			// LLVM). An empty LocalState/spu_interpreter file falls back to the SPU interpreter.
+			const bool spu_interp = fs::is_file(g_local_dir + "spu_interpreter");
 			g_cfg.core.ppu_decoder.set(ppu_decoder_type::_static);
-			g_cfg.core.spu_decoder.set(spu_decoder_type::_static);
+			g_cfg.core.spu_decoder.set(spu_interp ? spu_decoder_type::_static : spu_decoder_type::asmjit);
+			sys_log.always()("UWP: SPU decoder: %s", g_cfg.core.spu_decoder.get());
 
 			Emulator::SaveSettings(g_cfg.to_string(), {});
 
