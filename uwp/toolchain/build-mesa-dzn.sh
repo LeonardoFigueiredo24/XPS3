@@ -8,6 +8,7 @@ tc=$(dirname "$(realpath "$0")")
 git -C "$1" apply --check "$tc/mesa-dzn-uwp.patch" 2>/dev/null && git -C "$1" apply "$tc/mesa-dzn-uwp.patch"
 # D3D12 command-list call tracer (logs the last calls when a command list fails to close).
 cp "$tc/mesa-dzn_trace.c" "$1/src/microsoft/vulkan/dzn_trace.c"
+cp "$tc/mesa-dzn_trace_macros.h" "$1/src/microsoft/vulkan/dzn_trace_macros.h"
 meson setup --wipe "$2" "$1" --cross-file "$tc/meson-cross-uwp.ini" --buildtype=release \
 	-Dvulkan-drivers=microsoft-experimental -Dgallium-drivers= -Dopengl=false -Dgles1=disabled -Dgles2=disabled \
 	-Degl=disabled -Dglx=disabled -Dplatforms=windows -Dllvm=disabled -Dzlib=disabled -Dzstd=disabled \
