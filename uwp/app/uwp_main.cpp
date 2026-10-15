@@ -4,7 +4,7 @@
 // menu (uwp_frontend.cpp): game list, firmware installer, settings. An empty
 // LocalState/autoboot file skips the menu and boots the first program in LocalState/boot/
 // (or the bundled test ELF) like the earlier test builds, or the XMB if it contains "xmb".
-// With firmware installed and no LocalState/menu file, the XMB boots at startup. RPCS3.log goes to LocalState/rpcs3.
+// RPCS3.log goes to LocalState/rpcs3.
 // While a game boots or runs the screen shows its frames, or a status color when there are
 // none: blue = booting/running, green = exited cleanly, red = boot failed or fatal error.
 
@@ -581,8 +581,9 @@ namespace
 				g_emu_callbacks.call_from_main_thread(std::move(func), nullptr);
 			}});
 
-			// With firmware installed the app boots the PS3 system menu (XMB) straight away;
-			// an empty LocalState/menu file opens the controller menu instead.
+			// The app opens its controller menu; the XMB is started from the Games tab. A
+			// LocalState/autoboot file (used by the remote test runs) boots straight away instead:
+			// the XMB if it contains "xmb", otherwise the first program in LocalState/boot/.
 			const std::string xmb_path = g_cfg_vfs.get_dev_flash() + "vsh/module/vsh.self";
 			if (fs::is_file(g_local_dir + "autoboot"))
 			{
@@ -590,12 +591,6 @@ namespace
 				const std::string what = f ? fmt::trim(f.to_string(), " \t\r\n") : std::string();
 				const std::string target = what == "xmb" ? xmb_path : find_boot_target();
 				if (!uwp_frontend::boot(target))
-					g_state = shell_state::failed;
-			}
-			else if (!fs::is_file(g_local_dir + "menu") && fs::is_file(xmb_path))
-			{
-				sys_log.always()("UWP: firmware installed, booting the XMB (create LocalState/menu to open the menu instead)");
-				if (!uwp_frontend::boot(xmb_path))
 					g_state = shell_state::failed;
 			}
 
