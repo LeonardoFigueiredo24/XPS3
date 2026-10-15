@@ -26,7 +26,7 @@ MAKEMSIX=/path/to/makemsix uwp/package/package.sh build-uwp RPCS3Xbox.appx cert.
 ## What the test build does
 
 `uwp/app` is a minimal shell with no UI. It boots the first file in
-`LocalState/rpcs3/boot/`, or the bundled `test/ppu_thread.elf`, with the null renderer and
+`LocalState/boot/`, or the bundled `test/ppu_thread.elf`, with the null renderer and
 null audio, and writes `RPCS3.log` to `LocalState/rpcs3/`. The screen is blue while booting or
 running, green when the program exited cleanly and red when the boot failed.
 Without firmware, every firmware library uses RPCS3's built-in (HLE) version.
