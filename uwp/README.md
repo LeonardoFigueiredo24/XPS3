@@ -29,16 +29,19 @@ MAKEMSIX=/path/to/makemsix uwp/package/package.sh build-uwp RPCS3Xbox.appx cert.
 and shown through the shell's D3D11 swapchain. RPCS3 writes `RPCS3.log` to `LocalState/rpcs3/`.
 
 - **Games**: game folders (disc layout with `PS3_GAME/`, or HDD layout with `PARAM.SFO` and
-  `USRDIR/EBOOT.BIN`) and `.iso` files in `LocalState/games/`, games installed into the emulated
-  HDD, `GAMES/` folders on USB drives, loose programs in `LocalState/boot/` and the bundled test
-  programs. A starts one; in game, hold View + Menu for a second to stop it and come back.
-- **Firmware**: installs `PS3UPDAT.PUP` found in `LocalState/`, `LocalState/firmware/` or on a USB
-  drive (root or `PS3/UPDATE/`), the same way desktop RPCS3 does. Without firmware every firmware
-  library uses RPCS3's built-in (HLE) version.
+  `USRDIR/EBOOT.BIN`) and PS3 `.iso` files in `LocalState/games/`, games installed into the emulated
+  HDD, game folders and ISOs in `GAMES/`, `PS3ISO/` or the root of a USB drive, loose programs in
+  `LocalState/boot/` and the bundled test programs. Encrypted (redump) ISOs need their `.dkey`
+  next to them. A starts one; in game, hold View + Menu for a second to stop it and come back.
+- **Install**: firmware (`PS3UPDAT.PUP`), packages (`.pkg`) and licenses (`.rap`) found in
+  `LocalState/`, `LocalState/firmware/`, `LocalState/packages/` or on a USB drive (root,
+  `PS3/UPDATE/`, `PKG/`, `packages/`, `exdata/`). Installing a package also installs the `.rap`
+  files next to it. Without firmware every firmware library uses RPCS3's built-in (HLE) version.
 - **Settings**: renderer, resolution scale, frame limit, VSync, shader mode and a few others,
   saved to `config.yml` right away.
 
 Controls: D-pad or left stick to move, A to select, B to cancel, LB/RB to switch tabs, Y to rescan.
+USB drives are read through the UWP `*FromApp` file APIs (broadFileSystemAccess).
 On a PC keyboard: arrows, Enter, Escape, Q/E (or Tab), F5.
 
 An empty `LocalState/autoboot` file skips the menu and boots the first file in `LocalState/boot/`
