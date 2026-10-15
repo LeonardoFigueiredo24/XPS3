@@ -56,6 +56,7 @@
 
 LOG_CHANNEL(vk_drv_log, "DZN");
 extern "C" void uwp_heap_guard_open_log(const wchar_t* path);
+extern "C" void uwp_lazy_report(char* out, size_t size);
 extern "C" void (*uwp_vkshim_log)(const char* where, const char* text);
 LOG_CHANNEL(sys_log, "SYS");
 
@@ -442,6 +443,12 @@ namespace
 			sys_log.always()("RPCS3 UWP shell starting");
 			sys_log.always()("%s", utils::get_system_info());
 			log_app_memory("startup");
+			{
+				// Desktop functions LLVM imports are bound at runtime (uwp_lazyimports.c); list the missing ones.
+				char missing[2048];
+				uwp_lazy_report(missing, sizeof(missing));
+				sys_log.always()("UWP: system functions missing on this device (calls fail): %s", missing[0] ? missing : "none");
+			}
 
 			thread_ctrl::set_native_priority(0);
 			g_main_thread_id = GetCurrentThreadId();
