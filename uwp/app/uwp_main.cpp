@@ -625,7 +625,7 @@ namespace
 	// With LLVM precompilation off, XMB modules compile the first time they load, which stalls
 	// navigation. Once the XMB has drawn frames for 30 s, compile the rest of dev_flash in the
 	// background at low priority (cached modules are skipped), so later visits hit the cache.
-	// Emulator thread; LocalState/no_background_compile turns it off.
+	// One worker on one JIT core at lowest priority. Opt-in via LocalState/background_compile.
 	void start_background_precompile(u32 ticks)
 	{
 		static u32 since = 0;
@@ -659,7 +659,8 @@ namespace
 			return;
 
 		started = true;
-		if (fs::is_file(g_local_dir + "no_background_compile"))
+		// Off unless LocalState/background_compile exists: on 0.1.31.4 it kept the XMB from drawing.
+		if (!fs::is_file(g_local_dir + "background_compile"))
 			return;
 
 		sys_log.always()("UWP: compiling the remaining dev_flash PPU modules in the background");

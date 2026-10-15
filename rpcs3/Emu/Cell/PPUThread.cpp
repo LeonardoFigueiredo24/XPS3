@@ -4123,6 +4123,10 @@ extern void ppu_finalize(const ppu_module<lv2_obj>& info, bool force_mem_release
 // precompiled by swapping out the main module, which must not happen under a running program.
 thread_local bool g_ppu_precompile_prx_only = false;
 
+// Set on background compile workers: compile on the calling thread only, holding one JIT core,
+// so the running game's own compiles are never starved of cores.
+static thread_local bool g_ppu_compile_background = false;
+
 extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_module<lv2_obj>*>* loaded_modules, bool is_fast_compilation)
 {
 	if (g_cfg.core.ppu_decoder != ppu_decoder_type::llvm)
@@ -4401,9 +4405,10 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_
 		}
 	}
 
-	named_thread_group workers("SPRX Worker ", std::min<u32>(software_thread_limit, cpu_thread_limit), [&]
+	named_thread_group workers("SPRX Worker ", prx_only ? 1u : std::min<u32>(software_thread_limit, cpu_thread_limit), [&]
 	{
 		jit_write_guard jit_guard;
+		g_ppu_compile_background = prx_only;
 
 		// Set low priority
 		thread_ctrl::scoped_priority low_prio(-1);
@@ -5680,7 +5685,7 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 
 		*progress_dialog = get_localized_string(localized_string_id::PROGRESS_DIALOG_COMPILING_PPU_MODULES);
 
-		const u32 thread_count = std::max<u32>(std::min<u32>(::size32(workload), rpcs3::utils::get_max_threads()), 1) - 1;
+		const u32 thread_count = g_ppu_compile_background ? 0 : std::max<u32>(std::min<u32>(::size32(workload), rpcs3::utils::get_max_threads()), 1) - 1;
 
 		struct thread_index_allocator
 		{
