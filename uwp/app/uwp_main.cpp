@@ -270,6 +270,10 @@ namespace
 			g_cfg.video.renderer.set(video_renderer::null);
 			g_cfg.audio.renderer.set(audio_renderer::null);
 
+			// Built without LLVM: run PPU and SPU code on the interpreters.
+			g_cfg.core.ppu_decoder.set(ppu_decoder_type::_static);
+			g_cfg.core.spu_decoder.set(spu_decoder_type::_static);
+
 			// No firmware installed yet: use RPCS3's built-in (HLE) version of every firmware
 			// library, otherwise the boot stops with "firmware missing".
 			if (!fs::is_file(g_cfg_vfs.get_dev_flash() + "sys/external/liblv2.sprx"))

@@ -4,6 +4,7 @@
 #ifdef _WIN32
 #include "Utilities/File.h"
 #include "util/dyn_lib.hpp"
+#include "util/logs.hpp"
 #include "Utilities/lockless.h"
 #include <Windows.h>
 #include <span>
@@ -86,6 +87,8 @@ namespace utils
 #endif
 
 #if defined(_WIN32) && defined(RPCS3_UWP)
+	LOG_CHANNEL(uwp_mem_log, "UWPMEM");
+
 	// UWP apps may only create executable memory through the *FromApp APIs (with the
 	// codeGeneration capability). Executable views of a file mapping are refused (tested:
 	// ERROR_INVALID_PARAMETER), so map them writable first and then change protection.
@@ -117,15 +120,34 @@ namespace utils
 
 		inline PVOID map_view_3(HANDLE h, HANDLE process, PVOID base, ULONG64 off, SIZE_T size, ULONG type, ULONG prot, MEM_EXTENDED_PARAMETER* params, ULONG count)
 		{
-			if (!(prot & exec_mask))
-				return ::MapViewOfFile3FromApp(h, process, base, off, size, type, prot, params, count);
-
-			const ULONG data_prot = prot == PAGE_EXECUTE_WRITECOPY ? PAGE_WRITECOPY : PAGE_READWRITE;
+			// UWP can't map views as executable directly: map them as data, then change the protection.
+			const ULONG data_prot = !(prot & exec_mask) ? prot : (prot == PAGE_EXECUTE_WRITECOPY ? PAGE_WRITECOPY : PAGE_READWRITE);
 			PVOID ret = ::MapViewOfFile3FromApp(h, process, base, off, size, type, data_prot, params, count);
-			ULONG old;
-			if (ret && !::VirtualProtectFromApp(ret, size, prot, &old))
+
+			if (!ret && data_prot == PAGE_WRITECOPY)
 			{
+				// Copy-on-write views of large sparse files may be refused; fall back to a shared view.
+				const DWORD err = ::GetLastError();
+				ret = ::MapViewOfFile3FromApp(h, process, base, off, size, type, PAGE_READWRITE, params, count);
+				uwp_mem_log.warning("copy-on-write view at %p (0x%x bytes) failed (%u), shared view: %p", base, size, err, ret);
+			}
+
+			if (!ret)
+			{
+				const DWORD err = ::GetLastError();
+				uwp_mem_log.error("MapViewOfFile3FromApp(base=%p, off=0x%x, size=0x%x, type=0x%x, prot=0x%x) failed (%u)",
+					base, off, size, type, data_prot, err);
+				::SetLastError(err);
+				return nullptr;
+			}
+
+			ULONG old;
+			if (data_prot != prot && !::VirtualProtectFromApp(ret, size, prot, &old))
+			{
+				const DWORD err = ::GetLastError();
+				uwp_mem_log.error("VirtualProtectFromApp(%p, 0x%x, 0x%x) on a view failed (%u)", ret, size, prot, err);
 				::UnmapViewOfFile2(process, ret, (type & MEM_REPLACE_PLACEHOLDER) ? MEM_PRESERVE_PLACEHOLDER : 0);
+				::SetLastError(err);
 				return nullptr;
 			}
 			return ret;
@@ -133,9 +155,17 @@ namespace utils
 
 		inline PVOID map_view_ex(HANDLE h, DWORD access, DWORD off_hi, DWORD off_lo, SIZE_T size, PVOID base)
 		{
-			ULONG prot = (access & FILE_MAP_COPY) == FILE_MAP_COPY ? PAGE_WRITECOPY : (access & FILE_MAP_WRITE) ? PAGE_READWRITE : PAGE_READONLY;
-			if (access & FILE_MAP_EXECUTE)
-				prot = prot == PAGE_WRITECOPY ? PAGE_EXECUTE_WRITECOPY : prot == PAGE_READWRITE ? PAGE_EXECUTE_READWRITE : PAGE_EXECUTE_READ;
+			// Same access-to-protection rules as kernelbase's MapViewOfFileEx.
+			const bool exec = access & FILE_MAP_EXECUTE;
+			ULONG prot;
+			if (access & FILE_MAP_COPY)
+				prot = exec ? PAGE_EXECUTE_WRITECOPY : PAGE_WRITECOPY;
+			else if (access & FILE_MAP_WRITE)
+				prot = exec ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE;
+			else if (access & FILE_MAP_READ)
+				prot = exec ? PAGE_EXECUTE_READ : PAGE_READONLY;
+			else
+				prot = PAGE_NOACCESS;
 			return map_view_3(h, ::GetCurrentProcess(), base, (ULONG64{off_hi} << 32) | off_lo, size, 0, prot, nullptr, 0);
 		}
 	}
