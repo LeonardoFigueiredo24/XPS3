@@ -1,6 +1,7 @@
 # UWP shell executable for the Xbox port (milestone 1: headless boot with the null renderer).
 add_executable(rpcs3_uwp WIN32
     uwp_main.cpp
+    uwp_input.cpp
     uwp_stubs.cpp
     uwp_sysstubs.c
     ${CMAKE_SOURCE_DIR}/rpcs3/rpcs3_version.cpp

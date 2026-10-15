@@ -5,6 +5,10 @@
 #include "Emu/Io/pad_config.h"
 #include "util/dyn_lib.hpp"
 
+#ifdef RPCS3_UWP
+#include "uwp/app/uwp_input.h"
+#endif
+
 namespace XINPUT_INFO
 {
 	const DWORD GUIDE_BUTTON = 0x0400;
@@ -375,6 +379,15 @@ bool xinput_pad_handler::Init()
 {
 	if (m_is_init)
 		return true;
+
+#ifdef RPCS3_UWP
+	// UWP apps can't load xinput1_x.dll; read the controllers through Windows.Gaming.Input.
+	xinputGetState = uwp_xinput_get_state;
+	xinputSetState = uwp_xinput_set_state;
+	xinputGetBatteryInformation = uwp_xinput_get_battery_information;
+	m_is_init = true;
+	return true;
+#endif
 
 	for (auto it : XINPUT_INFO::LIBRARY_FILENAMES)
 	{
