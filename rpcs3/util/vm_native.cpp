@@ -633,7 +633,17 @@ namespace utils
 	shm::shm(u64 size, const std::string& storage)
 		: m_size(utils::align(size, 0x10000))
 	{
-#ifdef _WIN32
+#if defined(_WIN32) && defined(RPCS3_UWP)
+		// Sparse temp files can't be mapped from a UWP app (ERROR_INVALID_PARAMETER), so use
+		// page-file backed memory. It is committed up front, which is fine for these blocks.
+		static_cast<void>(storage);
+		const ULARGE_INTEGER max_size{ .QuadPart = m_size };
+		m_handle = ::CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, max_size.HighPart, max_size.LowPart, nullptr);
+		if (!m_handle)
+		{
+			uwp_mem_log.fatal("CreateFileMappingFromApp(0x%x bytes) failed (%u)", m_size, ::GetLastError());
+		}
+#elif defined(_WIN32)
 		fs::file f;
 
 		auto open_with_cleanup = [](fs::file& f, const std::string& path)

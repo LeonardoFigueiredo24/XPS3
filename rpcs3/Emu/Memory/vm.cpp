@@ -2306,7 +2306,9 @@ namespace vm
 
 	inline namespace ps3_
 	{
+#ifndef RPCS3_UWP
 		static utils::shm s_hook{0x800000000, ""};
+#endif
 
 		void init()
 		{
@@ -2342,10 +2344,16 @@ namespace vm
 			std::memset(g_range_lock_set, 0, sizeof(g_range_lock_set));
 			std::memset(g_range_lock_bits, 0, sizeof(g_range_lock_bits));
 
+#ifdef RPCS3_UWP
+			// The hook area is a 32 GB sparse-file mapping on desktop Windows, which UWP refuses
+			// (ERROR_INVALID_PARAMETER). Nothing in the interpreter path uses it, so leave it
+			// reserved; an access there shows up as a fault in the 0x8'0000'0000 range.
+#else
 #ifdef _WIN32
 			utils::memory_release(g_hook_addr, 0x800000000);
 #endif
 			ensure(s_hook.map(g_hook_addr, utils::protection::rw, true));
+#endif
 		}
 	}
 
@@ -2369,7 +2377,7 @@ namespace vm
 		utils::memory_decommit(g_exec_addr, 0x200000000);
 		utils::memory_decommit(g_stat_addr, 0x100000000);
 
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(RPCS3_UWP)
 		s_hook.unmap(g_hook_addr);
 		ensure(utils::memory_reserve(0x800000000, g_hook_addr));
 #else
