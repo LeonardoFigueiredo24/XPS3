@@ -32,6 +32,10 @@ for name, (w, h) in {'StoreLogo': (50, 50), 'Square150x150Logo': (150, 150), 'Sq
                      'Wide310x150Logo': (310, 150), 'SplashScreen': (620, 300)}.items():
     open(os.path.join(out, 'Assets', name + '.png'), 'wb').write(png(w, h, (26, 26, 31)))
 
+# Menu font (the PS3 firmware's fonts are used too once installed).
+os.makedirs(os.path.join(out, 'fonts'))
+shutil.copy(os.path.join(src, 'bin', 'fonts', 'DejaVuSans.ttf'), os.path.join(out, 'fonts'))
+
 test_dir = os.path.join(src, 'bin', 'test')
 for f in os.listdir(test_dir):
     shutil.copy(os.path.join(test_dir, f), os.path.join(out, 'test'))

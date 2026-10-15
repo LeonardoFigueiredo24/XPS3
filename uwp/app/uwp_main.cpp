@@ -1,13 +1,15 @@
 // RPCS3 UWP shell for Xbox Series X|S Dev Mode.
 //
-// Milestone 1: no UI and no graphics. On launch it sets up RPCS3's folders in the
-// app's LocalState, boots the first program found in LocalState/boot/ (or the bundled
-// test ELF) with the null renderer, and writes RPCS3.log next to it.
-// The screen shows the state: blue = booting/running, green = program exited cleanly,
-// red = boot failed or fatal error.
+// On launch it sets up RPCS3's folders in the app's LocalState and shows the controller
+// menu (uwp_frontend.cpp): game list, firmware installer, settings. An empty
+// LocalState/autoboot file skips the menu and boots the first program in LocalState/boot/
+// (or the bundled test ELF) like the earlier test builds. RPCS3.log goes to LocalState/rpcs3.
+// While a game boots or runs the screen shows its frames, or a status color when there are
+// none: blue = booting/running, green = exited cleanly, red = boot failed or fatal error.
 
 #include "stdafx.h"
 #include "winrt_min.h"
+#include "uwp_frontend.h"
 
 #include "Emu/System.h"
 #include "Emu/system_config.h"
@@ -44,12 +46,8 @@
 #include <map>
 #include <mutex>
 #include <vector>
-#include <set>
 #include <d3d11_1.h>
 #include <dxgi1_2.h>
-
-// Firmware library list (Emu/Cell/PPUModule.cpp): true = HLE by default.
-extern const std::map<std::string_view, int> g_prx_list;
 
 LOG_CHANNEL(vk_drv_log, "DZN");
 extern "C" void (*uwp_vkshim_log)(const char* where, const char* text);
@@ -289,13 +287,18 @@ namespace
 		g_emu_callbacks.get_recvmessage_dialog = []() -> std::shared_ptr<RecvMessageDialogBase> { return {}; };
 		g_emu_callbacks.get_trophy_notification_dialog = []() -> std::unique_ptr<TrophyNotificationBase> { return {}; };
 
-		g_emu_callbacks.on_run = [](bool) { g_state = shell_state::running; };
+		g_emu_callbacks.on_run = [](bool)
+		{
+			g_state = shell_state::running;
+			uwp_frontend::on_emulation_started();
+		};
 		g_emu_callbacks.on_pause = []() {};
 		g_emu_callbacks.on_resume = []() {};
 		g_emu_callbacks.on_stop = []()
 		{
 			if (g_state != shell_state::failed)
 				g_state = shell_state::finished;
+			uwp_frontend::on_emulation_stopped();
 		};
 		g_emu_callbacks.on_ready = []() {};
 		g_emu_callbacks.on_emulation_stop_no_response = [](std::shared_ptr<atomic_t<bool>> closed, int)
@@ -382,11 +385,14 @@ namespace
 			Emu.SetUsr("00000001");
 			Emu.Init();
 
-			// Vulkan through Mesa's Dozen (D3D12). An empty LocalState/null_renderer file
-			// switches back to the null renderer for CPU-only tests.
+			// Vulkan through Mesa's Dozen (D3D12) unless the menu's settings chose Null. An empty
+			// LocalState/null_renderer file forces the null renderer for CPU-only tests.
 			const bool use_null = fs::is_file(g_local_dir + "null_renderer");
-			g_cfg.video.renderer.set(use_null ? video_renderer::null : video_renderer::vulkan);
-			sys_log.always()("UWP: renderer: %s", use_null ? "null" : "Vulkan (Dozen on D3D12)");
+			if (use_null)
+				g_cfg.video.renderer.set(video_renderer::null);
+			else if (g_cfg.video.renderer != video_renderer::null)
+				g_cfg.video.renderer.set(video_renderer::vulkan);
+			sys_log.always()("UWP: renderer: %s", g_cfg.video.renderer.get());
 			g_cfg.audio.renderer.set(audio_renderer::null);
 			g_cfg.audio.music.set(music_handler::null);
 			g_cfg.io.camera.set(camera_handler::null);
@@ -395,33 +401,18 @@ namespace
 			g_cfg.core.ppu_decoder.set(ppu_decoder_type::_static);
 			g_cfg.core.spu_decoder.set(spu_decoder_type::_static);
 
-			// No firmware installed yet: use RPCS3's built-in (HLE) version of every firmware
-			// library, otherwise the boot stops with "firmware missing".
-			if (!fs::is_file(g_cfg_vfs.get_dev_flash() + "sys/external/liblv2.sprx"))
-			{
-				std::set<std::string> libs;
-				for (const auto& [name, hle] : g_prx_list)
-				{
-					if (!hle)
-						libs.emplace(std::string(name) + ":hle");
-				}
-
-				g_cfg.core.libraries_control.set_set(std::move(libs));
-				sys_log.warning("UWP: no firmware installed, using HLE for all firmware libraries");
-			}
-
-			// BootGame reloads the global config file, so store these settings there.
 			Emulator::SaveSettings(g_cfg.to_string(), {});
 
-			const std::string target = find_boot_target();
-			sys_log.always()("UWP: booting '%s'", target);
-
-			const game_boot_result result = Emu.BootGame(target, "", true);
-			if (result != game_boot_result::no_errors)
+			uwp_frontend::init({g_local_dir, get_package_dir(), [](std::function<void()> func)
 			{
-				sys_log.fatal("UWP: boot failed: %s", result);
-				g_state = shell_state::failed;
-				return 1;
+				g_emu_callbacks.call_from_main_thread(std::move(func), nullptr);
+			}});
+
+			if (fs::is_file(g_local_dir + "autoboot"))
+			{
+				const std::string target = find_boot_target();
+				if (!uwp_frontend::boot(target))
+					g_state = shell_state::failed;
 			}
 
 			// Serve main-thread requests for as long as the app lives (shutdown needs them too).
@@ -564,6 +555,38 @@ namespace
 				if (!sc || !rtv)
 				{
 					Sleep(100);
+					continue;
+				}
+
+				// The menu, whenever no game is booting or running.
+				const u32* menu_pixels = nullptr;
+				bool menu_changed = false;
+				if (uwp_frontend::frame(window, menu_pixels, menu_changed))
+				{
+					static ID3D11Texture2D* menu_tex = nullptr;
+					if (!menu_tex)
+					{
+						D3D11_TEXTURE2D_DESC td{};
+						td.Width = uwp_frontend::canvas_width;
+						td.Height = uwp_frontend::canvas_height;
+						td.MipLevels = 1;
+						td.ArraySize = 1;
+						td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+						td.SampleDesc.Count = 1;
+						td.Usage = D3D11_USAGE_DEFAULT;
+						dev->CreateTexture2D(&td, nullptr, &menu_tex);
+						menu_changed = true;
+					}
+					if (menu_tex)
+					{
+						if (menu_changed)
+							ctx->UpdateSubresource(menu_tex, 0, nullptr, menu_pixels, uwp_frontend::canvas_width * 4, 0);
+						ID3D11Resource* target = nullptr;
+						rtv->GetResource(&target);
+						ctx->CopyResource(target, menu_tex);
+						target->Release();
+					}
+					sc->Present(1, 0);
 					continue;
 				}
 				static const float blue[4] = {0.10f, 0.25f, 0.60f, 1}, green[4] = {0.10f, 0.55f, 0.20f, 1}, red[4] = {0.70f, 0.12f, 0.12f, 1};
