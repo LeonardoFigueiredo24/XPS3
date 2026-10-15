@@ -570,6 +570,15 @@ namespace
 			// with no fps gain; Relaxed ZCULL Sync breaks RSX pipelines on Dozen.
 			g_cfg.video.shadermode.set(shader_mode::async_recompiler);
 			g_cfg.video.relaxed_zcull_sync.set(false);
+			// PS3 networking: RPCS3 ships with the network "Disconnected"; turn it on once so the XMB
+			// and games see an internet connection (the menu's Network setting can switch it off again,
+			// which then sticks). PSN stays off; RPCN needs an account.
+			if (!fs::is_file(g_local_dir + "net_default_set"))
+			{
+				g_cfg.net.net_active.set(np_internet_status::enabled);
+				fs::write_file(g_local_dir + "net_default_set", fs::rewrite, std::string_view("1"));
+			}
+			sys_log.always()("UWP: network: %s, PSN: %s", g_cfg.net.net_active.get(), g_cfg.net.psn_status.get());
 
 			// An early PPU test wrote dev_hdd0/game/TEST12345 without a PARAM.SFO, which the
 			// XMB lists as "Corrupted Data"; Device Portal cannot delete folders, so drop it here.
