@@ -28,6 +28,7 @@ else()
     set(USE_SYSTEM_OPENAL_DEFAULT ON)
 endif()
 
+option(RPCS3_UWP "Build the Qt-less core for the Xbox UWP port" OFF)
 option(USE_NATIVE_INSTRUCTIONS "USE_NATIVE_INSTRUCTIONS makes rpcs3 compile with -march=native, which is useful for local builds, but not good for packages." ON)
 option(USE_ARM_LSE2 "Compile with LSE2 instructions" OFF)
 option(WITH_LLVM "Enable usage of LLVM library" ON)
@@ -85,6 +86,10 @@ endif()
 
 if(CMAKE_BUILD_TYPE MATCHES "Debug" AND NOT MSVC)
     add_compile_definitions(_DEBUG)
+endif()
+
+if(RPCS3_UWP)
+    add_compile_definitions(RPCS3_UWP)
 endif()
 
 if(MSVC)

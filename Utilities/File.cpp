@@ -14,7 +14,8 @@
 
 using namespace std::literals::string_literals;
 
-#ifdef ANDROID
+#if defined(ANDROID) || defined(RPCS3_UWP)
+// On UWP the frontend sets these to the app package and LocalState folders.
 std::string g_android_executable_dir;
 std::string g_android_config_dir;
 std::string g_android_cache_dir;
@@ -2496,7 +2497,7 @@ std::string fs::get_executable_path()
 
 std::string fs::get_executable_dir()
 {
-#ifdef ANDROID
+#if defined(ANDROID) || defined(RPCS3_UWP)
 	return g_android_executable_dir;
 #else
 	// Use magic static
@@ -2517,7 +2518,7 @@ std::string fs::get_executable_dir()
 
 const std::string& fs::get_config_dir([[maybe_unused]] bool get_config_subdirectory)
 {
-#ifdef ANDROID
+#if defined(ANDROID) || defined(RPCS3_UWP)
 	return g_android_config_dir;
 #else
 	// Use magic static
@@ -2615,7 +2616,7 @@ const std::string& fs::get_config_dir([[maybe_unused]] bool get_config_subdirect
 
 const std::string& fs::get_cache_dir()
 {
-#ifdef ANDROID
+#if defined(ANDROID) || defined(RPCS3_UWP)
 	return g_android_cache_dir;
 #else
 	static const std::string s_dir = []

@@ -97,7 +97,7 @@ add_subdirectory(yaml-cpp)
 
 # OpenGL
 
-if (NOT ANDROID AND NOT APPLE)
+if (NOT ANDROID AND NOT APPLE AND NOT RPCS3_UWP)
 	find_package(OpenGL REQUIRED OPTIONAL_COMPONENTS EGL)
 
 	add_library(3rdparty_opengl INTERFACE)
@@ -232,7 +232,7 @@ if(USE_SDL)
 endif()
 
 # OpenAL
-if (NOT ANDROID)
+if (NOT ANDROID AND NOT RPCS3_UWP)
 	add_subdirectory(OpenAL EXCLUDE_FROM_ALL)
 else()
 	add_library(3rdparty_openal INTERFACE)
@@ -278,7 +278,7 @@ set_property(TARGET ${FAUDIO_TARGET} PROPERTY FOLDER "3rdparty/")
 
 
 # FFMPEG
-if(NOT ANDROID)
+if(NOT ANDROID AND NOT RPCS3_UWP)
 	add_library(3rdparty_ffmpeg INTERFACE)
 
 	# Select the version of ffmpeg to use, default is builtin
@@ -318,12 +318,26 @@ if(NOT ANDROID)
 		)
 		target_include_directories(3rdparty_ffmpeg SYSTEM INTERFACE "ffmpeg/include")
 	endif()
+elseif(RPCS3_UWP)
+	# The prebuilt ffmpeg-core download is MSVC/desktop only. Use its headers and link
+	# libraries built for UWP from RPCS3_UWP_FFMPEG_LIB_DIR when provided.
+	add_library(3rdparty_ffmpeg INTERFACE)
+	target_include_directories(3rdparty_ffmpeg SYSTEM INTERFACE "ffmpeg/include")
+	if(RPCS3_UWP_FFMPEG_LIB_DIR)
+		target_link_libraries(3rdparty_ffmpeg INTERFACE
+			${RPCS3_UWP_FFMPEG_LIB_DIR}/libavformat.a
+			${RPCS3_UWP_FFMPEG_LIB_DIR}/libavcodec.a
+			${RPCS3_UWP_FFMPEG_LIB_DIR}/libswscale.a
+			${RPCS3_UWP_FFMPEG_LIB_DIR}/libswresample.a
+			${RPCS3_UWP_FFMPEG_LIB_DIR}/libavutil.a
+			bcrypt)
+	endif()
 endif()
 
 
 # GLEW
 add_library(3rdparty_glew INTERFACE)
-if(NOT MSVC AND NOT ANDROID AND NOT APPLE)
+if(NOT MSVC AND NOT ANDROID AND NOT APPLE AND NOT RPCS3_UWP)
 	find_package(GLEW REQUIRED)
 	target_link_libraries(3rdparty_glew INTERFACE GLEW::GLEW)
 endif()
