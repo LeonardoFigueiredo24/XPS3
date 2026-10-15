@@ -419,9 +419,17 @@ namespace
 			g_cfg.audio.music.set(music_handler::null);
 			g_cfg.io.camera.set(camera_handler::null);
 
-			// Built without LLVM: run PPU and SPU code on the interpreters.
-			g_cfg.core.ppu_decoder.set(ppu_decoder_type::_static);
-			g_cfg.core.spu_decoder.set(spu_decoder_type::_static);
+#ifdef LLVM_AVAILABLE
+			// PPU and SPU decoders come from config.yml (default: LLVM recompilers). An empty
+			// LocalState/interpreter file forces the interpreters, to tell JIT faults apart.
+			if (fs::is_file(g_local_dir + "interpreter"))
+#endif
+			{
+				g_cfg.core.ppu_decoder.set(ppu_decoder_type::_static);
+				g_cfg.core.spu_decoder.set(spu_decoder_type::_static);
+			}
+			sys_log.always()("UWP: PPU decoder: %s, SPU decoder: %s, LLVM threads: %u",
+				g_cfg.core.ppu_decoder.get(), g_cfg.core.spu_decoder.get(), g_cfg.core.llvm_threads.get());
 
 			Emulator::SaveSettings(g_cfg.to_string(), {});
 

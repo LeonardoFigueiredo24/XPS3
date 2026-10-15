@@ -104,7 +104,13 @@ namespace utils
 			PVOID ret = ::VirtualAllocFromApp(addr, size, type, PAGE_READWRITE);
 			ULONG old;
 			if (ret && (type & MEM_COMMIT) && !::VirtualProtectFromApp(ret, size, prot, &old))
+			{
+				// JIT code (asmjit, LLVM) can't run without this; say so before the caller's ensure() fails.
+				const DWORD err = ::GetLastError();
+				uwp_mem_log.error("VirtualProtectFromApp(%p, 0x%x, 0x%x) for JIT memory failed (%u)", ret, size, prot, err);
+				::SetLastError(err);
 				return nullptr;
+			}
 			return ret;
 		}
 
