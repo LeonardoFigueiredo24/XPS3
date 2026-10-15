@@ -551,6 +551,10 @@ namespace
 			g_cfg.core.spu_decoder.set(spu_interp ? spu_decoder_type::_static : spu_llvm ? spu_decoder_type::llvm : spu_decoder_type::asmjit);
 			sys_log.always()("UWP: PPU decoder: %s, SPU decoder: %s, LLVM threads: %u",
 				g_cfg.core.ppu_decoder.get(), g_cfg.core.spu_decoder.get(), g_cfg.core.llvm_threads.get());
+			// LLVM precompilation compiles every module in dev_flash (~580) before the XMB starts:
+			// 36+ minutes on the first boot on the Xbox. Without it only the modules that load get
+			// compiled (the rest when first used). An empty LocalState/precompile file turns it on.
+			g_cfg.core.llvm_precompilation.set(fs::is_file(g_local_dir + "precompile"));
 			// Measured on the Xbox XMB: Mega SPU blocks are safe and marginally faster.
 			g_cfg.core.spu_block_size.set(spu_block_size_type::mega);
 			// The shader interpreter costs ~1.5 GB of the 5 GB and ~20 s of XMB load on the Xbox,
@@ -613,9 +617,10 @@ namespace
 		return 0;
 	}
 
-	// While a game boots without a frame (first boots compile PPU code for minutes), show
-	// RPCS3's progress text instead of a plain color so it doesn't look hung.
-	bool show_loading_screen(ID3D11Device* dev, ID3D11DeviceContext* ctx, ID3D11RenderTargetView* rtv, shell_state st)
+	// While a game boots without a frame (first boots compile PPU code for minutes), or while
+	// PPU/SPU code compiles and the last frame has stopped changing, show a loading screen with
+	// the compile progress instead of a plain color or a frozen picture.
+	bool show_loading_screen(ID3D11Device* dev, ID3D11DeviceContext* ctx, ID3D11RenderTargetView* rtv, shell_state st, bool frame_live)
 	{
 		if (st != shell_state::booting && st != shell_state::running)
 			return false;
@@ -624,9 +629,13 @@ namespace
 		static auto since = std::chrono::steady_clock::now();
 		static u32 tick = 0;
 
+		// The module/file counters belong to the compile in progress; the progress text can
+		// still hold an older message (e.g. the shader cache's "pipeline object N of N").
 		const u32 total = g_progr_ptotal, done = g_progr_pdone;
-		const std::string text = g_progr_text;
-		if (text.empty() && !total)
+		const u32 ftotal = g_progr_ftotal, fdone = g_progr_fdone;
+		const bool compiling = (total && done < total) || (ftotal && fdone < ftotal);
+		const std::string text = compiling ? std::string() : std::string(g_progr_text);
+		if (frame_live || (!compiling && (text.empty() || st == shell_state::running)))
 		{
 			showing = false;
 			return false;
@@ -657,13 +666,20 @@ namespace
 		if (tick++ % 15 == 0)
 		{
 			const u64 secs = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - since).count();
-			std::string detail;
-			if (total)
-				detail = fmt::format("%u of %u done. ", done, total);
-			detail += fmt::format("%u:%02u elapsed.\n\nThe first start of a game or the system menu compiles its code for this console, "
-				"which can take several minutes. Later starts reuse it.", secs / 60, secs % 60);
+			std::string title = text, detail;
+			if (compiling)
+			{
+				title = "Compiling PPU code";
+				if (ftotal)
+					fmt::append(detail, "File %u of %u", fdone, ftotal);
+				if (total)
+					fmt::append(detail, "%sModule %u of %u", ftotal ? ", " : "", done, total);
+				detail += ". ";
+			}
+			fmt::append(detail, "%u:%02u elapsed.\n\nThe first start of a game or the system menu compiles its code for this console. "
+				"Later starts reuse it.", secs / 60, secs % 60);
 			const u32* pixels = nullptr;
-			if (!uwp_frontend::loading_frame(text, detail, done, total, pixels))
+			if (!uwp_frontend::loading_frame(title, detail, done, total, pixels))
 				return false;
 			ctx->UpdateSubresource(tex, 0, nullptr, pixels, uwp_frontend::canvas_width * 4, 0);
 		}
@@ -863,14 +879,24 @@ namespace
 				if (upload)
 					ctx->UpdateSubresource(frame_tex, 0, nullptr, shown_pixels.data(), c_display_width * 4, 0);
 
-				if (have_frame)
+				// A frame counts as live until it has gone a second without changing.
+				static auto last_new_frame = std::chrono::steady_clock::now();
+				if (upload)
+					last_new_frame = std::chrono::steady_clock::now();
+				const bool frame_live = have_frame && std::chrono::steady_clock::now() - last_new_frame < std::chrono::seconds(1);
+
+				if (show_loading_screen(dev, ctx, rtv, st, frame_live))
+				{
+					// Drawn by show_loading_screen.
+				}
+				else if (have_frame)
 				{
 					ID3D11Resource* target = nullptr;
 					rtv->GetResource(&target);
 					ctx->CopyResource(target, frame_tex);
 					target->Release();
 				}
-				else if (!show_loading_screen(dev, ctx, rtv, st))
+				else
 				{
 					ctx->ClearRenderTargetView(rtv, st == shell_state::failed ? red : st == shell_state::finished ? green : blue);
 				}
