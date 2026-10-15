@@ -251,7 +251,7 @@ index c8821c9..df8e78b 100644
                 range_ptr += range_count;
              }
 diff --git a/src/microsoft/vulkan/dzn_device.c b/src/microsoft/vulkan/dzn_device.c
-index 4a4dde5..d2a8d98 100644
+index 4a4dde5..0d809cc 100644
 --- a/src/microsoft/vulkan/dzn_device.c
 +++ b/src/microsoft/vulkan/dzn_device.c
 @@ -22,6 +22,7 @@
@@ -294,7 +294,7 @@ index 4a4dde5..d2a8d98 100644
  
     static const D3D_SHADER_MODEL valid_shader_models[] = {
        D3D_SHADER_MODEL_6_8 ,D3D_SHADER_MODEL_6_7, D3D_SHADER_MODEL_6_6, D3D_SHADER_MODEL_6_5,
-@@ -446,6 +454,10 @@ dzn_physical_device_cache_caps(struct dzn_physical_device *pdev)
+@@ -446,6 +454,14 @@ dzn_physical_device_cache_caps(struct dzn_physical_device *pdev)
     ID3D12Device1_CheckFeatureSupport(pdev->dev, D3D12_FEATURE_D3D12_OPTIONS15, &pdev->options15, sizeof(pdev->options15));
     ID3D12Device1_CheckFeatureSupport(pdev->dev, D3D12_FEATURE_D3D12_OPTIONS16, &pdev->options16, sizeof(pdev->options16));
     ID3D12Device1_CheckFeatureSupport(pdev->dev, D3D12_FEATURE_D3D12_OPTIONS17, &pdev->options17, sizeof(pdev->options17));
@@ -302,10 +302,14 @@ index 4a4dde5..d2a8d98 100644
 +             pdev->desc.description, pdev->feature_level, pdev->shader_model,
 +             pdev->options.ResourceBindingTier, pdev->options12.EnhancedBarriersSupported,
 +             pdev->options4.Native16BitShaderOpsSupported);
++   mesa_logi("dzn: %s: doubles %d, int64 ops %d, typed UAV load additional formats %d, ROVs %d",
++             pdev->desc.description, pdev->options.DoublePrecisionFloatShaderOps,
++             pdev->options1.Int64ShaderOps, pdev->options.TypedUAVLoadAdditionalFormats,
++             pdev->options.ROVsSupported);
     if (FAILED(ID3D12Device1_CheckFeatureSupport(pdev->dev, D3D12_FEATURE_D3D12_OPTIONS19, &pdev->options19, sizeof(pdev->options19)))) {
        pdev->options19.MaxSamplerDescriptorHeapSize = D3D12_MAX_SHADER_VISIBLE_SAMPLER_HEAP_SIZE;
        pdev->options19.MaxSamplerDescriptorHeapSizeWithStaticSamplers = pdev->options19.MaxSamplerDescriptorHeapSize;
-@@ -694,7 +706,7 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
+@@ -694,7 +710,7 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
        .textureCompressionBC = true,
        .occlusionQueryPrecise = true,
        .pipelineStatisticsQuery = true,
@@ -314,7 +318,7 @@ index 4a4dde5..d2a8d98 100644
        .fragmentStoresAndAtomics = true,
        .shaderTessellationAndGeometryPointSize = false,
        .shaderImageGatherExtended = true,
-@@ -808,6 +820,9 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
+@@ -808,6 +824,9 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
        .vertexAttributeInstanceRateDivisor = true,
        .vertexAttributeInstanceRateZeroDivisor = true,
        .shaderReplicatedComposites         = true,
@@ -324,7 +328,7 @@ index 4a4dde5..d2a8d98 100644
     };
  }
  
-@@ -2481,6 +2496,9 @@ serialize_root_sig(struct dzn_device *device,
+@@ -2481,6 +2500,9 @@ serialize_root_sig(struct dzn_device *device,
     return sig;
  }
  
@@ -334,7 +338,7 @@ index 4a4dde5..d2a8d98 100644
  ID3D12RootSignature *
  dzn_device_create_root_sig(struct dzn_device *device,
                             const D3D12_VERSIONED_ROOT_SIGNATURE_DESC *desc)
-@@ -2495,7 +2513,58 @@ dzn_device_create_root_sig(struct dzn_device *device,
+@@ -2495,7 +2517,58 @@ dzn_device_create_root_sig(struct dzn_device *device,
                                       ID3D10Blob_GetBufferSize(sig),
                                       &IID_ID3D12RootSignature,
                                       (void **)&root_sig);
@@ -394,9 +398,26 @@ index 4a4dde5..d2a8d98 100644
  }
  
 diff --git a/src/microsoft/vulkan/dzn_pipeline.c b/src/microsoft/vulkan/dzn_pipeline.c
-index 65ccc0e..09371b4 100644
+index 65ccc0e..d4c2276 100644
 --- a/src/microsoft/vulkan/dzn_pipeline.c
 +++ b/src/microsoft/vulkan/dzn_pipeline.c
+@@ -420,11 +420,11 @@ dzn_pipeline_compile_shader(struct dzn_device *device,
+       container_of(device->vk.physical, struct dzn_physical_device, vk);
+    struct nir_to_dxil_options opts = {
+       .environment = DXIL_ENVIRONMENT_VULKAN,
+-      .lower_int16 = !pdev->options4.Native16BitShaderOpsSupported &&
+-      /* Don't lower 16-bit types if they can only come from min-precision */
+-         (device->vk.enabled_extensions.KHR_shader_float16_int8 ||
+-          device->vk.enabled_features.shaderFloat16 ||
+-          device->vk.enabled_features.shaderInt16),
++      /* Without native 16-bit shader ops, always widen 16-bit values: relaxed-precision
++       * (mediump) and half-float unpacking also produce them, and the resulting DXIL
++       * declares native low precision, which such a device rejects at PSO creation
++       * (E_INVALIDARG on Xbox). */
++      .lower_int16 = !pdev->options4.Native16BitShaderOpsSupported,
+       .shader_model_max = dzn_get_shader_model(pdev),
+       .input_clip_size = input_clip_size,
+       .advanced_texture_ops = pdev->options14.AdvancedTextureOpsSupported,
 @@ -1857,6 +1857,10 @@ dzn_graphics_pipeline_destroy(struct dzn_graphics_pipeline *pipeline,
     vk_free2(&pipeline->base.base.device->alloc, alloc, pipeline);
  }
