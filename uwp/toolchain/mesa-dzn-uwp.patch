@@ -251,10 +251,18 @@ index c8821c9..df8e78b 100644
                 range_ptr += range_count;
              }
 diff --git a/src/microsoft/vulkan/dzn_device.c b/src/microsoft/vulkan/dzn_device.c
-index 4a4dde5..18d601d 100644
+index 4a4dde5..d2a8d98 100644
 --- a/src/microsoft/vulkan/dzn_device.c
 +++ b/src/microsoft/vulkan/dzn_device.c
-@@ -146,13 +146,14 @@ dzn_physical_device_get_extensions(struct dzn_physical_device *pdev)
+@@ -22,6 +22,7 @@
+  */
+ 
+ #include "dzn_private.h"
++#include "util/simple_mtx.h"
+ 
+ #include "vk_alloc.h"
+ #include "vk_common_entrypoints.h"
+@@ -146,13 +147,14 @@ dzn_physical_device_get_extensions(struct dzn_physical_device *pdev)
        .EXT_debug_marker                      = true,
        .EXT_descriptor_indexing               = pdev->shader_model >= D3D_SHADER_MODEL_6_6,
  #if defined(_WIN32)
@@ -270,7 +278,7 @@ index 4a4dde5..18d601d 100644
        .EXT_subgroup_size_control             = true,
        .EXT_vertex_attribute_divisor          = true,
        .EXT_memory_budget                     = true,
-@@ -407,8 +408,14 @@ dzn_physical_device_cache_caps(struct dzn_physical_device *pdev)
+@@ -407,8 +409,14 @@ dzn_physical_device_cache_caps(struct dzn_physical_device *pdev)
        .pFeatureLevelsRequested = checklist,
     };
  
@@ -286,7 +294,7 @@ index 4a4dde5..18d601d 100644
  
     static const D3D_SHADER_MODEL valid_shader_models[] = {
        D3D_SHADER_MODEL_6_8 ,D3D_SHADER_MODEL_6_7, D3D_SHADER_MODEL_6_6, D3D_SHADER_MODEL_6_5,
-@@ -446,6 +453,10 @@ dzn_physical_device_cache_caps(struct dzn_physical_device *pdev)
+@@ -446,6 +454,10 @@ dzn_physical_device_cache_caps(struct dzn_physical_device *pdev)
     ID3D12Device1_CheckFeatureSupport(pdev->dev, D3D12_FEATURE_D3D12_OPTIONS15, &pdev->options15, sizeof(pdev->options15));
     ID3D12Device1_CheckFeatureSupport(pdev->dev, D3D12_FEATURE_D3D12_OPTIONS16, &pdev->options16, sizeof(pdev->options16));
     ID3D12Device1_CheckFeatureSupport(pdev->dev, D3D12_FEATURE_D3D12_OPTIONS17, &pdev->options17, sizeof(pdev->options17));
@@ -297,7 +305,7 @@ index 4a4dde5..18d601d 100644
     if (FAILED(ID3D12Device1_CheckFeatureSupport(pdev->dev, D3D12_FEATURE_D3D12_OPTIONS19, &pdev->options19, sizeof(pdev->options19)))) {
        pdev->options19.MaxSamplerDescriptorHeapSize = D3D12_MAX_SHADER_VISIBLE_SAMPLER_HEAP_SIZE;
        pdev->options19.MaxSamplerDescriptorHeapSizeWithStaticSamplers = pdev->options19.MaxSamplerDescriptorHeapSize;
-@@ -694,7 +705,7 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
+@@ -694,7 +706,7 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
        .textureCompressionBC = true,
        .occlusionQueryPrecise = true,
        .pipelineStatisticsQuery = true,
@@ -306,7 +314,7 @@ index 4a4dde5..18d601d 100644
        .fragmentStoresAndAtomics = true,
        .shaderTessellationAndGeometryPointSize = false,
        .shaderImageGatherExtended = true,
-@@ -808,6 +819,9 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
+@@ -808,6 +820,9 @@ dzn_physical_device_get_features(const struct dzn_physical_device *pdev,
        .vertexAttributeInstanceRateDivisor = true,
        .vertexAttributeInstanceRateZeroDivisor = true,
        .shaderReplicatedComposites         = true,
@@ -316,9 +324,33 @@ index 4a4dde5..18d601d 100644
     };
  }
  
-@@ -2496,6 +2510,44 @@ dzn_device_create_root_sig(struct dzn_device *device,
+@@ -2481,6 +2496,9 @@ serialize_root_sig(struct dzn_device *device,
+    return sig;
+ }
+ 
++struct dzn_root_sig_blob dzn_root_sig_blobs[1024];
++unsigned dzn_root_sig_blob_count;
++
+ ID3D12RootSignature *
+ dzn_device_create_root_sig(struct dzn_device *device,
+                            const D3D12_VERSIONED_ROOT_SIGNATURE_DESC *desc)
+@@ -2495,7 +2513,58 @@ dzn_device_create_root_sig(struct dzn_device *device,
+                                      ID3D10Blob_GetBufferSize(sig),
                                       &IID_ID3D12RootSignature,
                                       (void **)&root_sig);
++   if (root_sig) {
++      /* Keep a copy of each serialized root signature so a failing PSO can dump its own. */
++      static simple_mtx_t lock = SIMPLE_MTX_INITIALIZER;
++      simple_mtx_lock(&lock);
++      unsigned slot = dzn_root_sig_blob_count++ % ARRAY_SIZE(dzn_root_sig_blobs);
++      free(dzn_root_sig_blobs[slot].data);
++      dzn_root_sig_blobs[slot].sig = root_sig;
++      dzn_root_sig_blobs[slot].size = ID3D10Blob_GetBufferSize(sig);
++      dzn_root_sig_blobs[slot].data = malloc(dzn_root_sig_blobs[slot].size);
++      if (dzn_root_sig_blobs[slot].data)
++         memcpy(dzn_root_sig_blobs[slot].data, ID3D10Blob_GetBufferPointer(sig), dzn_root_sig_blobs[slot].size);
++      simple_mtx_unlock(&lock);
++   }
     ID3D10Blob_Release(sig);
 +
 +   /* Xbox UWP diagnostics: summarize root signatures so a failing PSO can be matched to one. */
@@ -362,7 +394,7 @@ index 4a4dde5..18d601d 100644
  }
  
 diff --git a/src/microsoft/vulkan/dzn_pipeline.c b/src/microsoft/vulkan/dzn_pipeline.c
-index 65ccc0e..448cd52 100644
+index 65ccc0e..09371b4 100644
 --- a/src/microsoft/vulkan/dzn_pipeline.c
 +++ b/src/microsoft/vulkan/dzn_pipeline.c
 @@ -1857,6 +1857,10 @@ dzn_graphics_pipeline_destroy(struct dzn_graphics_pipeline *pipeline,
@@ -385,7 +417,7 @@ index 65ccc0e..448cd52 100644
           ret = vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
           goto out;
        }
-@@ -2180,6 +2186,346 @@ update_stencil_state(struct dzn_physical_device *pdev,
+@@ -2180,6 +2186,388 @@ update_stencil_state(struct dzn_physical_device *pdev,
     }
  }
  
@@ -567,6 +599,31 @@ index 65ccc0e..448cd52 100644
 +   }
 +}
 +
++
++static void
++dzn_log_base64(const char *what, const void *data, size_t size)
++{
++   static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
++   const uint8_t *b = data;
++   char line[200];
++   mesa_loge("dzn:   base64 %s %zu bytes begin", what, size);
++   for (size_t i = 0; i < size; i += 144) {
++      size_t n = MIN2(144, size - i), o = 0;
++      for (size_t j = 0; j < n; j += 3) {
++         uint32_t v = b[i + j] << 16;
++         if (j + 1 < n) v |= b[i + j + 1] << 8;
++         if (j + 2 < n) v |= b[i + j + 2];
++         line[o++] = tbl[(v >> 18) & 63];
++         line[o++] = tbl[(v >> 12) & 63];
++         line[o++] = j + 1 < n ? tbl[(v >> 6) & 63] : '=';
++         line[o++] = j + 2 < n ? tbl[v & 63] : '=';
++      }
++      line[o] = 0;
++      mesa_loge("dzn:   b64 %s", line);
++   }
++   mesa_loge("dzn:   base64 %s end", what);
++}
++
 +/* Xbox UWP diagnostics: there is no D3D12 debug layer on the console, so when a graphics PSO
 + * fails, retry with one setting changed at a time and log which change makes it valid. */
 +static void
@@ -597,7 +654,24 @@ index 65ccc0e..448cd52 100644
 +   if (*(const D3D12_PIPELINE_STATE_SUBOBJECT_TYPE *)src_buf == D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE) {
 +      size_t off = 0;
 +      dzn_pso_subobject_size(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE, &off);
-+      mesa_loge("dzn:   root sig %p", *(void *const *)((const uint8_t *)src_buf + off));
++      const void *rs = *(void *const *)((const uint8_t *)src_buf + off);
++      mesa_loge("dzn:   root sig %p", rs);
++      for (unsigned i = 0; i < ARRAY_SIZE(dzn_root_sig_blobs); i++) {
++         if (dzn_root_sig_blobs[i].sig == rs && dzn_root_sig_blobs[i].data) {
++            dzn_log_base64("root sig blob", dzn_root_sig_blobs[i].data, dzn_root_sig_blobs[i].size);
++            break;
++         }
++      }
++   }
++   {
++      static unsigned blob_dumps;
++      for (unsigned st = 0; st < ARRAY_SIZE(stage_names) && blob_dumps < 2; st++) {
++         const D3D12_SHADER_BYTECODE *bc = pipeline->templates.shaders[st].bc;
++         if (bc && bc->pShaderBytecode) {
++            dzn_log_base64(stage_names[st], bc->pShaderBytecode, bc->BytecodeLength);
++            blob_dumps++;
++         }
++      }
 +   }
 +#ifdef _WIN32
 +   {
@@ -732,7 +806,7 @@ index 65ccc0e..448cd52 100644
  ID3D12PipelineState *
  dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
                                  const struct dzn_graphics_pipeline_variant_key *key)
-@@ -2236,10 +2582,14 @@ dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
+@@ -2236,10 +2624,14 @@ dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
  
        update_stencil_state(pdev, pipeline, stream_buf, &masked_key);
  
@@ -752,7 +826,7 @@ index 65ccc0e..448cd52 100644
        assert(he);
     } else {
 diff --git a/src/microsoft/vulkan/dzn_private.h b/src/microsoft/vulkan/dzn_private.h
-index 9b1f5ab..d3aaaa0 100644
+index 9b1f5ab..7392e1e 100644
 --- a/src/microsoft/vulkan/dzn_private.h
 +++ b/src/microsoft/vulkan/dzn_private.h
 @@ -61,6 +61,7 @@
@@ -763,6 +837,17 @@ index 9b1f5ab..d3aaaa0 100644
  
  #include "spirv_to_dxil.h"
  #include "dzn_abi_helper.h"
+@@ -320,6 +321,10 @@ const struct dzn_meta_blit *
+ dzn_meta_blits_get_context(struct dzn_device *device,
+                            const struct dzn_meta_blit_key *key);
+ 
++struct dzn_root_sig_blob { const void *sig; void *data; size_t size; };
++extern struct dzn_root_sig_blob dzn_root_sig_blobs[1024];
++extern unsigned dzn_root_sig_blob_count;
++
+ ID3D12RootSignature *
+ dzn_device_create_root_sig(struct dzn_device *device,
+                            const D3D12_VERSIONED_ROOT_SIGNATURE_DESC *desc);
 diff --git a/src/microsoft/vulkan/meson.build b/src/microsoft/vulkan/meson.build
 index 800fdc2..56a58cd 100644
 --- a/src/microsoft/vulkan/meson.build
