@@ -398,10 +398,41 @@ index 4a4dde5..0d809cc 100644
  }
  
 diff --git a/src/microsoft/vulkan/dzn_pipeline.c b/src/microsoft/vulkan/dzn_pipeline.c
-index 65ccc0e..d4c2276 100644
+index 65ccc0e..2a4c53e 100644
 --- a/src/microsoft/vulkan/dzn_pipeline.c
 +++ b/src/microsoft/vulkan/dzn_pipeline.c
-@@ -420,11 +420,11 @@ dzn_pipeline_compile_shader(struct dzn_device *device,
+@@ -408,6 +408,30 @@ enum dxil_shader_model
+    return ((pdev->shader_model & 0xf0) << 12) | (pdev->shader_model & 0xf);
+ }
+ 
++static void
++dzn_log_base64(const char *what, const void *data, size_t size)
++{
++   static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
++   const uint8_t *b = data;
++   char line[200];
++   mesa_loge("dzn:   base64 %s %zu bytes begin", what, size);
++   for (size_t i = 0; i < size; i += 144) {
++      size_t n = MIN2(144, size - i), o = 0;
++      for (size_t j = 0; j < n; j += 3) {
++         uint32_t v = b[i + j] << 16;
++         if (j + 1 < n) v |= b[i + j + 1] << 8;
++         if (j + 2 < n) v |= b[i + j + 2];
++         line[o++] = tbl[(v >> 18) & 63];
++         line[o++] = tbl[(v >> 12) & 63];
++         line[o++] = j + 1 < n ? tbl[(v >> 6) & 63] : '=';
++         line[o++] = j + 2 < n ? tbl[v & 63] : '=';
++      }
++      line[o] = 0;
++      mesa_loge("dzn:   b64 %s", line);
++   }
++   mesa_loge("dzn:   base64 %s end", what);
++}
++
+ static VkResult
+ dzn_pipeline_compile_shader(struct dzn_device *device,
+                             nir_shader *nir,
+@@ -420,11 +444,11 @@ dzn_pipeline_compile_shader(struct dzn_device *device,
        container_of(device->vk.physical, struct dzn_physical_device, vk);
     struct nir_to_dxil_options opts = {
        .environment = DXIL_ENVIRONMENT_VULKAN,
@@ -418,7 +449,20 @@ index 65ccc0e..d4c2276 100644
        .shader_model_max = dzn_get_shader_model(pdev),
        .input_clip_size = input_clip_size,
        .advanced_texture_ops = pdev->options14.AdvancedTextureOpsSupported,
-@@ -1857,6 +1857,10 @@ dzn_graphics_pipeline_destroy(struct dzn_graphics_pipeline *pipeline,
+@@ -473,6 +497,12 @@ dzn_pipeline_compile_shader(struct dzn_device *device,
+    }
+ 
+    if (!res && !(instance->debug_flags & DZN_DEBUG_EXPERIMENTAL)) {
++      static unsigned failed_dumps;
++      mesa_loge("dzn: DXIL validation failed for a %s shader (%zu bytes)%s",
++                _mesa_shader_stage_to_abbrev(nir->info.stage), (size_t)slot->BytecodeLength,
++                err ? "" : ", no validator message (dxcompiler.dll missing?)");
++      if (failed_dumps++ < 2)
++         dzn_log_base64("failing DXIL", slot->pShaderBytecode, slot->BytecodeLength);
+       if (err) {
+          mesa_loge(
+                "== VALIDATION ERROR =============================================\n"
+@@ -1857,6 +1887,10 @@ dzn_graphics_pipeline_destroy(struct dzn_graphics_pipeline *pipeline,
     vk_free2(&pipeline->base.base.device->alloc, alloc, pipeline);
  }
  
@@ -429,7 +473,7 @@ index 65ccc0e..d4c2276 100644
  static VkResult
  dzn_graphics_pipeline_create(struct dzn_device *device,
                               VkPipelineCache cache,
-@@ -2061,6 +2065,8 @@ dzn_graphics_pipeline_create(struct dzn_device *device,
+@@ -2061,6 +2095,8 @@ dzn_graphics_pipeline_create(struct dzn_device *device,
                                                 &IID_ID3D12PipelineState,
                                                 (void **)&pipeline->base.state);
        if (FAILED(hres)) {
@@ -438,7 +482,7 @@ index 65ccc0e..d4c2276 100644
           ret = vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
           goto out;
        }
-@@ -2180,6 +2186,388 @@ update_stencil_state(struct dzn_physical_device *pdev,
+@@ -2180,6 +2216,364 @@ update_stencil_state(struct dzn_physical_device *pdev,
     }
  }
  
@@ -620,30 +664,6 @@ index 65ccc0e..d4c2276 100644
 +   }
 +}
 +
-+
-+static void
-+dzn_log_base64(const char *what, const void *data, size_t size)
-+{
-+   static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-+   const uint8_t *b = data;
-+   char line[200];
-+   mesa_loge("dzn:   base64 %s %zu bytes begin", what, size);
-+   for (size_t i = 0; i < size; i += 144) {
-+      size_t n = MIN2(144, size - i), o = 0;
-+      for (size_t j = 0; j < n; j += 3) {
-+         uint32_t v = b[i + j] << 16;
-+         if (j + 1 < n) v |= b[i + j + 1] << 8;
-+         if (j + 2 < n) v |= b[i + j + 2];
-+         line[o++] = tbl[(v >> 18) & 63];
-+         line[o++] = tbl[(v >> 12) & 63];
-+         line[o++] = j + 1 < n ? tbl[(v >> 6) & 63] : '=';
-+         line[o++] = j + 2 < n ? tbl[v & 63] : '=';
-+      }
-+      line[o] = 0;
-+      mesa_loge("dzn:   b64 %s", line);
-+   }
-+   mesa_loge("dzn:   base64 %s end", what);
-+}
 +
 +/* Xbox UWP diagnostics: there is no D3D12 debug layer on the console, so when a graphics PSO
 + * fails, retry with one setting changed at a time and log which change makes it valid. */
@@ -827,7 +847,7 @@ index 65ccc0e..d4c2276 100644
  ID3D12PipelineState *
  dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
                                  const struct dzn_graphics_pipeline_variant_key *key)
-@@ -2236,10 +2624,14 @@ dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
+@@ -2236,10 +2630,14 @@ dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
  
        update_stencil_state(pdev, pipeline, stream_buf, &masked_key);
  
