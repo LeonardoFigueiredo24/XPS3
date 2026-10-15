@@ -864,7 +864,8 @@ namespace uwp_frontend
 				{"VSync", &g_cfg.video.vsync, {}, {}},
 				{"Shader mode", &g_cfg.video.shadermode, {}, "Async with interpreter avoids stutter while shaders compile."},
 				{"Write color buffers", &g_cfg.video.write_color_buffers, {"false", "true"}, "Needed by some games for correct visuals; costs speed."},
-				{"Performance overlay", &g_cfg.video.perf_overlay.enabled, {"false", "true"}, "Shows FPS and CPU usage in the corner."},
+				{"Stats overlay", &g_cfg.video.perf_overlay.enabled, {"false", "true"}, "FPS, CPU and GPU load in the top right corner while a game runs."},
+				{"Stats detail", &g_cfg.video.perf_overlay.level, {"Minimal", "Low", "Medium", "High"}, "Minimal = FPS. Low adds CPU. Medium adds PPU/SPU/RSX. High adds GPU load."},
 #ifdef LLVM_AVAILABLE
 				{"LLVM compile threads", &g_cfg.core.llvm_threads, {"0", "1", "2", "3", "4", "6"}, "0 = automatic. Fewer threads use less memory while compiling."},
 #endif
