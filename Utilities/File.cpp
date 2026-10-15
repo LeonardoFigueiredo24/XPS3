@@ -29,6 +29,88 @@ std::string g_android_cache_dir;
 #include <Windows.h>
 #include <winioctl.h>
 
+#ifdef RPCS3_UWP
+// UWP: files outside the app's own folders (USB drives) are only reachable through the brokered
+// *FromApp APIs (broadFileSystemAccess capability). Each wrapper tries the plain call first and
+// falls back to the brokered one when access is denied.
+extern "C"
+{
+	HANDLE WINAPI CreateFileFromAppW(LPCWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE);
+	HANDLE WINAPI FindFirstFileExFromAppW(LPCWSTR, FINDEX_INFO_LEVELS, LPVOID, FINDEX_SEARCH_OPS, LPVOID, DWORD);
+	BOOL WINAPI GetFileAttributesExFromAppW(LPCWSTR, GET_FILEEX_INFO_LEVELS, LPVOID);
+	BOOL WINAPI CreateDirectoryFromAppW(LPCWSTR, LPSECURITY_ATTRIBUTES);
+	BOOL WINAPI RemoveDirectoryFromAppW(LPCWSTR);
+	BOOL WINAPI DeleteFileFromAppW(LPCWSTR);
+	BOOL WINAPI CopyFileFromAppW(LPCWSTR, LPCWSTR, BOOL);
+	BOOL WINAPI MoveFileFromAppW(LPCWSTR, LPCWSTR);
+}
+
+namespace
+{
+	bool uwp_access_denied()
+	{
+		return GetLastError() == ERROR_ACCESS_DENIED;
+	}
+
+	HANDLE uwp_CreateFileW(LPCWSTR name, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES sa, DWORD disp, DWORD flags, HANDLE tmpl)
+	{
+		const HANDLE h = ::CreateFileW(name, access, share, sa, disp, flags, tmpl);
+		return h == INVALID_HANDLE_VALUE && uwp_access_denied() ? CreateFileFromAppW(name, access, share, sa, disp, flags, tmpl) : h;
+	}
+
+	HANDLE uwp_FindFirstFileExW(LPCWSTR name, FINDEX_INFO_LEVELS level, LPVOID data, FINDEX_SEARCH_OPS op, LPVOID filter, DWORD flags)
+	{
+		const HANDLE h = ::FindFirstFileExW(name, level, data, op, filter, flags);
+		return h == INVALID_HANDLE_VALUE && uwp_access_denied() ? FindFirstFileExFromAppW(name, level, data, op, filter, flags) : h;
+	}
+
+	BOOL uwp_GetFileAttributesExW(LPCWSTR name, GET_FILEEX_INFO_LEVELS level, LPVOID info)
+	{
+		return ::GetFileAttributesExW(name, level, info) || (uwp_access_denied() && GetFileAttributesExFromAppW(name, level, info));
+	}
+
+	BOOL uwp_CreateDirectoryW(LPCWSTR name, LPSECURITY_ATTRIBUTES sa)
+	{
+		return ::CreateDirectoryW(name, sa) || (uwp_access_denied() && CreateDirectoryFromAppW(name, sa));
+	}
+
+	BOOL uwp_RemoveDirectoryW(LPCWSTR name)
+	{
+		return ::RemoveDirectoryW(name) || (uwp_access_denied() && RemoveDirectoryFromAppW(name));
+	}
+
+	BOOL uwp_DeleteFile(LPCWSTR name)
+	{
+		return ::DeleteFileW(name) || (uwp_access_denied() && DeleteFileFromAppW(name));
+	}
+
+	BOOL uwp_CopyFileW(LPCWSTR from, LPCWSTR to, BOOL fail_if_exists)
+	{
+		return ::CopyFileW(from, to, fail_if_exists) || (uwp_access_denied() && CopyFileFromAppW(from, to, fail_if_exists));
+	}
+
+	BOOL uwp_MoveFileExW(LPCWSTR from, LPCWSTR to, DWORD flags)
+	{
+		if (::MoveFileExW(from, to, flags))
+			return TRUE;
+		if (!uwp_access_denied())
+			return FALSE;
+		// The brokered move can't replace: remove the target first when asked to.
+		if (flags & MOVEFILE_REPLACE_EXISTING)
+			uwp_DeleteFile(to);
+		return MoveFileFromAppW(from, to);
+	}
+}
+
+#define CreateFileW uwp_CreateFileW
+#define FindFirstFileExW uwp_FindFirstFileExW
+#define GetFileAttributesExW uwp_GetFileAttributesExW
+#define CreateDirectoryW uwp_CreateDirectoryW
+#define RemoveDirectoryW uwp_RemoveDirectoryW
+#define CopyFileW uwp_CopyFileW
+#define MoveFileExW uwp_MoveFileExW
+#endif
+
 static std::unique_ptr<wchar_t[]> to_wchar(std::string_view source)
 {
 	// String size + null terminator
@@ -1778,7 +1860,11 @@ bool fs::remove_file(const std::string& path)
 	}
 
 #ifdef _WIN32
+#ifdef RPCS3_UWP
+	if (!uwp_DeleteFile(to_wchar(path).get()))
+#else
 	if (!DeleteFileW(to_wchar(path).get()))
+#endif
 	{
 		g_tls_error = to_error(GetLastError());
 		return false;

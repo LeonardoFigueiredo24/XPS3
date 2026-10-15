@@ -492,6 +492,18 @@ namespace
 			g_cfg.core.spu_decoder.set(spu_interp ? spu_decoder_type::_static : spu_llvm ? spu_decoder_type::llvm : spu_decoder_type::asmjit);
 			sys_log.always()("UWP: PPU decoder: %s, SPU decoder: %s, LLVM threads: %u",
 				g_cfg.core.ppu_decoder.get(), g_cfg.core.spu_decoder.get(), g_cfg.core.llvm_threads.get());
+			// Measured on the Xbox XMB: Mega SPU blocks are safe and marginally faster.
+			g_cfg.core.spu_block_size.set(spu_block_size_type::mega);
+			// The shader interpreter costs ~1.5 GB of the 5 GB and ~20 s of XMB load on the Xbox,
+			// with no fps gain; Relaxed ZCULL Sync breaks RSX pipelines on Dozen.
+			g_cfg.video.shadermode.set(shader_mode::async_recompiler);
+			g_cfg.video.relaxed_zcull_sync.set(false);
+
+			// An early PPU test wrote dev_hdd0/game/TEST12345 without a PARAM.SFO, which the
+			// XMB lists as "Corrupted Data"; Device Portal cannot delete folders, so drop it here.
+			const std::string stray_game = g_cfg_vfs.get(g_cfg_vfs.dev_hdd0) + "game/TEST12345";
+			if (fs::is_dir(stray_game) && !fs::is_file(stray_game + "/PARAM.SFO"))
+				sys_log.always()("UWP: removing stray %s: %s", stray_game, fs::remove_all(stray_game));
 
 			Emulator::SaveSettings(g_cfg.to_string(), {});
 

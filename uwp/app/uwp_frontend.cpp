@@ -4,7 +4,7 @@
 // uploads it to its D3D11 swapchain the same way it shows the emulator's frames. Input comes
 // from Windows.Gaming.Input (gamepad) and CoreWindow key states (keyboard, for PC testing).
 //
-// Tabs: Games (boot), Firmware (install PS3UPDAT.PUP), Settings.
+// Tabs: Games (boot folders, ISOs, programs), Install (firmware PUP, PKG, RAP), Settings.
 // While a game runs, holding View + Menu for a second stops it and returns here.
 
 #include "stdafx.h"
@@ -15,7 +15,10 @@
 #include "Emu/system_config.h"
 #include "Emu/system_utils.hpp"
 #include "Emu/vfs_config.h"
+#include "Loader/ISO.h"
 #include "Loader/PSF.h"
+#include "Crypto/unpkg.h"
+#include "Utilities/Thread.h"
 #include "Utilities/File.h"
 #include "util/sysinfo.hpp"
 
@@ -387,16 +390,24 @@ namespace uwp_frontend
 			std::string path;
 		};
 
-		struct pup_entry
+		// Something the Install tab can install.
+		struct install_entry
 		{
+			enum class kind
+			{
+				firmware, // PS3UPDAT.PUP
+				package,  // .pkg (games, updates, DLC)
+				license,  // .rap (license for a PSN package)
+			} type;
 			std::string path;
 			u64 size = 0;
+			std::string title; // from the package header, when it has one
 		};
 
 		enum class tab : u32
 		{
 			games,
-			firmware,
+			install,
 			settings,
 			count
 		};
@@ -424,18 +435,20 @@ namespace uwp_frontend
 
 		std::mutex g_data_mutex; // games, pups, messages written by worker threads
 		std::vector<game_entry> g_games;
-		std::vector<pup_entry> g_pups;
+		std::vector<install_entry> g_installs;
 		std::string g_fw_version;
 		std::string g_status_text;
 		u32 g_status_color = col_dim;
 		atomic_t<u64> g_data_serial{1};
 		atomic_t<bool> g_scanning{false};
+		atomic_t<bool> g_scanning_usb{false}; // local entries are listed, USB drives still being read
 
 		std::unique_ptr<modal> g_pending_modal; // from worker threads, guarded by g_data_mutex
 
-		// Firmware install job.
-		std::unique_ptr<uwp_firmware::progress> g_fw_progress;
-		atomic_t<bool> g_fw_installing{false};
+		// Running install job (firmware or package); done/total drive the progress bar.
+		std::unique_ptr<uwp_firmware::progress> g_job;
+		std::string g_job_title; // set on the UI thread before the job starts
+		atomic_t<bool> g_installing{false};
 
 		// UI-thread-only state.
 		struct ui_state
@@ -456,7 +469,7 @@ namespace uwp_frontend
 			bool combo_fired = false;
 			IGamepadStatics* gamepads = nullptr;
 			bool gamepads_tried = false;
-			u32 last_fw_done = umax;
+			u32 last_job_done = umax;
 		};
 
 		ui_state* g_ui = nullptr;
@@ -482,6 +495,70 @@ namespace uwp_frontend
 			std::string ext = name.substr(name.rfind('.') == umax ? name.size() : name.rfind('.'));
 			std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 			return ext == ".elf" || ext == ".self" || ext == ".bin" || ext == ".iso";
+		}
+
+		std::string upper_ext(const std::string& name)
+		{
+			const usz dot = name.rfind('.');
+			std::string ext = dot == umax ? std::string() : name.substr(dot);
+			std::transform(ext.begin(), ext.end(), ext.begin(), ::toupper);
+			return ext;
+		}
+
+		// A PS3 disc image: title from PS3_GAME/PARAM.SFO inside it. Encrypted (redump) images need
+		// their .dkey next to them, 3k3y images work as they are.
+		bool add_iso(std::vector<game_entry>& out, const std::string& path, std::string_view source)
+		{
+			if (!is_iso_file(path))
+				return false;
+
+			std::string title, title_id = "?";
+			iso_archive archive(path);
+			if (archive.is_valid())
+			{
+				const psf::registry sfo = archive.open_psf("PS3_GAME/PARAM.SFO");
+				title = std::string(psf::get_string(sfo, "TITLE"));
+				title_id = std::string(psf::get_string(sfo, "TITLE_ID", "?"));
+			}
+			const std::string name = path.substr(path.rfind('/') + 1);
+			if (title.empty())
+				title = name;
+			std::replace(title.begin(), title.end(), '\n', ' ');
+			out.push_back({title, fmt::format("%s  ·  ISO  ·  %s", title_id, source), path});
+			return true;
+		}
+
+		// Firmware, packages and licenses directly inside `dir`.
+		void scan_install_dir(std::vector<install_entry>& out, const std::string& dir)
+		{
+			for (const auto& e : fs::dir(dir))
+			{
+				if (e.is_directory)
+					continue;
+				const std::string ext = upper_ext(e.name);
+				const std::string path = dir + e.name;
+				if (ext == ".PUP")
+				{
+					out.push_back({install_entry::kind::firmware, path, e.size, "PS3 system software (firmware)"});
+				}
+				else if (ext == ".PKG")
+				{
+					std::string title;
+					package_reader reader(path);
+					if (reader.is_valid())
+					{
+						title = std::string(psf::get_string(reader.get_psf(), "TITLE"));
+						if (const std::string_view id = psf::get_string(reader.get_psf(), "TITLE_ID"); !id.empty())
+							title = fmt::format("%s  (%s)", title.empty() ? e.name : title, id);
+						std::replace(title.begin(), title.end(), '\n', ' ');
+					}
+					out.push_back({install_entry::kind::package, path, e.size, title.empty() ? e.name : title});
+				}
+				else if (ext == ".RAP")
+				{
+					out.push_back({install_entry::kind::license, path, e.size, "License " + e.name});
+				}
+			}
 		}
 
 		// A folder that RPCS3 can boot: disc layout (PS3_GAME/) or HDD layout (PARAM.SFO + USRDIR/EBOOT.BIN).
@@ -510,30 +587,65 @@ namespace uwp_frontend
 			return true;
 		}
 
+		// Publishes a scan result: sorted games (XMB on top), then loose and bundled programs.
+		void publish_scan(std::vector<game_entry> games, const std::vector<game_entry>& programs, std::vector<install_entry> installs, bool final_pass)
+		{
+			std::sort(games.begin(), games.end(), [](const game_entry& a, const game_entry& b) { return a.title < b.title; });
+
+			// The PS3 system menu (XMB) once firmware is installed, as desktop RPCS3's "Boot VSH".
+			if (const std::string vsh = g_cfg_vfs.get_dev_flash() + "vsh/module/vsh.self"; fs::is_file(vsh))
+				games.insert(games.begin(), {"PS3 System Menu (XMB)", "from the installed firmware", vsh});
+
+			games.insert(games.end(), programs.begin(), programs.end());
+
+			// Firmware first, then packages, then licenses.
+			std::stable_sort(installs.begin(), installs.end(), [](const install_entry& a, const install_entry& b) { return a.type < b.type; });
+
+			const std::string fw = utils::get_firmware_version();
+			ui_log.notice("UI: %u games/programs, %u installable files, installed firmware '%s'%s", games.size(), installs.size(), fw, final_pass ? "" : " (USB drives not scanned yet)");
+
+			std::lock_guard lock(g_data_mutex);
+			g_games = std::move(games);
+			g_installs = std::move(installs);
+			g_fw_version = fw;
+			if (final_pass)
+			{
+				g_scanning = false;
+				g_scanning_usb = false;
+			}
+			g_data_serial++;
+		}
+
 		void scan_worker()
 		{
 			std::vector<game_entry> games;
-			std::vector<pup_entry> pups;
+			std::vector<game_entry> programs;
+			std::vector<install_entry> installs;
 
 			const std::string games_dir = g_host.local_dir + "games/";
 			const std::string boot_dir = g_host.local_dir + "boot/";
 			const std::string fw_dir = g_host.local_dir + "firmware/";
+			const std::string pkg_dir = g_host.local_dir + "packages/";
 			fs::create_path(games_dir);
 			fs::create_path(boot_dir);
 			fs::create_path(fw_dir);
+			fs::create_path(pkg_dir);
 
-			// Disc and HDD game folders copied to LocalState/games, ISOs and loose programs.
+			// Pass 1, local only (fast): game folders, ISOs and programs in LocalState/games,
+			// games installed into the emulated HDD, LocalState/boot, the bundled test programs,
+			// and firmware/packages/licenses in LocalState, LocalState/firmware and LocalState/packages.
 			for (const auto& e : fs::dir(games_dir))
 			{
 				if (e.name == "." || e.name == "..")
 					continue;
 				if (e.is_directory)
 					add_game_folder(games, games_dir + e.name, "games folder");
+				else if (upper_ext(e.name) == ".ISO")
+					add_iso(games, games_dir + e.name, "games folder");
 				else if (is_program_file(e.name))
-					games.push_back({e.name, "ISO / program  ·  games folder", games_dir + e.name});
+					programs.push_back({e.name, "program  ·  games folder", games_dir + e.name});
 			}
 
-			// Games installed into the emulated HDD (PKG installs).
 			const std::string hdd_game = rpcs3::utils::get_hdd0_dir() + "game/";
 			for (const auto& e : fs::dir(hdd_game))
 			{
@@ -541,66 +653,51 @@ namespace uwp_frontend
 					add_game_folder(games, hdd_game + e.name, "installed");
 			}
 
-			// USB drives: <drive>:/GAMES/<game> and <drive>:/PS3/UPDATE/PS3UPDAT.PUP. Needs broadFileSystemAccess.
+			for (const auto& e : fs::dir(boot_dir))
+			{
+				if (!e.is_directory && is_program_file(e.name))
+					programs.push_back({e.name, "program  ·  boot folder", boot_dir + e.name});
+			}
+			for (const auto& e : fs::dir(g_host.package_dir + "test/"))
+			{
+				if (!e.is_directory && is_program_file(e.name))
+					programs.push_back({e.name, "bundled test program", g_host.package_dir + "test/" + e.name});
+			}
+
+			for (const std::string& dir : {g_host.local_dir, fw_dir, pkg_dir})
+				scan_install_dir(installs, dir);
+
+			g_scanning_usb = true;
+			publish_scan(games, programs, installs, false);
+
+			// Pass 2, USB drives (slow: brokered *FromApp file APIs, see Utilities/File.cpp):
+			// game folders and ISOs in GAMES/ and PS3ISO/ (the multiMAN/webMAN layout) or the root,
+			// firmware, packages and licenses in the root, PS3/UPDATE/, PKG/, packages/ and exdata/.
 			for (char d = 'D'; d <= 'Z'; d++)
 			{
 				const std::string root = fmt::format("%c:/", d);
 				if (!fs::is_dir(root))
 					continue;
 				ui_log.notice("UI: drive %s is accessible", root);
+				const std::string drive = fmt::format("USB %c:", d);
 
-				for (const auto& e : fs::dir(root + "GAMES/"))
+				for (const std::string& dir : {root + "GAMES/", root + "PS3ISO/", root})
 				{
-					if (e.is_directory && e.name != "." && e.name != "..")
-						add_game_folder(games, root + "GAMES/" + e.name, root.substr(0, 2));
+					for (const auto& e : fs::dir(dir))
+					{
+						if (e.name == "." || e.name == "..")
+							continue;
+						if (e.is_directory && dir != root)
+							add_game_folder(games, dir + e.name, drive);
+						else if (!e.is_directory && upper_ext(e.name) == ".ISO")
+							add_iso(games, dir + e.name, drive);
+					}
 				}
-				for (const std::string& p : {root + "PS3UPDAT.PUP", root + "PS3/UPDATE/PS3UPDAT.PUP"})
-				{
-					fs::stat_t st{};
-					if (fs::get_stat(p, st) && !st.is_directory)
-						pups.push_back({p, st.size});
-				}
+				for (const std::string& dir : {root, root + "PS3/UPDATE/", root + "PKG/", root + "packages/", root + "exdata/"})
+					scan_install_dir(installs, dir);
 			}
 
-			std::sort(games.begin(), games.end(), [](const game_entry& a, const game_entry& b) { return a.title < b.title; });
-
-			// The PS3 system menu (XMB) once firmware is installed, as desktop RPCS3's "Boot VSH".
-			if (const std::string vsh = g_cfg_vfs.get_dev_flash() + "vsh/module/vsh.self"; fs::is_file(vsh))
-				games.insert(games.begin(), {"PS3 System Menu (XMB)", "from the installed firmware", vsh});
-
-			// Loose programs in LocalState/boot, then the bundled test programs.
-			for (const auto& e : fs::dir(boot_dir))
-			{
-				if (!e.is_directory && is_program_file(e.name))
-					games.push_back({e.name, "program  ·  boot folder", boot_dir + e.name});
-			}
-			for (const auto& e : fs::dir(g_host.package_dir + "test/"))
-			{
-				if (!e.is_directory && is_program_file(e.name))
-					games.push_back({e.name, "bundled test program", g_host.package_dir + "test/" + e.name});
-			}
-
-			// Firmware files in LocalState and LocalState/firmware.
-			for (const std::string& dir : {g_host.local_dir, fw_dir})
-			{
-				for (const auto& e : fs::dir(dir))
-				{
-					std::string upper = e.name;
-					std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
-					if (!e.is_directory && upper.size() > 4 && upper.ends_with(".PUP"))
-						pups.push_back({dir + e.name, e.size});
-				}
-			}
-
-			const std::string fw = utils::get_firmware_version();
-			ui_log.notice("UI: %u games/programs, %u firmware files, installed firmware '%s'", games.size(), pups.size(), fw);
-
-			std::lock_guard lock(g_data_mutex);
-			g_games = std::move(games);
-			g_pups = std::move(pups);
-			g_fw_version = fw;
-			g_scanning = false;
-			g_data_serial++;
+			publish_scan(std::move(games), programs, std::move(installs), true);
 		}
 
 		void rescan()
@@ -626,13 +723,14 @@ namespace uwp_frontend
 		// ---- Firmware install ----
 		void start_firmware_install(const std::string& path)
 		{
-			if (g_fw_installing.exchange(true))
+			if (g_installing.exchange(true))
 				return;
 
-			g_fw_progress = std::make_unique<uwp_firmware::progress>();
+			g_job = std::make_unique<uwp_firmware::progress>();
+			g_job_title = "Installing PS3 firmware...";
 			set_status("Installing firmware...", col_warn);
 
-			std::thread([path, prog = g_fw_progress.get()]()
+			std::thread([path, prog = g_job.get()]()
 			{
 				const std::string error = uwp_firmware::install(path, *prog);
 				const std::string version = prog->version;
@@ -641,7 +739,7 @@ namespace uwp_frontend
 				g_host.run_on_main([error, version]()
 				{
 					Emu.Init();
-					g_fw_installing = false;
+					g_installing = false;
 
 					if (error.empty())
 					{
@@ -657,6 +755,102 @@ namespace uwp_frontend
 					}
 					rescan();
 				});
+			}).detach();
+		}
+
+		// ---- License (.rap) install: copied to dev_hdd0/home/<user>/exdata, like desktop RPCS3 ----
+		std::string install_license(const std::string& path)
+		{
+			const std::string name = path.substr(path.rfind('/') + 1);
+			const std::string exdata = rpcs3::utils::get_hdd0_dir() + "home/" + Emu.GetUsr() + "/exdata/";
+			fs::file from(path);
+			if (!from || from.size() < 0x10)
+			{
+				ui_log.error("UI: can't read license %s (%s)", path, fs::g_tls_error);
+				return "The license file couldn't be read.";
+			}
+			fs::create_path(exdata);
+			const std::string to = exdata + name.substr(0, name.find_last_of('.')) + ".rap";
+			if (!fs::write_file(to, fs::rewrite, from.to_vector<u8>()))
+			{
+				ui_log.error("UI: can't write license %s (%s)", to, fs::g_tls_error);
+				return "The license couldn't be saved.";
+			}
+			ui_log.success("UI: installed license %s", to);
+			return {};
+		}
+
+		// ---- Package (.pkg) install ----
+		void start_package_install(const std::string& path, const std::string& title)
+		{
+			if (g_installing.exchange(true))
+				return;
+
+			g_job = std::make_unique<uwp_firmware::progress>();
+			g_job->total = 1000;
+			g_job_title = "Installing " + title;
+			set_status(g_job_title + "...", col_warn);
+
+			std::thread([path, title, prog = g_job.get()]()
+			{
+				std::string error;
+				std::deque<package_reader> readers;
+				readers.emplace_back(path);
+
+				if (!readers[0].is_valid())
+				{
+					error = "The package is damaged or not a PS3 package.";
+				}
+				else
+				{
+					package_install_result result{};
+					std::deque<std::string> bootables;
+					named_thread worker("PKG Installer", [&]()
+					{
+						result = package_reader::extract_data(readers, bootables, false);
+					});
+					while (worker <= thread_state::aborting)
+					{
+						prog->done = static_cast<u32>(readers[0].get_progress(1000));
+						std::this_thread::sleep_for(std::chrono::milliseconds(50));
+					}
+					worker();
+
+					if (result.error == package_install_result::error_type::app_version)
+						error = fmt::format("This update is for version %s of the game, but version %s is installed. Install the game or the earlier updates first.",
+							result.version.expected, result.version.installed.empty() ? "(none)" : result.version.installed);
+					else if (result.error != package_install_result::error_type::no_error)
+						error = "The package couldn't be installed.";
+				}
+
+				// Licenses that sit next to the package (common for PSN packages on USB drives).
+				u32 licenses = 0;
+				if (error.empty())
+				{
+					const std::string dir = path.substr(0, path.rfind('/') + 1);
+					for (const auto& e : fs::dir(dir))
+					{
+						if (!e.is_directory && upper_ext(e.name) == ".RAP" && install_license(dir + e.name).empty())
+							licenses++;
+					}
+				}
+
+				g_installing = false;
+				if (error.empty())
+				{
+					ui_log.success("UI: installed package %s", path);
+					set_status(fmt::format("Installed %s", title), col_ok);
+					post_modal("Package installed", licenses
+						? fmt::format("%s is installed, with %u license file(s) from the same folder. Installed games are on the Games tab.", title, licenses)
+						: fmt::format("%s is installed. Installed games are on the Games tab.", title));
+				}
+				else
+				{
+					ui_log.error("UI: package install failed: %s (%s)", path, error);
+					set_status("Package installation failed", col_err);
+					post_modal("Package installation failed", error + "\n\nDetails are in RPCS3.log (LocalState/rpcs3).");
+				}
+				rescan();
 			}).detach();
 		}
 
@@ -823,7 +1017,7 @@ namespace uwp_frontend
 				return;
 			}
 
-			if (g_fw_installing)
+			if (g_installing)
 				return;
 
 			if (pressed & act_prev_tab)
@@ -837,7 +1031,7 @@ namespace uwp_frontend
 			int& sel = ui.sel[t];
 
 			std::unique_lock lock(g_data_mutex);
-			const int count = ui.current == tab::games ? ::size32(g_games) : ui.current == tab::firmware ? ::size32(g_pups) : ::size32(ui.settings);
+			const int count = ui.current == tab::games ? ::size32(g_games) : ui.current == tab::install ? ::size32(g_installs) : ::size32(ui.settings);
 
 			if (pressed & act_up) move_selection(sel, count, -1);
 			if (pressed & act_down) move_selection(sel, count, 1);
@@ -868,15 +1062,32 @@ namespace uwp_frontend
 					}
 				});
 			}
-			else if (ui.current == tab::firmware)
+			else if (ui.current == tab::install)
 			{
-				const pup_entry pup = g_pups[sel];
+				const install_entry item = g_installs[sel];
 				lock.unlock();
-				const std::string installed = utils::get_firmware_version();
-				std::string text = fmt::format("Install the PS3 firmware from\n%s (%.1f MB)?", pup.path, pup.size / 1048576.0);
-				if (!installed.empty())
-					text += fmt::format("\n\nFirmware %s is installed now and will be replaced.", installed);
-				ui.dialog = std::make_unique<modal>(modal{"Install firmware", text, "Install", [path = pup.path]() { start_firmware_install(path); }});
+				const std::string size = fmt::format("%.1f MB", item.size / 1048576.0);
+				if (item.type == install_entry::kind::firmware)
+				{
+					const std::string installed = utils::get_firmware_version();
+					std::string text = fmt::format("Install the PS3 firmware from\n%s (%s)?", item.path, size);
+					if (!installed.empty())
+						text += fmt::format("\n\nFirmware %s is installed now and will be replaced.", installed);
+					ui.dialog = std::make_unique<modal>(modal{"Install firmware", text, "Install", [path = item.path]() { start_firmware_install(path); }});
+				}
+				else if (item.type == install_entry::kind::package)
+				{
+					ui.dialog = std::make_unique<modal>(modal{"Install package", fmt::format("Install %s\nfrom %s (%s)?\n\nLicense (.rap) files in the same folder are installed too.", item.title, item.path, size),
+						"Install", [path = item.path, title = item.title]() { start_package_install(path, title); }});
+				}
+				else
+				{
+					const std::string error = install_license(item.path);
+					if (error.empty())
+						ui.dialog = std::make_unique<modal>(modal{"License installed", fmt::format("%s is installed. The game it belongs to can now start.", item.path), {}, {}});
+					else
+						ui.dialog = std::make_unique<modal>(modal{"License not installed", error, {}, {}});
+				}
 			}
 		}
 
@@ -916,7 +1127,7 @@ namespace uwp_frontend
 			const int fw_w = cv.text_width(fw, 28);
 			cv.text(canvas_width - margin_x - fw_w, margin_y + 16, fw, 28, g_fw_version.empty() ? col_warn : col_ok);
 
-			static constexpr std::string_view tab_names[] = {"Games", "Firmware", "Settings"};
+			static constexpr std::string_view tab_names[] = {"Games", "Install", "Settings"};
 			int tx = margin_x;
 			for (u32 i = 0; i < 3; i++)
 			{
@@ -928,6 +1139,11 @@ namespace uwp_frontend
 				tx += tw + 60;
 			}
 			cv.text(tx, margin_y + 78, "LB / RB", 26, 0xff5c6270);
+			if (g_scanning_usb)
+			{
+				constexpr std::string_view usb_hint = "Reading USB drives...";
+				cv.text(canvas_width - margin_x - cv.text_width(usb_hint, 28), margin_y + 78, usb_hint, 28, col_warn);
+			}
 
 			const int top = margin_y + 150;
 			const int bottom = canvas_height - margin_y - 80;
@@ -959,22 +1175,26 @@ namespace uwp_frontend
 					draw_list_row(cv, top + (i - scroll) * row_h, row_h - 8, i == sel, g_games[i].title, g_games[i].detail);
 				draw_footer(cv, "A  Start      Y  Refresh      LB/RB  Tabs      In game: hold View + Menu to return here");
 			}
-			else if (ui.current == tab::firmware)
+			else if (ui.current == tab::install)
 			{
-				keep_visible(::size32(g_pups));
+				keep_visible(::size32(g_installs));
 				int y = top + 10;
 				y += cv.paragraph(margin_x, y,
-					"Put PS3UPDAT.PUP (the official PS3 system software update) into the app's LocalState or LocalState\\firmware folder, "
-					"or on a USB drive (root or PS3\\UPDATE). Without firmware, RPCS3 uses its built-in libraries, which run fewer games.",
+					"Firmware (PS3UPDAT.PUP), packages (.pkg) and licenses (.rap) from the app's LocalState, LocalState\\firmware or LocalState\\packages folder, "
+					"or from a USB drive (root, PS3\\UPDATE, PKG, packages or exdata folder).",
 					28, col_dim, canvas_width - margin_x * 2);
 				y += 20;
-				if (g_pups.empty())
-					cv.text(margin_x, y, g_scanning ? "Looking for firmware files..." : "No PS3UPDAT.PUP found. Press Y to look again.", 30, col_warn);
+				if (g_installs.empty())
+					cv.text(margin_x, y, g_scanning ? "Looking for files..." : "Nothing to install found. Press Y to look again.", 30, col_warn);
 				const int list_visible = std::max(1, (bottom - y - 20) / row_h);
 				if (sel < scroll) scroll = sel;
 				if (sel >= scroll + list_visible) scroll = sel - list_visible + 1;
-				for (int i = scroll; i < std::min<int>(::size32(g_pups), scroll + list_visible); i++)
-					draw_list_row(cv, y + (i - scroll) * row_h, row_h - 8, i == sel, g_pups[i].path, fmt::format("%.1f MB", g_pups[i].size / 1048576.0));
+				for (int i = scroll; i < std::min<int>(::size32(g_installs), scroll + list_visible); i++)
+				{
+					const install_entry& it = g_installs[i];
+					const std::string_view kind = it.type == install_entry::kind::firmware ? "Firmware" : it.type == install_entry::kind::package ? "Package" : "License";
+					draw_list_row(cv, y + (i - scroll) * row_h, row_h - 8, i == sel, it.title, fmt::format("%s  ·  %.1f MB  ·  %s", kind, it.size / 1048576.0, it.path));
+				}
 				draw_footer(cv, "A  Install      Y  Refresh      LB/RB  Tabs");
 			}
 			else
@@ -1001,19 +1221,19 @@ namespace uwp_frontend
 			lock.unlock();
 
 			// Firmware install progress.
-			if (g_fw_installing && g_fw_progress)
+			if (g_installing && g_job)
 			{
 				cv.fill(0, 0, canvas_width, canvas_height, col_shade);
 				const int w = 1000, h = 260, x = (canvas_width - w) / 2, y = (canvas_height - h) / 2;
 				cv.fill(x, y, w, h, col_panel);
 				cv.fill(x, y, w, 4, col_accent);
-				cv.text(x + 40, y + 36, "Installing PS3 firmware...", 40, col_text);
-				const u32 done = g_fw_progress->done, total = g_fw_progress->total;
+				cv.text(x + 40, y + 36, g_job_title, 40, col_text, w - 80);
+				const u32 done = g_job->done, total = g_job->total;
 				const int bar_w = w - 80;
 				cv.fill(x + 40, y + 120, bar_w, 28, 0xff2c2f38);
 				if (total)
 					cv.fill(x + 40, y + 120, static_cast<int>(bar_w * u64{done} / total), 28, col_accent);
-				cv.text(x + 40, y + 170, total ? fmt::format("Package %u of %u", std::min(done + 1, total), total) : std::string("Checking the file (this takes a moment)..."), 28, col_dim);
+				cv.text(x + 40, y + 170, total ? fmt::format("%u%%", static_cast<u32>(u64{std::min(done, total)} * 100 / total)) : std::string("Checking the file (this takes a moment)..."), 28, col_dim);
 			}
 
 			// Modal dialog.
@@ -1166,9 +1386,9 @@ namespace uwp_frontend
 
 		handle_input(pressed);
 
-		if (g_fw_installing && g_fw_progress && g_fw_progress->done != ui.last_fw_done)
+		if (g_installing && g_job && g_job->done != ui.last_job_done)
 		{
-			ui.last_fw_done = g_fw_progress->done;
+			ui.last_job_done = g_job->done;
 			ui.dirty = true;
 		}
 
