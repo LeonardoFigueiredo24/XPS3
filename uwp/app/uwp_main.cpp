@@ -570,6 +570,17 @@ namespace
 			// with no fps gain; Relaxed ZCULL Sync breaks RSX pipelines on Dozen.
 			g_cfg.video.shadermode.set(shader_mode::async_recompiler);
 			g_cfg.video.relaxed_zcull_sync.set(false);
+			// Stats overlay (menu Settings toggle, off by default): top right, PS3 firmware font sized
+			// for a TV. Full detail (FPS, CPU, GPU) is the default once; the menu can change it.
+			g_cfg.video.perf_overlay.position.set(screen_quadrant::top_right);
+			g_cfg.video.perf_overlay.font_size.set(14);
+			g_cfg.video.perf_overlay.margin_x.set(3);
+			g_cfg.video.perf_overlay.margin_y.set(4);
+			if (!fs::is_file(g_local_dir + "stats_overlay_defaults"))
+			{
+				g_cfg.video.perf_overlay.level.set(detail_level::high);
+				fs::write_file(g_local_dir + "stats_overlay_defaults", fs::rewrite, std::string_view{"1"});
+			}
 
 			// An early PPU test wrote dev_hdd0/game/TEST12345 without a PARAM.SFO, which the
 			// XMB lists as "Corrupted Data"; Device Portal cannot delete folders, so drop it here.

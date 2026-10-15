@@ -619,7 +619,11 @@ namespace rsx
 					                         " RSX   : %04.1f %% ( 1)\n"
 					                         " Total : %04.1f %% (%2u)\n\n"
 					                         "%s\n"
+#ifdef RPCS3_UWP
+					                         " GPU   : %02u %%", // RSX load: busy time of the emulated PS3 GPU
+#else
 					                         " RSX   : %02u %%",
+#endif
 					    m_fps, m_frametime, std::string(title1_high.size(), ' '), m_ppu_usage, m_ppus, m_spu_usage, m_spus, m_rsx_usage, m_cpu_usage, m_total_threads, std::string(title2.size(), ' '), m_rsx_load);
 					break;
 				}
