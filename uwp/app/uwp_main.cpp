@@ -36,7 +36,10 @@
 #include "util/sysinfo.hpp"
 #include "util/video_source.h"
 
+#include <deque>
+#include <functional>
 #include <map>
+#include <mutex>
 #include <set>
 #include <d3d11_1.h>
 #include <dxgi1_2.h>
@@ -61,6 +64,35 @@ namespace
 	};
 
 	atomic_t<shell_state> g_state{shell_state::booting};
+
+	// The emulator thread plays the role of desktop RPCS3's Qt main thread: requests from
+	// other threads are queued and run by its loop, never on the requesting thread (the
+	// emulation join thread would otherwise wait on itself during shutdown).
+	DWORD g_main_thread_id = 0;
+	std::mutex g_main_queue_mutex;
+	std::deque<std::pair<std::function<void()>, atomic_t<u32>*>> g_main_queue;
+
+	void run_main_thread_queue()
+	{
+		while (true)
+		{
+			std::pair<std::function<void()>, atomic_t<u32>*> item;
+			{
+				std::lock_guard lock(g_main_queue_mutex);
+				if (g_main_queue.empty())
+					return;
+				item = std::move(g_main_queue.front());
+				g_main_queue.pop_front();
+			}
+
+			item.first();
+			if (item.second)
+			{
+				*item.second = true;
+				item.second->notify_one();
+			}
+		}
+	}
 	std::string g_local_dir; // LocalState, with trailing slash
 
 	std::string wide_to_utf8(const wchar_t* s)
@@ -159,15 +191,21 @@ namespace
 			return false;
 		};
 
-		// The emulator thread acts as the "main thread": run requests inline.
 		g_emu_callbacks.call_from_main_thread = [](std::function<void()> func, atomic_t<u32>* wake_up)
 		{
-			func();
-			if (wake_up)
+			if (GetCurrentThreadId() == g_main_thread_id)
 			{
-				*wake_up = true;
-				wake_up->notify_one();
+				func();
+				if (wake_up)
+				{
+					*wake_up = true;
+					wake_up->notify_one();
+				}
+				return;
 			}
+
+			std::lock_guard lock(g_main_queue_mutex);
+			g_main_queue.emplace_back(std::move(func), wake_up);
 		};
 
 		g_emu_callbacks.init_kb_handler = []()
@@ -260,6 +298,7 @@ namespace
 			log_app_memory("startup");
 
 			thread_ctrl::set_native_priority(0);
+			g_main_thread_id = GetCurrentThreadId();
 			create_callbacks();
 
 			Emu.SetHasGui(false);
@@ -303,12 +342,23 @@ namespace
 				return 1;
 			}
 
-			while (g_state == shell_state::booting || g_state == shell_state::running)
+			// Serve main-thread requests for as long as the app lives (shutdown needs them too).
+			bool logged_end = false;
+			for (u32 ticks = 1;; ticks++)
 			{
-				Sleep(1000);
-				static u32 seconds = 0;
-				if (++seconds % 10 == 0)
-					log_app_memory("running");
+				run_main_thread_queue();
+				Sleep(10);
+
+				if (g_state == shell_state::booting || g_state == shell_state::running)
+				{
+					if (ticks % 1000 == 0)
+						log_app_memory("running");
+				}
+				else if (!logged_end && Emu.IsStopped(true))
+				{
+					log_app_memory("end");
+					logged_end = true;
+				}
 			}
 		}
 
