@@ -19,6 +19,9 @@
 #include "Emu/system_utils.hpp"
 #include "Emu/vfs_config.h"
 #include "Emu/system_progress.hpp"
+#include "Emu/VFS.h"
+#include "Emu/Cell/PPUAnalyser.h"
+#include "Emu/Cell/lv2/sys_sync.h"
 #include "Emu/emu_callbacks.h"
 #include "Emu/IdManager.h"
 #include "Emu/RSX/Null/NullGSRender.h"
@@ -65,6 +68,8 @@ LOG_CHANNEL(sys_log, "SYS");
 extern std::string g_android_executable_dir;
 extern std::string g_android_config_dir;
 extern std::string g_android_cache_dir;
+extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_module<lv2_obj>*>* loaded_modules, bool is_fast_compilation);
+extern thread_local bool g_ppu_precompile_prx_only;
 
 namespace
 {
@@ -84,6 +89,7 @@ namespace
 
 	// Latest frame from the Vulkan renderer, picked up by the UI thread.
 	std::mutex g_frame_mutex;
+	void start_background_precompile(u32 ticks);
 	// Triple buffer: the emulator fills g_frame_spare without the lock and swaps it into
 	// g_frame_pixels; the render loop swaps that out into its own buffer, so neither side
 	// holds the lock during an 8 MB copy.
@@ -604,6 +610,7 @@ namespace
 				{
 					if (ticks % 1000 == 0)
 						log_app_memory("running");
+					start_background_precompile(ticks);
 				}
 				else if (!logged_end && Emu.IsStopped(true))
 				{
@@ -617,10 +624,63 @@ namespace
 		return 0;
 	}
 
+	// With LLVM precompilation off, XMB modules compile the first time they load, which stalls
+	// navigation. Once the XMB has drawn frames for 30 s, compile the rest of dev_flash in the
+	// background at low priority (cached modules are skipped), so later visits hit the cache.
+	// Emulator thread; LocalState/no_background_compile turns it off.
+	void start_background_precompile(u32 ticks)
+	{
+		static u32 since = 0;
+		static u64 serial0 = 0;
+		static bool started = false;
+
+		if (Emu.IsStopped(true))
+		{
+			since = 0;
+			started = false;
+			return;
+		}
+
+		if (started || g_state != shell_state::running || !Emu.IsVsh() || g_cfg.core.ppu_decoder != ppu_decoder_type::llvm || g_cfg.core.llvm_precompilation)
+			return;
+
+		u64 serial;
+		{
+			std::lock_guard lock(g_frame_mutex);
+			serial = g_frame_serial;
+		}
+
+		if (!since)
+		{
+			since = ticks;
+			serial0 = serial;
+			return;
+		}
+
+		if (ticks - since < 3000 || serial == serial0)
+			return;
+
+		started = true;
+		if (fs::is_file(g_local_dir + "no_background_compile"))
+			return;
+
+		sys_log.always()("UWP: compiling the remaining dev_flash PPU modules in the background");
+		g_fxo->init<named_thread>("PPU Background Compiler"sv, []()
+		{
+			thread_ctrl::scoped_priority low_prio(-1);
+			// Libraries only: precompiling executables swaps out the running XMB's main module.
+			g_ppu_precompile_prx_only = true;
+			std::vector<std::string> dirs{vfs::get("/dev_flash/")};
+			const u64 start = get_system_time();
+			ppu_precompile(dirs, nullptr, false);
+			sys_log.always()("UWP: background PPU compile %s after %us", Emu.IsStopped() ? "stopped" : "finished", (get_system_time() - start) / 1'000'000);
+		});
+	}
+
 	// While a game boots without a frame (first boots compile PPU code for minutes), or while
 	// PPU/SPU code compiles and the last frame has stopped changing, show a loading screen with
 	// the compile progress instead of a plain color or a frozen picture.
-	bool show_loading_screen(ID3D11Device* dev, ID3D11DeviceContext* ctx, ID3D11RenderTargetView* rtv, shell_state st, bool frame_live)
+	bool show_loading_screen(ID3D11Device* dev, ID3D11DeviceContext* ctx, ID3D11RenderTargetView* rtv, shell_state st, bool have_frame, bool frame_live)
 	{
 		if (st != shell_state::booting && st != shell_state::running)
 			return false;
@@ -635,7 +695,16 @@ namespace
 		const u32 ftotal = g_progr_ftotal, fdone = g_progr_fdone;
 		const bool compiling = (total && done < total) || (ftotal && fdone < ftotal);
 		const std::string text = compiling ? std::string() : std::string(g_progr_text);
-		if (frame_live || (!compiling && (text.empty() || st == shell_state::running)))
+
+		// Over a picture, only when a compile has run 1.5 s (short on-demand compiles don't flash it).
+		static bool was_compiling = false;
+		static auto compile_since = std::chrono::steady_clock::now();
+		if (compiling && !was_compiling)
+			compile_since = std::chrono::steady_clock::now();
+		was_compiling = compiling;
+		const bool long_compile = compiling && std::chrono::steady_clock::now() - compile_since >= std::chrono::milliseconds(1500);
+
+		if (frame_live || (have_frame && !long_compile) || (!compiling && (text.empty() || st == shell_state::running)))
 		{
 			showing = false;
 			return false;
@@ -885,7 +954,7 @@ namespace
 					last_new_frame = std::chrono::steady_clock::now();
 				const bool frame_live = have_frame && std::chrono::steady_clock::now() - last_new_frame < std::chrono::seconds(1);
 
-				if (show_loading_screen(dev, ctx, rtv, st, frame_live))
+				if (show_loading_screen(dev, ctx, rtv, st, have_frame, frame_live))
 				{
 					// Drawn by show_loading_screen.
 				}

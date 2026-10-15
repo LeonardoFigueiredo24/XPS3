@@ -4119,6 +4119,10 @@ extern void ppu_finalize(const ppu_module<lv2_obj>& info, bool force_mem_release
 #endif
 }
 
+// Set by a caller that precompiles while a program runs: libraries only. Executables are
+// precompiled by swapping out the main module, which must not happen under a running program.
+thread_local bool g_ppu_precompile_prx_only = false;
+
 extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_module<lv2_obj>*>* loaded_modules, bool is_fast_compilation)
 {
 	if (g_cfg.core.ppu_decoder != ppu_decoder_type::llvm)
@@ -4130,6 +4134,8 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_
 	{
 		return;
 	}
+
+	const bool prx_only = g_ppu_precompile_prx_only;
 
 	std::optional<scoped_progress_dialog> progress_dialog(std::in_place, get_localized_string(localized_string_id::PROGRESS_DIALOG_SCANNING_PPU_EXECUTABLE));
 
@@ -4252,7 +4258,7 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_
 			}
 
 			// Check ELF filename
-			if ((upper.ends_with(".ELF") || upper.ends_with(".SELF")) && Emu.GetBoot() != dir_queue[i] + entry.name)
+			if ((upper.ends_with(".ELF") || upper.ends_with(".SELF")) && Emu.GetBoot() != dir_queue[i] + entry.name && !prx_only)
 			{
 				// Get full path
 				file_queue.emplace_back(dir_queue[i] + entry.name, 0, entry.size);
@@ -4302,7 +4308,7 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_
 									continue;
 								}
 
-								if (upper.find(".SELF") != umax || upper.find(".ELF") != umax)
+								if ((upper.find(".SELF") != umax || upper.find(".ELF") != umax) && !prx_only)
 								{
 									// .self inside .mself found
 									file_queue.emplace_back(dir_queue[i] + entry.name, rec.off, rec.size);
@@ -4598,6 +4604,12 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_
 				{
 					continue;
 				}
+			}
+
+			if (prx_only)
+			{
+				ppu_log.notice("Failed to precompile '%s' (prx: %s, ovl: %s), libraries only", path, prx_err, ovl_err);
+				continue;
 			}
 
 			ppu_log.notice("Failed to precompile '%s' (prx: %s, ovl: %s): Attempting compilation as executable file", path, prx_err, ovl_err);
