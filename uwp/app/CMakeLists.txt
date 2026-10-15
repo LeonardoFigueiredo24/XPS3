@@ -32,6 +32,22 @@ target_link_libraries(rpcs3_uwp PRIVATE
     d3d11 dxgi winmm
     # WinRT activation/strings and the UWP *FromApp APIs (import libs from mkimplibs.sh)
     winrt_activation winrt_string uwp_memory_6 uwp_memory_5 uwp_memory_3 uwp_memory_1 uwp_file_fromapp)
-target_link_options(rpcs3_uwp PRIVATE -municode -Wl,--stack,8388608)
+# zig ignores -mwindows; UWP apps must be GUI-subsystem executables.
+target_link_options(rpcs3_uwp PRIVATE -municode -Wl,--subsystem,windows -Wl,--stack,8388608)
 
 set_target_properties(rpcs3_uwp PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/uwp)
+
+# Diagnostic app: reports which of rpcs3_uwp.exe's imports a device is missing.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_custom_command(
+    OUTPUT ${CMAKE_BINARY_DIR}/uwp_importcheck/import_table.h
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/uwp_importcheck
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/uwp/importcheck/gen_table.py $<TARGET_FILE:rpcs3_uwp> ${CMAKE_BINARY_DIR}/uwp_importcheck/import_table.h
+    DEPENDS rpcs3_uwp ${CMAKE_SOURCE_DIR}/uwp/importcheck/gen_table.py)
+add_executable(rpcs3_uwp_importcheck WIN32
+    ${CMAKE_SOURCE_DIR}/uwp/importcheck/import_check.cpp
+    ${CMAKE_BINARY_DIR}/uwp_importcheck/import_table.h)
+target_include_directories(rpcs3_uwp_importcheck PRIVATE ${CMAKE_BINARY_DIR}/uwp_importcheck)
+target_link_libraries(rpcs3_uwp_importcheck PRIVATE winrt_activation winrt_string)
+target_link_options(rpcs3_uwp_importcheck PRIVATE -municode -Wl,--subsystem,windows)
+set_target_properties(rpcs3_uwp_importcheck PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
