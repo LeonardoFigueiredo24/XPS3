@@ -232,7 +232,7 @@ if(USE_SDL)
 endif()
 
 # OpenAL
-if (NOT ANDROID AND NOT RPCS3_UWP)
+if (NOT ANDROID)
 	add_subdirectory(OpenAL EXCLUDE_FROM_ALL)
 else()
 	add_library(3rdparty_openal INTERFACE)
