@@ -81,7 +81,11 @@ namespace
 
 	// Latest frame from the Vulkan renderer, picked up by the UI thread.
 	std::mutex g_frame_mutex;
-	std::vector<u8> g_frame_pixels;
+	// Triple buffer: the emulator fills g_frame_spare without the lock and swaps it into
+	// g_frame_pixels; the render loop swaps that out into its own buffer, so neither side
+	// holds the lock during an 8 MB copy.
+	std::vector<u8> g_frame_pixels, g_frame_spare;
+	std::mutex g_frame_spare_mutex; // only the emulator side; guards g_frame_spare
 	u32 g_frame_width = 0, g_frame_height = 0;
 	u64 g_frame_serial = 0;
 
@@ -676,7 +680,8 @@ namespace
 				// Show the emulator's latest frame while it runs; otherwise the status color.
 				static u64 shown_serial = 0;
 				static ID3D11Texture2D* frame_tex = nullptr;
-				bool have_frame = false;
+				static std::vector<u8> shown_pixels;
+				bool have_frame = false, upload = false;
 				if (st == shell_state::running || st == shell_state::booting)
 				{
 					std::lock_guard lock(g_frame_mutex);
@@ -696,12 +701,15 @@ namespace
 						}
 						if (frame_tex && shown_serial != g_frame_serial)
 						{
-							ctx->UpdateSubresource(frame_tex, 0, nullptr, g_frame_pixels.data(), g_frame_width * 4, 0);
+							g_frame_pixels.swap(shown_pixels);
 							shown_serial = g_frame_serial;
+							upload = true;
 						}
 						have_frame = frame_tex != nullptr;
 					}
 				}
+				if (upload)
+					ctx->UpdateSubresource(frame_tex, 0, nullptr, shown_pixels.data(), c_display_width * 4, 0);
 
 				if (have_frame)
 				{
@@ -749,8 +757,10 @@ void uwp_get_display_size(u32& width, u32& height)
 
 void uwp_present_frame(const void* bgra_pixels, u32 width, u32 height)
 {
+	std::lock_guard spare_lock(g_frame_spare_mutex);
+	g_frame_spare.assign(static_cast<const u8*>(bgra_pixels), static_cast<const u8*>(bgra_pixels) + usz{width} * height * 4);
 	std::lock_guard lock(g_frame_mutex);
-	g_frame_pixels.assign(static_cast<const u8*>(bgra_pixels), static_cast<const u8*>(bgra_pixels) + usz{width} * height * 4);
+	g_frame_pixels.swap(g_frame_spare);
 	g_frame_width = width;
 	g_frame_height = height;
 	g_frame_serial++;
