@@ -7,7 +7,9 @@ set(CMAKE_CXX_COMPILER ${CMAKE_CURRENT_LIST_DIR}/zig-c++)
 set(CMAKE_AR ${CMAKE_CURRENT_LIST_DIR}/zig-ar)
 set(CMAKE_RANLIB ${CMAKE_CURRENT_LIST_DIR}/zig-ranlib)
 find_program(CMAKE_RC_COMPILER NAMES llvm-windres llvm-windres-18 llvm-windres-19 llvm-windres-20)
-set(CMAKE_RC_FLAGS_INIT "--target=pe-x86-64")
+execute_process(COMMAND python3 -c "import ziglang, os; print(os.path.dirname(ziglang.__file__))"
+    OUTPUT_VARIABLE ZIG_DIR OUTPUT_STRIP_TRAILING_WHITESPACE)
+set(CMAKE_RC_FLAGS_INIT "--target=pe-x86-64 -I${ZIG_DIR}/lib/libc/include/any-windows-any")
 # libpng generates pnglibconf with the C preprocessor and needs the bundled zlib headers.
 set(CMAKE_C_FLAGS_INIT "-I${CMAKE_CURRENT_LIST_DIR}/../../3rdparty/zlib/zlib")
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
