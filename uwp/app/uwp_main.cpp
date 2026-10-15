@@ -149,6 +149,62 @@ namespace
 	}
 	std::string g_local_dir; // LocalState, with trailing slash
 
+	// The app's own storage on the Xbox (LocalState, drive Q:) has only a few MB free, far too
+	// little for the PPU/SPU/shader caches (hundreds of MB for the XMB alone). Put the cache on
+	// the drive with the most free space (USB or the dev drive) when one has at least 2 GB;
+	// LocalState/storage can name a folder instead, or say "local" to keep it in LocalState.
+	std::string choose_cache_dir()
+	{
+		const std::string local_cache = g_local_dir + "rpcs3/cache/";
+		g_android_cache_dir = local_cache;
+		std::string note;
+		fs::device_stat st{};
+		if (fs::statfs(g_local_dir, st))
+			note += fmt::format("LocalState %llu MB free of %llu MB", st.avail_free >> 20, st.total_size >> 20);
+
+		std::string choice;
+		if (fs::file f{g_local_dir + "storage"})
+		{
+			choice = fmt::trim(f.to_string(), " \t\r\n");
+			if (choice == "local")
+				return note + "; cache in LocalState (LocalState/storage says local)";
+			if (!choice.empty() && choice.back() != '/' && choice.back() != '\\')
+				choice += '/';
+		}
+
+		if (choice.empty())
+		{
+			u64 best = 2ull << 30;
+			for (char d = 'D'; d <= 'Z'; d++)
+			{
+				const std::string root = fmt::format("%c:/", d);
+				if (root[0] == g_local_dir[0] || !fs::is_dir(root) || !fs::statfs(root, st))
+					continue;
+				note += fmt::format("; %s %llu MB free of %llu MB", root, st.avail_free >> 20, st.total_size >> 20);
+				if (st.avail_free > best)
+				{
+					best = st.avail_free;
+					choice = root + "RPCS3/";
+				}
+			}
+		}
+
+		if (choice.empty())
+			return note + "; no drive with 2 GB free, cache in LocalState";
+
+		const std::string dir = choice + "cache/";
+		if (!fs::create_path(dir) || !fs::write_file(dir + "write_test", fs::rewrite, std::string_view("ok")))
+			return note + fmt::format("; cannot write to %s (%s), cache in LocalState", dir, fs::g_tls_error);
+		fs::remove_file(dir + "write_test");
+		g_android_cache_dir = dir;
+
+		// The old cache in LocalState only takes the space the rest of the app needs.
+		if (fs::is_dir(local_cache))
+			fs::remove_all(local_cache, true, true);
+		return note + "; cache on " + dir;
+	}
+
+
 	std::string wide_to_utf8(const wchar_t* s)
 	{
 		const int n = WideCharToMultiByte(CP_UTF8, 0, s, -1, nullptr, 0, nullptr, nullptr);
@@ -392,7 +448,7 @@ namespace
 			}
 			g_android_executable_dir = get_package_dir();
 			g_android_config_dir = g_local_dir + "rpcs3/";
-			g_android_cache_dir = g_local_dir + "rpcs3/cache/";
+			const std::string storage_note = choose_cache_dir();
 			fs::create_path(g_android_config_dir);
 			fs::create_path(g_android_cache_dir);
 
@@ -407,6 +463,7 @@ namespace
 			}
 
 			static std::unique_ptr<logs::listener> log_file = logs::make_file_listener(g_android_config_dir + "RPCS3.log", 256 * 1024 * 1024);
+			sys_log.always()("UWP: %s", storage_note);
 
 			// Any fatal log line (e.g. a dying RSX thread, which doesn't stop the emulator) turns the screen red.
 			struct fatal_listener final : logs::listener
