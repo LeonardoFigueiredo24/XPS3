@@ -42,7 +42,7 @@ Cold first start of the XMB compiles its PPU code with LLVM (~8.5 min); later st
 - Graphics: RPCS3's Vulkan renderer on Mesa **Dozen** (Vulkan over D3D12, `vulkan_dzn.dll`) with
   Microsoft's `dxil.dll`. There is no Vulkan loader: `uwp/vkshim` forwards `vk*` calls to Dozen.
   Frames are read back and shown through the shell's D3D11 swapchain (~1 ms).
-- CPU: PPU LLVM recompiler, SPU ASMJIT, 6 LLVM threads. Precompilation and background PRX
+- CPU: PPU LLVM recompiler, SPU LLVM recompiler (LocalState/spu_asmjit for ASMJIT), 6 LLVM threads. Precompilation and background PRX
   compilation are off by default (they starved the XMB).
 - Memory: UWP can't map executable or sparse-file views, so shared memory uses pagefile sections;
   `sys_vm` memory is committed lazily in 64 KB granules on first touch.

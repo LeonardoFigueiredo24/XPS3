@@ -3538,7 +3538,7 @@ namespace rsx
 			{
 				const auto& st = m_frame_stats;
 				rsx_log.notice("UWP slow frame: %.0f ms, RSX idle %.0f ms, GPU wait %.0f ms (%llu waits) | %u draws, %u submits | setup %.1f, vertex upload %.1f, texture upload %.1f, draw %.1f ms | %u/%u program lookups skipped",
-					(now - s_last_flip) / 1000., (idle - s_last_idle) / 1000., (gpu_wait - s_last_gpu_wait) / 1000., gpu_waits - s_last_gpu_waits,
+					(now - s_last_flip) / 1000., (idle >= s_last_idle ? idle - s_last_idle : idle) / 1000., (gpu_wait - s_last_gpu_wait) / 1000., gpu_waits - s_last_gpu_waits,
 					st.draw_calls, st.submit_count, st.setup_time / 1000., st.vertex_upload_time / 1000., st.textures_upload_time / 1000., st.draw_exec_time / 1000.,
 					st.program_cache_lookups_ellided, st.program_cache_lookups_total);
 			}

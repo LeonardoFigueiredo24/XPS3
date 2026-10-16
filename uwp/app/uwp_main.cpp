@@ -669,14 +669,15 @@ namespace
 			g_cfg.audio.music.set(music_handler::null);
 			g_cfg.io.camera.set(camera_handler::null);
 
-			// PPU on the LLVM recompiler when LLVM is linked, else the interpreter; SPU on the ASMJIT
-			// recompiler. Empty files in LocalState switch decoders for tests: ppu_interpreter,
-			// spu_interpreter, spu_llvm, or interpreter (both interpreters).
+			// PPU and SPU on the LLVM recompilers when LLVM is linked, else the interpreters. SPU LLVM
+			// nearly doubled GTA V's frame rate over ASMJIT (5.7 -> 10-11 fps) once its cache was warm.
+			// Empty files in LocalState switch decoders for tests: ppu_interpreter, spu_interpreter,
+			// spu_asmjit, or interpreter (both interpreters).
 			const bool all_interp = fs::is_file(g_local_dir + "interpreter");
 			const bool spu_interp = all_interp || fs::is_file(g_local_dir + "spu_interpreter");
 #ifdef LLVM_AVAILABLE
 			const bool ppu_llvm = !all_interp && !fs::is_file(g_local_dir + "ppu_interpreter");
-			const bool spu_llvm = !spu_interp && fs::is_file(g_local_dir + "spu_llvm");
+			const bool spu_llvm = !spu_interp && !fs::is_file(g_local_dir + "spu_asmjit");
 #else
 			const bool ppu_llvm = false, spu_llvm = false;
 #endif
