@@ -21,6 +21,8 @@
 #include "Emu/system_progress.hpp"
 #include "Emu/VFS.h"
 #include "Emu/Cell/PPUAnalyser.h"
+#include "Emu/Cell/PPUThread.h"
+#include "Emu/Cell/SPUThread.h"
 #include "Emu/Cell/lv2/sys_sync.h"
 #include "Emu/emu_callbacks.h"
 #include "Emu/IdManager.h"
@@ -90,6 +92,7 @@ namespace
 	// Latest frame from the Vulkan renderer, picked up by the UI thread.
 	std::mutex g_frame_mutex;
 	void start_background_precompile(u32 ticks);
+	void report_stall(u32 ticks);
 	// Triple buffer: the emulator fills g_frame_spare without the lock and swaps it into
 	// g_frame_pixels; the render loop swaps that out into its own buffer, so neither side
 	// holds the lock during an 8 MB copy.
@@ -539,6 +542,7 @@ namespace
 			sys_log.always()("UWP: audio: %s", null_audio ? "null" : "XAudio2");
 			// Controllers 1-4 as PS3 pads 1-4 (written once; the XMB and games read it at boot).
 			uwp_input_default_config();
+			uwp_input_load_script(g_local_dir + "autopress");
 			g_cfg.audio.music.set(music_handler::null);
 			g_cfg.io.camera.set(camera_handler::null);
 
@@ -586,6 +590,7 @@ namespace
 			g_cfg.video.perf_overlay.font_size.set(14);
 			g_cfg.video.perf_overlay.margin_x.set(3);
 			g_cfg.video.perf_overlay.margin_y.set(4);
+			g_cfg.video.perf_overlay.opacity.set(90); // the XMB clock under it showed through at 70
 			if (!fs::is_file(g_local_dir + "stats_overlay_defaults"))
 			{
 				g_cfg.video.perf_overlay.level.set(detail_level::high);
@@ -607,13 +612,23 @@ namespace
 
 			// The app opens its controller menu; the XMB is started from the Games tab. A
 			// LocalState/autoboot file (used by the remote test runs) boots straight away instead:
-			// the XMB if it contains "xmb", otherwise the first program in LocalState/boot/.
+			// the XMB if it contains "xmb", an installed game if it holds a title ID (BLUS12345),
+			// a game folder or .iso if it holds a path, otherwise the first program in LocalState/boot/.
 			const std::string xmb_path = g_cfg_vfs.get_dev_flash() + "vsh/module/vsh.self";
 			if (fs::is_file(g_local_dir + "autoboot"))
 			{
 				fs::file f(g_local_dir + "autoboot");
 				const std::string what = f ? fmt::trim(f.to_string(), " \t\r\n") : std::string();
-				const std::string target = what == "xmb" ? xmb_path : find_boot_target();
+				const std::string hdd0_game = g_cfg_vfs.get(g_cfg_vfs.dev_hdd0) + "game/" + what;
+				std::string target;
+				if (what == "xmb")
+					target = xmb_path;
+				else if (what.size() == 9 && fs::is_dir(hdd0_game))
+					target = hdd0_game;
+				else if (!what.empty() && fs::exists(what))
+					target = what;
+				else
+					target = find_boot_target();
 				if (!uwp_frontend::boot(target))
 					g_state = shell_state::failed;
 			}
@@ -630,6 +645,7 @@ namespace
 					if (ticks % 1000 == 0)
 						log_app_memory("running");
 					start_background_precompile(ticks);
+					report_stall(ticks);
 				}
 				else if (!logged_end && Emu.IsStopped(true))
 				{
@@ -695,6 +711,61 @@ namespace
 			ppu_precompile(dirs, nullptr, false);
 			sys_log.always()("UWP: background PPU compile %s after %us", Emu.IsStopped() ? "stopped" : "finished", (get_system_time() - start) / 1'000'000);
 		});
+	}
+
+	// Startup stall diagnosis: while emulation runs and no new frame arrived for a second, log
+	// once a second (up to 20 times per stall) where each PPU thread is.
+	void report_stall(u32 ticks)
+	{
+		static u64 last_serial = 0;
+		static u32 last_change = 0;
+		static u32 reports = 0;
+
+		if (Emu.IsStopped(true) || !Emu.IsRunning())
+		{
+			last_change = ticks;
+			reports = 0;
+			return;
+		}
+
+		u64 serial;
+		{
+			std::lock_guard lock(g_frame_mutex);
+			serial = g_frame_serial;
+		}
+
+		if (serial != last_serial || !last_change)
+		{
+			if (reports)
+				sys_log.always()("UWP stall: frames resumed after %.2fs", (ticks - last_change) / 100.0);
+			last_serial = serial;
+			last_change = ticks;
+			reports = 0;
+			return;
+		}
+
+		const u32 idle = ticks - last_change;
+		if (idle < 100 || idle % 100 != 0 || reports >= 20)
+			return;
+
+		reports++;
+		std::string out = fmt::format("UWP stall: no new frame for %.0fs (frame %u):", idle / 100.0, serial);
+		idm::select<named_thread<ppu_thread>>([&](u32, ppu_thread& ppu)
+		{
+			const char* func = ppu.current_function;
+			fmt::append(out, "\n  %s: cia=0x%x state=%s func=%s last=%s", ppu.get_name(), ppu.cia, +ppu.state,
+				func ? func : "-", ppu.last_function ? ppu.last_function : "-");
+		});
+		idm::select<named_thread<spu_thread>>([&](u32, spu_thread& spu)
+		{
+			fmt::append(out, "\n  %s: pc=0x%x state=%s", spu.get_name(), spu.pc, +spu.state);
+		});
+		if (const auto render = rsx::get_current_renderer(); render && render->ctrl)
+		{
+			fmt::append(out, "\n  RSX: get=0x%x put=0x%x last semaphore 0x%x (cmd at 0x%x)", +render->ctrl->get, +render->ctrl->put,
+				render->last_sema_addr, render->last_sema_cmd);
+		}
+		sys_log.always()("%s", out);
 	}
 
 	// While a game boots without a frame (first boots compile PPU code for minutes), or while

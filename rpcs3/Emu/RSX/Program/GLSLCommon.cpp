@@ -510,6 +510,9 @@ namespace glsl
 
 			if (props.require_depth_conversion)
 			{
+#ifdef RPCS3_UWP
+				OS << "#define _STENCIL_TEXEL_FETCH\n";
+#endif
 				OS <<
 					#include "GLSLSnippets/RSXProg/RSXFragmentTextureDepthConversion.glsl"
 				;

@@ -2,6 +2,7 @@
 #include "instance.h"
 #include "util/logs.hpp"
 #include "Emu/system_config.h"
+#include "Utilities/File.h"
 #include <vulkan/vulkan_core.h>
 #ifdef __APPLE__
 #include <vulkan/vulkan_beta.h>
@@ -149,6 +150,15 @@ namespace vk
 		// v3dv and PanVK support BC1-BC3 which is all we require, support is reported as false since not all formats are supported
 		optional_features_support.texture_compression_bc = features.textureCompressionBC
 				|| get_driver_vendor() == driver_vendor::V3DV || get_driver_vendor() == driver_vendor::PANVK;
+
+#ifdef RPCS3_UWP
+		// Test switch: an empty LocalState/no_bc file decompresses DXT textures on the CPU instead.
+		if (optional_features_support.texture_compression_bc && fs::is_file(fs::get_config_dir() + "../no_bc"))
+		{
+			rsx_log.warning("UWP: BC texture compression turned off (LocalState/no_bc)");
+			optional_features_support.texture_compression_bc = false;
+		}
+#endif
 
 		// Texel buffer UAB is reported to the trigger for some driver crashes on older NV cards
 		if (get_driver_vendor() == driver_vendor::NVIDIA &&

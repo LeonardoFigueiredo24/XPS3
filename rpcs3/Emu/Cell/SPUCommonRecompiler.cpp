@@ -840,6 +840,8 @@ void spu_cache::initialize(bool build_existing_cache)
 {
 	jit_write_guard jit_guard;
 
+	const auto init_start = std::chrono::steady_clock::now();
+
 	spu_runtime::g_interpreter = spu_runtime::g_gateway;
 
 	if (g_cfg.core.spu_decoder == spu_decoder_type::_static || g_cfg.core.spu_decoder == spu_decoder_type::dynamic)
@@ -1312,6 +1314,8 @@ void spu_cache::initialize(bool build_existing_cache)
 	}
 
 	spu_log.notice("SPU Runtime: Workers built %u programs.", built_total);
+	spu_log.always()("SPU Runtime: %u workers built %u programs from %u cached functions in %.3fs", workers.size(), built_total, func_list.size(),
+		std::chrono::duration<double>(std::chrono::steady_clock::now() - init_start).count());
 
 	if (Emu.IsStopped())
 	{
@@ -2209,11 +2213,22 @@ void spu_recompiler_base::dispatch(spu_thread& spu, void*, u8* rip)
 	pthread_jit_write_protect_np(false);
 #endif
 	auto program = spu.jit->analyse(spu._ptr<u32>(0), spu.pc);
+	const auto compile_start = std::chrono::steady_clock::now();
 #ifdef ARCH_ARM64
 	const auto func = compile_spu_llvm_with_retry(spu.jit, program);
 #else
 	const auto func = spu.jit->compile(std::move(program));
 #endif
+
+	// Startup stall timing: log slow on-demand compiles and a running total
+	{
+		static atomic_t<u64> s_count = 0, s_us = 0;
+		const u64 us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - compile_start).count();
+		const u64 n = ++s_count, total = s_us += us;
+
+		if (us >= 20'000 || (n & (n - 1)) == 0)
+			spu_log.always()("SPU on-demand compile [0x%05x] took %.3fs (%u compiles, %.3fs total)", spu.pc, us / 1e6, n, total / 1e6);
+	}
 
 	if (!func)
 	{
