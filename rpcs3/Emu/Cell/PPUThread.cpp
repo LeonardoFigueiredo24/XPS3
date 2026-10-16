@@ -5755,6 +5755,9 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 					ppu_log.warning("LLVM: Compiling module %s%s", cache_path, obj_name);
 
 					{
+#ifdef RPCS3_UWP
+						rpcs3::utils::uwp_compile_gate mem_gate;
+#endif
 						// Use another JIT instance
 						jit_compiler jit2({}, g_cfg.core.llvm_cpu.to_string(), 0x1);
 						ppu_initialize2(jit2, part, cache_path, obj_name);
@@ -5811,7 +5814,14 @@ bool ppu_initialize(const ppu_module<lv2_obj>& info, bool check_only, u64 file_s
 		}
 
 		threads.join();
-		
+
+#ifdef RPCS3_UWP
+		if (const auto [peak, waited] = rpcs3::utils::uwp_compile_gate::take_stats(); peak)
+		{
+			ppu_log.notice("UWP: compiled %u PPU modules, app memory peak %.2f GB, waited %.1f s for memory", workload.size(), peak / 1073741824., waited / 1'000'000.);
+		}
+#endif
+
 		thread_ctrl::set_name(old_name);
 		g_watchdog_hold_ctr--;
 	}

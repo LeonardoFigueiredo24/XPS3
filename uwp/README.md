@@ -131,8 +131,14 @@ Empty files in the app's `LocalState` folder (via Device Portal file explorer):
 - `storage`: `local` or a folder path for the cache location.
 - `precompile`, `background_compile`: turn LLVM precompilation / background PRX compile back on.
 - `no_network`, `null_audio`, `null_renderer`, `heap_guard`, `ext_host_mem`: debugging switches.
+- `compile_headroom`: MB of app memory a new PPU/SPU compile job needs left before it starts
+  (default 1280; 0 turns the wait off).
 
-Logs: `LocalState/rpcs3/RPCS3.log` and `LocalState/mesa.log`.
+Per-game settings: `LocalState/rpcs3/config/custom_configs/config_<serial>.yml` (any subset of
+config.yml) overrides everything, including the app's built-in game settings (Portal 2: SPU blocks Safe).
+
+Logs: `LocalState/rpcs3/RPCS3.log` and `LocalState/mesa.log`; the previous run's are kept as
+`RPCS3.prev.log` and `mesa.prev.log`. A fatal error shows its log line on the red screen.
 
 ## Branches
 

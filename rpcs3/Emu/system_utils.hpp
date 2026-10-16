@@ -5,6 +5,7 @@
 #include <string_view>
 #include <set>
 #include <vector>
+#include <utility>
 
 struct GameInfo;
 
@@ -21,6 +22,28 @@ enum class game_content_type
 namespace rpcs3::utils
 {
 	u32 get_max_threads();
+
+#ifdef RPCS3_UWP
+	// Set by the UWP shell: the app's memory use, and its limit through `limit`, in bytes.
+	extern u64 (*g_uwp_app_memory)(u64* limit);
+
+	// Held around one LLVM compile job (a PPU module or an SPU function). The Xbox ends an app
+	// silently once it goes over its memory limit, and parallel PPU compiles of a big game
+	// (Portal 2) can get there; a new job waits while less than the headroom is left, unless
+	// nothing else is compiling. LocalState/compile_headroom sets the headroom in MB.
+	struct uwp_compile_gate
+	{
+		uwp_compile_gate();
+		~uwp_compile_gate();
+		uwp_compile_gate(const uwp_compile_gate&) = delete;
+		uwp_compile_gate& operator=(const uwp_compile_gate&) = delete;
+
+		static inline u32 headroom_mb = 1280;
+
+		// Peak app memory seen by the gate and total time jobs waited, since the last call.
+		static std::pair<u64, u64> take_stats();
+	};
+#endif
 
 	void configure_logs(bool force_enable = false);
 
