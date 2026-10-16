@@ -582,6 +582,17 @@ namespace
 				g_cfg.net.net_active.set(np_internet_status::enabled);
 				fs::write_file(g_local_dir + "net_default_set", fs::rewrite, std::string_view("1"));
 			}
+			// An empty LocalState/no_network file forces it off for test runs (back on once removed).
+			if (fs::is_file(g_local_dir + "no_network"))
+			{
+				g_cfg.net.net_active.set(np_internet_status::disabled);
+				fs::write_file(g_local_dir + "net_forced_off", fs::rewrite, std::string_view("1"));
+			}
+			else if (fs::is_file(g_local_dir + "net_forced_off"))
+			{
+				g_cfg.net.net_active.set(np_internet_status::enabled);
+				fs::remove_file(g_local_dir + "net_forced_off");
+			}
 			sys_log.always()("UWP: network: %s, PSN: %s", g_cfg.net.net_active.get(), g_cfg.net.psn_status.get());
 
 			// Stats overlay (menu Settings toggle, off by default): top right, PS3 firmware font sized

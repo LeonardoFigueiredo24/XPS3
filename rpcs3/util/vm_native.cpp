@@ -656,6 +656,20 @@ namespace utils
 					uwp_mem_log.error("Committing lazy shm pages at 0x%x (0x%x bytes) failed (%u)", addr, std::min(end, region_end) - addr, ::GetLastError());
 					return false;
 				}
+
+				// A commit that leaves the page uncommitted would make the faulting access retry forever.
+				::MEMORY_BASIC_INFORMATION after{};
+				if (!::VirtualQuery(reinterpret_cast<void*>(addr), &after, sizeof(after)) || after.State != MEM_COMMIT)
+				{
+					uwp_mem_log.error("Lazy shm page at 0x%x still not committed (state=0x%x, protect=0x%x)", addr, after.State, after.Protect);
+					return false;
+				}
+
+				// Progress log every 16 MB committed.
+				static atomic_t<u64> s_committed{0};
+				const u64 before = s_committed.fetch_add(hi - lo);
+				if ((before >> 24) != ((before + hi - lo) >> 24))
+					uwp_mem_log.notice("Lazy shm: 0x%x bytes committed so far", before + hi - lo);
 			}
 
 			addr = region_end;
