@@ -29,8 +29,9 @@ namespace rpcs3::utils
 
 	// Held around one LLVM compile job (a PPU module or an SPU function). The Xbox ends an app
 	// silently once it goes over its memory limit, and parallel PPU compiles of a big game
-	// (Portal 2) can get there; a new job waits while less than the headroom is left, unless
-	// nothing else is compiling. LocalState/compile_headroom sets the headroom in MB.
+	// (Portal 2) can get there; a new job waits while less than the headroom (plus a share per
+	// running job) is left, unless nothing else is compiling. LocalState/compile_headroom sets the
+	// headroom in MB.
 	struct uwp_compile_gate
 	{
 		uwp_compile_gate();
@@ -39,6 +40,8 @@ namespace rpcs3::utils
 		uwp_compile_gate& operator=(const uwp_compile_gate&) = delete;
 
 		static inline u32 headroom_mb = 1280;
+		// Counted for each job already running (they grow after they start). LocalState/compile_job_mb.
+		static inline u32 job_mb = 384;
 
 		// Peak app memory seen by the gate and total time jobs waited, since the last call.
 		static std::pair<u64, u64> take_stats();

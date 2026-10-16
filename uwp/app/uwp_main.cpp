@@ -386,6 +386,10 @@ namespace
 		const UINT64 usage = get_app_memory_usage(&limit);
 		sys_log.notice("UWP: app memory %.3f GB of %.3f GB (%s)", usage / 1073741824.0, limit / 1073741824.0, when);
 		log_memory_breakdown();
+		// Also in a small file of its own: the console ends an app silently when it runs out of
+		// memory, and RPCS3.log may have stopped at its size cap long before that.
+		if (fs::file f{g_local_dir + "memory.log", fs::write + fs::create + fs::append})
+			f.write(fmt::format("%.1f s: app memory %.3f GB of %.3f GB (%s)\n", get_system_time() / 1'000'000., usage / 1073741824.0, limit / 1073741824.0, when));
 	}
 
 	// While a game runs: logs app memory every second when it moved by 64 MB or more, else every 10 s.
@@ -633,6 +637,7 @@ namespace
 			// to overwrite the only record of it.
 			fs::rename(g_android_config_dir + "RPCS3.log", g_android_config_dir + "RPCS3.prev.log", true);
 			fs::rename(g_local_dir + "mesa.log", g_local_dir + "mesa.prev.log", true);
+			fs::rename(g_local_dir + "memory.log", g_local_dir + "memory.prev.log", true);
 			static std::unique_ptr<logs::listener> log_file = logs::make_file_listener(g_android_config_dir + "RPCS3.log", 256 * 1024 * 1024);
 			sys_log.always()("UWP: %s", storage_note);
 
@@ -740,7 +745,13 @@ namespace
 				if (v <= 4096)
 					rpcs3::utils::uwp_compile_gate::headroom_mb = v;
 			}
-			sys_log.always()("UWP: compile memory headroom: %u MB", rpcs3::utils::uwp_compile_gate::headroom_mb);
+			if (fs::file f{g_local_dir + "compile_job_mb"})
+			{
+				const u32 v = static_cast<u32>(std::strtoul(f.to_string().c_str(), nullptr, 10));
+				if (v <= 4096)
+					rpcs3::utils::uwp_compile_gate::job_mb = v;
+			}
+			sys_log.always()("UWP: compile memory headroom: %u MB + %u MB per running job", rpcs3::utils::uwp_compile_gate::headroom_mb, rpcs3::utils::uwp_compile_gate::job_mb);
 			// LLVM precompilation compiles every module in dev_flash (~580) before the XMB starts:
 			// 36+ minutes on the first boot on the Xbox. Without it only the modules that load get
 			// compiled (the rest when first used). An empty LocalState/precompile file turns it on.

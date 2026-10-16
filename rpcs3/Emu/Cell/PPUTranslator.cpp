@@ -130,7 +130,12 @@ PPUTranslator::PPUTranslator(LLVMContext& context, Module* _module, const ppu_mo
 			// case 26:
 			// case 28:
 			{
+#ifdef RPCS3_UWP
+				// Millions of these per big game (Portal 2): they filled the 256 MB log before the crash it was meant to show.
+				ppu_log.trace("Ignoring relative relocation at 0x%x (%u)", rel.addr, rel.type);
+#else
 				ppu_log.notice("Ignoring relative relocation at 0x%x (%u)", rel.addr, rel.type);
+#endif
 				continue;
 			}
 

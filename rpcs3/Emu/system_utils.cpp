@@ -48,7 +48,10 @@ namespace rpcs3::utils
 			const u64 usage = g_uwp_app_memory(&limit);
 			s_uwp_compile_peak.fetch_op([&](u64& v) { v = std::max(v, usage); });
 
-			if (!limit || usage + (u64{headroom_mb} << 20) < limit || s_uwp_compiles == 0)
+			// Jobs already running keep growing after they start, so each one counts for a share too.
+			const u64 needed = (u64{headroom_mb} << 20) + u64{s_uwp_compiles} * (u64{job_mb} << 20);
+
+			if (!limit || usage + needed < limit || s_uwp_compiles == 0)
 			{
 				break;
 			}
