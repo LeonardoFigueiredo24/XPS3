@@ -539,6 +539,7 @@ namespace
 			sys_log.always()("UWP: audio: %s", null_audio ? "null" : "XAudio2");
 			// Controllers 1-4 as PS3 pads 1-4 (written once; the XMB and games read it at boot).
 			uwp_input_default_config();
+			uwp_input_load_script(g_local_dir + "autopress");
 			g_cfg.audio.music.set(music_handler::null);
 			g_cfg.io.camera.set(camera_handler::null);
 

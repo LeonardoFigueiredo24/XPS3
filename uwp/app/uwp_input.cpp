@@ -10,6 +10,7 @@
 #include "Emu/Io/pad_config.h"
 #include "Input/xinput_pad_handler.h"
 #include "Emu/system_utils.hpp"
+#include "Emu/System.h"
 #include "Utilities/File.h"
 #include "util/logs.hpp"
 
@@ -20,6 +21,8 @@
 #include <array>
 #include <cmath>
 #include <mutex>
+#include <sstream>
+#include <vector>
 
 LOG_CHANNEL(uwp_input_log, "UWPInput");
 
@@ -291,12 +294,176 @@ namespace
 	};
 }
 
+namespace
+{
+	// Scripted button presses on controller 1 for remote test runs (LocalState/autopress).
+	// Times count from the moment the game starts running (after its PPU code is compiled).
+	struct press
+	{
+		u64 start_ms;
+		u64 end_ms;   // repeat: last start time; single press: same as start_ms
+		u64 period_ms; // 0 = single press
+		u64 hold_ms;
+		WORD buttons;
+	};
+
+	struct press_script
+	{
+		std::vector<press> presses;
+		u64 base_ms = 0; // GetTickCount64 when the game was first seen running
+		DWORD packet = 0;
+		WORD last = 0;
+	};
+
+	press_script s_script;
+
+	WORD button_from_name(const std::string& name)
+	{
+		static const std::pair<const char*, WORD> names[]
+		{
+			{"cross", XINPUT_GAMEPAD_A}, {"circle", XINPUT_GAMEPAD_B}, {"square", XINPUT_GAMEPAD_X},
+			{"triangle", XINPUT_GAMEPAD_Y}, {"start", XINPUT_GAMEPAD_START}, {"select", XINPUT_GAMEPAD_BACK},
+			{"up", XINPUT_GAMEPAD_DPAD_UP}, {"down", XINPUT_GAMEPAD_DPAD_DOWN}, {"left", XINPUT_GAMEPAD_DPAD_LEFT},
+			{"right", XINPUT_GAMEPAD_DPAD_RIGHT}, {"l1", XINPUT_GAMEPAD_LEFT_SHOULDER}, {"r1", XINPUT_GAMEPAD_RIGHT_SHOULDER},
+			{"l3", XINPUT_GAMEPAD_LEFT_THUMB}, {"r3", XINPUT_GAMEPAD_RIGHT_THUMB},
+		};
+		WORD result = 0;
+		std::stringstream parts(name);
+		for (std::string part; std::getline(parts, part, '+');)
+		{
+			for (const auto& [n, b] : names)
+				if (part == n)
+					result |= b;
+		}
+		return result;
+	}
+
+	// Buttons the script holds right now; 0 when none. Caller holds the gamepads mutex.
+	WORD scripted_buttons()
+	{
+		if (s_script.presses.empty())
+			return 0;
+		const u64 now = GetTickCount64();
+		if (!s_script.base_ms)
+		{
+			if (!Emu.IsRunning())
+				return 0;
+			s_script.base_ms = now;
+			uwp_input_log.notice("Scripted presses start now (%u entries)", s_script.presses.size());
+		}
+
+		const u64 t = now - s_script.base_ms;
+		WORD held = 0;
+		for (const press& p : s_script.presses)
+		{
+			if (t < p.start_ms || t > p.end_ms + p.hold_ms)
+				continue;
+			const u64 offset = p.period_ms ? (t - p.start_ms) % p.period_ms : t - p.start_ms;
+			if (offset < p.hold_ms && (!p.period_ms || t - offset <= p.end_ms))
+				held |= p.buttons;
+		}
+
+		if (held != s_script.last)
+		{
+			uwp_input_log.notice("Scripted buttons at %.1f s: 0x%04x", t / 1000.0, held);
+			s_script.last = held;
+			s_script.packet++;
+		}
+		return held;
+	}
+}
+
+void uwp_input_load_script(const std::string& path)
+{
+	fs::file f(path);
+	if (!f)
+		return;
+
+	gamepads& pads = get_gamepads();
+	std::lock_guard lock(pads.mutex);
+	s_script = {};
+
+	// Lines: "<seconds> <button>[+button] [hold ms]" or
+	// "repeat <from s> <to s> <every s> <button>[+button] [hold ms]". # starts a comment.
+	std::stringstream lines(f.to_string());
+	for (std::string line; std::getline(lines, line);)
+	{
+		line = line.substr(0, line.find('#'));
+		std::stringstream words(line);
+		std::string first;
+		if (!(words >> first))
+			continue;
+
+		press p{};
+		std::string button;
+		double from = 0, to = 0, every = 0;
+		u64 hold = 150;
+		bool ok = false;
+		if (first == "repeat")
+		{
+			ok = static_cast<bool>(words >> from >> to >> every >> button) && every > 0;
+			p.period_ms = static_cast<u64>(every * 1000);
+		}
+		else
+		{
+			from = to = std::strtod(first.c_str(), nullptr);
+			ok = static_cast<bool>(words >> button);
+		}
+		words >> hold;
+		p.start_ms = static_cast<u64>(from * 1000);
+		p.end_ms = static_cast<u64>(to * 1000);
+		p.hold_ms = std::max<u64>(hold, 50);
+		p.buttons = button_from_name(button);
+		if (!ok || !p.buttons || p.end_ms < p.start_ms)
+		{
+			uwp_input_log.error("autopress: ignoring line '%s'", line);
+			continue;
+		}
+		s_script.presses.push_back(p);
+	}
+	uwp_input_log.notice("autopress: %u scripted presses on controller 1 (%s)", s_script.presses.size(), path);
+}
+
 DWORD WINAPI uwp_xinput_get_state(DWORD user_index, XINPUT_STATE* state)
 {
 	gamepads& pads = get_gamepads();
 	std::lock_guard lock(pads.mutex);
 
 	IGamepad* pad = pads.get(user_index);
+	if (user_index == 0 && state && !s_script.presses.empty())
+	{
+		// Scripted presses on controller 1, merged with the real controller if one is there.
+		const WORD scripted = scripted_buttons();
+		gamepad_reading r{};
+		if (pad && SUCCEEDED(pad->GetCurrentReading(&r)) && r.timestamp != pads.last_timestamp[0])
+		{
+			pads.last_timestamp[0] = r.timestamp;
+			pads.packet[0]++;
+		}
+		*state = {};
+		state->Gamepad.wButtons = scripted;
+		if (pad)
+		{
+			const auto map = [&](UINT32 from, WORD to) { if (r.buttons & from) state->Gamepad.wButtons |= to; };
+			map(gp_a, XINPUT_GAMEPAD_A);
+			map(gp_b, XINPUT_GAMEPAD_B);
+			map(gp_x, XINPUT_GAMEPAD_X);
+			map(gp_y, XINPUT_GAMEPAD_Y);
+			map(gp_menu, XINPUT_GAMEPAD_START);
+			map(gp_view, XINPUT_GAMEPAD_BACK);
+			map(gp_dpad_up, XINPUT_GAMEPAD_DPAD_UP);
+			map(gp_dpad_down, XINPUT_GAMEPAD_DPAD_DOWN);
+			map(gp_dpad_left, XINPUT_GAMEPAD_DPAD_LEFT);
+			map(gp_dpad_right, XINPUT_GAMEPAD_DPAD_RIGHT);
+			state->Gamepad.sThumbLX = to_thumb(r.left_x);
+			state->Gamepad.sThumbLY = to_thumb(r.left_y);
+			state->Gamepad.sThumbRX = to_thumb(r.right_x);
+			state->Gamepad.sThumbRY = to_thumb(r.right_y);
+		}
+		state->dwPacketNumber = pads.packet[0] + s_script.packet;
+		return ERROR_SUCCESS;
+	}
+
 	if (!pad || !state)
 		return ERROR_DEVICE_NOT_CONNECTED;
 
@@ -362,7 +529,7 @@ DWORD WINAPI uwp_xinput_get_battery_information(DWORD user_index, BYTE, XINPUT_B
 		return ERROR_BAD_ARGUMENTS;
 
 	// Battery level isn't read yet: report connected pads as wired (full).
-	const bool connected = pads.get(user_index) != nullptr;
+	const bool connected = pads.get(user_index) != nullptr || (user_index == 0 && !s_script.presses.empty());
 	info->BatteryType = connected ? BATTERY_TYPE_WIRED : BATTERY_TYPE_DISCONNECTED;
 	info->BatteryLevel = connected ? BATTERY_LEVEL_FULL : BATTERY_LEVEL_EMPTY;
 	return connected ? ERROR_SUCCESS : ERROR_DEVICE_NOT_CONNECTED;
