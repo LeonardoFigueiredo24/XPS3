@@ -59,7 +59,7 @@ namespace rsx
 			// ever writes. It always hit the 1 s driver timeout, stalling the XMB boot; don't wait.
 			if (const u32 dev = RSX(ctx)->device_addr; dev && addr >= dev && addr < dev + 0x100000)
 			{
-				rsx_log.warning("nv406e::semaphore_acquire on device semaphore 0x%X skipped (value=0x%x, expected=0x%x)", addr, +sema.val, arg);
+				rsx_log.warning("nv406e::semaphore_acquire on device semaphore 0x%X skipped (value=0x%x, expected=0x%x)", addr, u32{sema}, arg);
 				return;
 			}
 
