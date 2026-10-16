@@ -1591,6 +1591,9 @@ void VKGSRender::flush_command_queue(bool hard_sync, bool do_not_switch)
 		// NOTE: Even in the case of a hard sync, this is required to free any waiters on the CB (ZCULL)
 		m_current_command_buffer = m_primary_cb_list.next();
 		m_current_command_buffer->reset();
+#ifdef RPCS3_UWP
+		m_primary_cb_list.trim();
+#endif
 	}
 	else
 	{
