@@ -75,6 +75,7 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_
 extern thread_local bool g_ppu_precompile_prx_only;
 
 extern u32 g_uwp_desc_pool_max; // VKProgramPipeline.cpp
+extern u32 g_uwp_pipeline_limit; // VKPresent.cpp
 
 namespace
 {
@@ -715,6 +716,12 @@ namespace
 					g_uwp_desc_pool_max = v;
 				sys_log.always()("UWP: descriptor pool max sets: %u", g_uwp_desc_pool_max);
 			}
+			// Live graphics pipelines kept before idle ones are evicted (0 = keep all, as upstream).
+			if (fs::file f{g_local_dir + "pipeline_limit"})
+			{
+				g_uwp_pipeline_limit = static_cast<u32>(std::strtoul(f.to_string().c_str(), nullptr, 10));
+			}
+			sys_log.always()("UWP: pipeline limit: %u", g_uwp_pipeline_limit);
 			// PS3 networking: RPCS3 ships with the network "Disconnected"; turn it on once so the XMB
 			// and games see an internet connection (the menu's Network setting can switch it off again,
 			// which then sticks). PSN stays off; RPCN needs an account.
