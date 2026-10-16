@@ -22,6 +22,7 @@
 #include "Emu/VFS.h"
 #include "Emu/Cell/PPUAnalyser.h"
 #include "Emu/Cell/PPUThread.h"
+#include "Emu/Cell/SPUThread.h"
 #include "Emu/Cell/lv2/sys_sync.h"
 #include "Emu/emu_callbacks.h"
 #include "Emu/IdManager.h"
@@ -744,6 +745,15 @@ namespace
 			fmt::append(out, "\n  %s: cia=0x%x state=%s func=%s last=%s", ppu.get_name(), ppu.cia, +ppu.state,
 				func ? func : "-", ppu.last_function ? ppu.last_function : "-");
 		});
+		idm::select<named_thread<spu_thread>>([&](u32, spu_thread& spu)
+		{
+			fmt::append(out, "\n  %s: pc=0x%x state=%s", spu.get_name(), spu.pc, +spu.state);
+		});
+		if (const auto render = rsx::get_current_renderer(); render && render->ctrl)
+		{
+			fmt::append(out, "\n  RSX: get=0x%x put=0x%x last semaphore 0x%x (cmd at 0x%x)", +render->ctrl->get, +render->ctrl->put,
+				render->last_sema_addr, render->last_sema_cmd);
+		}
 		sys_log.always()("%s", out);
 	}
 
