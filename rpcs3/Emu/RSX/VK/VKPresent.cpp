@@ -425,6 +425,17 @@ vk::viewable_image* VKGSRender::get_present_source(/* inout */ vk::present_surfa
 
 void VKGSRender::flip(const rsx::display_flip_info_t& info)
 {
+#ifdef RPCS3_UWP
+	// Video memory by use every 10 s (it comes out of the app's 5 GB on the Xbox).
+	if (static u64 s_last_mem_log = 0; get_system_time() - s_last_mem_log >= 10'000'000)
+	{
+		s_last_mem_log = get_system_time();
+		rsx_log.notice("UWP VRAM: %s | pools MB: %s | texture cache %llu MB (%u unreleased), surface cache %llu MB",
+			vk::get_current_mem_allocator()->get_heap_summary(), vk::vmm_get_usage_summary(),
+			m_texture_cache.get_texture_memory_in_use() >> 20, m_texture_cache.get_unreleased_textures_count(), m_rtts.m_active_memory_used >> 20);
+	}
+#endif
+
 	// Check swapchain condition/status
 	if (!m_swapchain->supports_automatic_wm_reports())
 	{

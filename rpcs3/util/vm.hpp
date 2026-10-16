@@ -70,6 +70,12 @@ namespace utils
 	// shm::lazy_commit). Returns true if the range touched such a view. Always false elsewhere.
 	bool memory_commit_lazy(const void* pointer, usz size);
 
+	// memset to 0, except that UWP leaves lazily committed pages that were never touched alone.
+	void memory_zero(void* pointer, usz size);
+
+	// memory_protect(protection::no) for freed guest memory; UWP leaves untouched lazily committed pages reserved.
+	void memory_protect_freed(void* pointer, usz size);
+
 	// Shared memory handle
 	class shm
 	{

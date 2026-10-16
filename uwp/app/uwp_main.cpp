@@ -263,6 +263,62 @@ namespace
 		return dir;
 	}
 
+	// What the committed memory of this process is, by kind, from a walk of the address space.
+	// Guest memory is counted in the sudo view only (the base view maps the same sections).
+	void log_memory_breakdown()
+	{
+		const u64 base = reinterpret_cast<u64>(vm::g_base_addr), sudo = reinterpret_cast<u64>(vm::g_sudo_addr);
+		const u64 exec = reinterpret_cast<u64>(vm::g_exec_addr), stat = reinterpret_cast<u64>(vm::g_stat_addr);
+		auto in = [](u64 a, u64 start, u64 size) { return a >= start && a < start + size; };
+
+		u64 guest = 0, guest_base = 0, exec_table = 0, stat_area = 0, jit = 0, mapped = 0, priv = 0, image = 0, total = 0;
+		u64 biggest_priv = 0, biggest_priv_addr = 0;
+
+		for (u64 addr = 0x10000; addr < 0x7fff'ffff'0000;)
+		{
+			MEMORY_BASIC_INFORMATION mem{};
+			if (!VirtualQuery(reinterpret_cast<void*>(addr), &mem, sizeof(mem)))
+				break;
+
+			const u64 start = reinterpret_cast<u64>(mem.BaseAddress), size = mem.RegionSize;
+			addr = start + size;
+
+			if (mem.State != MEM_COMMIT)
+				continue;
+
+			if (in(start, base, 0x1'0000'0000))
+			{
+				guest_base += size;
+				continue;
+			}
+
+			total += size;
+
+			if (in(start, sudo, 0x1'0000'0000))
+				guest += size;
+			else if (in(start, exec, 0x2'0000'0000))
+				exec_table += size;
+			else if (in(start, stat, 0x1'0000'0000))
+				stat_area += size;
+			else if (mem.Type == MEM_IMAGE)
+				image += size;
+			else if (mem.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))
+				jit += size;
+			else if (mem.Type == MEM_MAPPED)
+				mapped += size;
+			else
+			{
+				priv += size;
+				if (size > biggest_priv)
+					biggest_priv = size, biggest_priv_addr = start;
+			}
+		}
+
+		constexpr double mb = 1048576.0;
+		sys_log.notice("UWP memory: committed %.0f MB = guest %.0f (base view %.0f) + PPU exec table %.0f + stat %.0f + JIT code %.0f + other mapped %.0f + private %.0f (largest %.0f at 0x%x) + images %.0f",
+			total / mb, guest / mb, guest_base / mb, exec_table / mb, stat_area / mb, jit / mb, mapped / mb, priv / mb, biggest_priv / mb, biggest_priv_addr, image / mb);
+	}
+
 	void log_app_memory(std::string_view when)
 	{
 		winrt_min::IMemoryManagerStatics* mm = nullptr;
@@ -274,6 +330,8 @@ namespace
 			sys_log.notice("UWP: app memory %.3f GB of %.3f GB (%s)", usage / 1073741824.0, limit / 1073741824.0, when);
 			mm->Release();
 		}
+
+		log_memory_breakdown();
 	}
 
 	// Pick what to boot: first file in LocalState/boot/, else the bundled test ELF (a GCM triangle).
@@ -574,6 +632,21 @@ namespace
 			// with no fps gain; Relaxed ZCULL Sync breaks RSX pipelines on Dozen.
 			g_cfg.video.shadermode.set(shader_mode::async_recompiler);
 			g_cfg.video.relaxed_zcull_sync.set(false);
+			// Dozen reports 4 GB of video memory, but on the Xbox it comes out of the app's 5 GB, so
+			// the texture and surface caches only start evicting long after the app is out of memory
+			// (Watch Dogs). Cap it; LocalState/vram_limit holds another size in MB (256-65536).
+			{
+				u32 vram_mb = 1536;
+				if (fs::file f{g_local_dir + "vram_limit"})
+				{
+					const std::string text = f.to_string();
+					const u32 v = static_cast<u32>(std::strtoul(text.c_str(), nullptr, 10));
+					if (v >= 256 && v <= 65536)
+						vram_mb = v;
+				}
+				g_cfg.video.vk.vram_allocation_limit.set(vram_mb);
+				sys_log.always()("UWP: VRAM allocation limit: %u MB", vram_mb);
+			}
 			// Stats overlay (menu Settings toggle, off by default): top right, PS3 firmware font sized
 			// for a TV. Full detail (FPS, CPU, GPU) is the default once; the menu can change it.
 			g_cfg.video.perf_overlay.position.set(screen_quadrant::top_right);

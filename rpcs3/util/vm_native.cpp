@@ -527,6 +527,10 @@ namespace utils
 #endif
 	}
 
+#if defined(_WIN32) && defined(RPCS3_UWP)
+	static bool memory_protect_lazy(void* pointer, usz size, protection prot, bool keep_reserved);
+#endif
+
 	void memory_protect(void* pointer, usz size, protection prot)
 	{
 		if (!size)
@@ -544,7 +548,7 @@ namespace utils
 
 #ifdef RPCS3_UWP
 		// Pages of lazily committed memory can't be protected before they are committed.
-		if (memory_commit_lazy(pointer, size) && ::VirtualProtect(pointer, size, +prot, &old))
+		if (memory_protect_lazy(pointer, size, prot, false))
 		{
 			return;
 		}
@@ -663,6 +667,89 @@ namespace utils
 
 		return found;
 	}
+
+	// memory_protect for a range with lazily committed pages: pages nobody touched yet stay
+	// reserved when they become read-write (the fault handler commits them read-write), and
+	// when they become inaccessible because they are freed (keep_reserved); other protections
+	// commit them first (an inaccessible page must fault into RSX's handlers, not get committed).
+	// False if the range has no such pages.
+	static bool memory_protect_lazy(void* pointer, usz size, protection prot, bool keep_reserved)
+	{
+		if (!s_lazy_shm_count)
+		{
+			return false;
+		}
+
+		bool found = false;
+		DWORD old;
+
+		for (u64 addr = reinterpret_cast<u64>(pointer), end = addr + size; addr < end;)
+		{
+			::MEMORY_BASIC_INFORMATION mem{};
+			if (!::VirtualQuery(reinterpret_cast<void*>(addr), &mem, sizeof(mem)))
+			{
+				return false;
+			}
+
+			const u64 part_end = std::min<u64>(end, reinterpret_cast<u64>(mem.BaseAddress) + mem.RegionSize);
+			const auto part = reinterpret_cast<void*>(addr);
+
+			if (mem.State == MEM_RESERVE && mem.Type == MEM_MAPPED)
+			{
+				found = true;
+
+				if (prot != protection::rw && !(prot == protection::no && keep_reserved) &&
+					(!::VirtualAllocFromApp(part, part_end - addr, MEM_COMMIT, PAGE_READWRITE) || !::VirtualProtect(part, part_end - addr, +prot, &old)))
+				{
+					return false;
+				}
+			}
+			else if (!::VirtualProtect(part, part_end - addr, +prot, &old))
+			{
+				return false;
+			}
+
+			addr = part_end;
+		}
+
+		return found;
+	}
+
+	void memory_protect_freed(void* pointer, usz size)
+	{
+		if (!memory_protect_lazy(pointer, size, protection::no, true))
+		{
+			memory_protect(pointer, size, protection::no);
+		}
+	}
+
+	void memory_zero(void* pointer, usz size)
+	{
+		if (!s_lazy_shm_count)
+		{
+			std::memset(pointer, 0, size);
+			return;
+		}
+
+		for (u64 addr = reinterpret_cast<u64>(pointer), end = addr + size; addr < end;)
+		{
+			::MEMORY_BASIC_INFORMATION mem{};
+			if (!::VirtualQuery(reinterpret_cast<void*>(addr), &mem, sizeof(mem)))
+			{
+				std::memset(reinterpret_cast<void*>(addr), 0, end - addr);
+				return;
+			}
+
+			const u64 part_end = std::min<u64>(end, reinterpret_cast<u64>(mem.BaseAddress) + mem.RegionSize);
+
+			if (mem.State == MEM_COMMIT)
+			{
+				std::memset(reinterpret_cast<void*>(addr), 0, part_end - addr);
+			}
+
+			addr = part_end;
+		}
+	}
 #else
 	shm::shm(u64 size, lazy_commit_t)
 		: shm(size, 0u)
@@ -672,6 +759,16 @@ namespace utils
 	bool memory_commit_lazy(const void*, usz)
 	{
 		return false;
+	}
+
+	void memory_protect_freed(void* pointer, usz size)
+	{
+		memory_protect(pointer, size, protection::no);
+	}
+
+	void memory_zero(void* pointer, usz size)
+	{
+		std::memset(pointer, 0, size);
 	}
 #endif
 
@@ -1157,6 +1254,14 @@ namespace utils
 				if (prot != protection::rw && prot != protection::wx)
 				{
 					DWORD old;
+#ifdef RPCS3_UWP
+					// Lazily committed views have no committed pages to protect yet (and the fault handler
+					// only commits pages of allocated readable guest memory).
+					if (m_lazy && memory_protect_lazy(target, m_size, prot, true))
+					{
+					}
+					else
+#endif
 					if (!::VirtualProtect(target, m_size, +prot, &old))
 					{
 						UnmapViewOfFile2(GetCurrentProcess(), target, MEM_PRESERVE_PLACEHOLDER);
