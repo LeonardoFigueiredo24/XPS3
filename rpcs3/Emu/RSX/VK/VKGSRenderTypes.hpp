@@ -57,6 +57,10 @@ namespace vk
 		u64 eid_tag = 0;
 		u64 reset_id = 0;
 		shared_mutex guard_mutex;
+#ifdef RPCS3_UWP
+		// Executed but not yet reset: the driver still holds this buffer's temporary resources
+		bool needs_trim = false;
+#endif
 
 		command_buffer_chunk() = default;
 
@@ -74,7 +78,33 @@ namespace vk
 
 			++reset_id;
 			vk::command_buffer::reset();
+#ifdef RPCS3_UWP
+			needs_trim = false;
+#endif
 		}
+
+#ifdef RPCS3_UWP
+		// Dozen (Vulkan on D3D12) keeps a command buffer's temporary D3D12 buffers (image copy
+		// staging, upload chunks of 4 MB) until the command buffer is reset, which RPCS3 only does
+		// when it reuses the buffer, up to 512 submissions later. A scene with many copies piles up
+		// gigabytes that way (GTA V). Resetting finished command buffers early returns that memory.
+		// Must run on the thread that records into this chain's pool.
+		void trim()
+		{
+			if (!poke())
+			{
+				return;
+			}
+
+			std::lock_guard lock(guard_mutex);
+
+			if (needs_trim && !is_pending && !is_open)
+			{
+				vk::command_buffer::reset();
+				needs_trim = false;
+			}
+		}
+#endif
 
 		bool poke()
 		{
@@ -101,6 +131,9 @@ namespace vk
 
 					is_pending = false;
 					eid_tag = 0;
+#ifdef RPCS3_UWP
+					needs_trim = true;
+#endif
 				}
 			}
 
@@ -127,6 +160,9 @@ namespace vk
 
 				is_pending = false;
 				eid_tag = 0;
+#ifdef RPCS3_UWP
+				needs_trim = true;
+#endif
 			}
 
 			return ret;
@@ -343,5 +379,21 @@ namespace vk
 		{
 			return &m_cb_list[m_current_index % Count];
 		}
+
+#ifdef RPCS3_UWP
+		// Reset every finished command buffer except the current one (see command_buffer_chunk::trim)
+		void trim()
+		{
+			const u32 current = m_current_index % Count;
+
+			for (u32 i = 0; i < Count; i++)
+			{
+				if (i != current)
+				{
+					m_cb_list[i].trim();
+				}
+			}
+		}
+#endif
 	};
 }

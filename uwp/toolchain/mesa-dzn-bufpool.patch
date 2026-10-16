@@ -1,0 +1,228 @@
+diff --git a/src/microsoft/vulkan/dzn_cmd_buffer.c b/src/microsoft/vulkan/dzn_cmd_buffer.c
+index 4524669..6b7b525 100644
+--- a/src/microsoft/vulkan/dzn_cmd_buffer.c
++++ b/src/microsoft/vulkan/dzn_cmd_buffer.c
+@@ -384,6 +384,81 @@ dzn_cmd_buffer_restore_layout(struct dzn_cmd_buffer *cmdbuf,
+    }
+ }
+ 
++#define DZN_INTERNAL_BUF_POOL_MAX (256ull * 1024 * 1024)
++
++/* UWP port: hand a command buffer's internal buffers to the device pool (see dzn_device) instead
++ * of releasing them. Only called when the command buffer is not pending any more.
++ */
++static void
++dzn_cmd_buffer_release_internal_bufs(struct dzn_cmd_buffer *cmdbuf)
++{
++   struct dzn_device *device = container_of(cmdbuf->vk.base.device, struct dzn_device, vk);
++
++   for (uint32_t bucket = 0; bucket < DZN_INTERNAL_BUF_BUCKET_COUNT; ++bucket) {
++      list_for_each_entry_safe(struct dzn_internal_resource, res, &cmdbuf->internal_bufs[bucket], link) {
++         list_del(&res->link);
++
++         if (!device->internal_buf_pool.disabled) {
++            simple_mtx_lock(&device->internal_buf_pool.lock);
++            if (device->internal_buf_pool.size + res->size <= DZN_INTERNAL_BUF_POOL_MAX) {
++               list_add(&res->link, &device->internal_buf_pool.bufs[bucket]);
++               device->internal_buf_pool.size += res->size;
++               res = NULL;
++            }
++            simple_mtx_unlock(&device->internal_buf_pool.lock);
++            if (!res)
++               continue;
++         }
++
++         ID3D12Resource_Release(res->res);
++         vk_free(&device->vk.alloc, res);
++      }
++   }
++   cmdbuf->cur_upload_buf = NULL;
++}
++
++/* Take a pooled buffer of exactly this size. Default-heap buffers decay to COMMON after the
++ * command list that used them completed; they are only reused for callers that start with a copy
++ * into them (implicit promotion to COPY_DEST), so the state the caller assumes stays correct.
++ */
++static struct dzn_internal_resource *
++dzn_device_take_internal_buf(struct dzn_device *device, enum dzn_internal_buf_bucket bucket,
++                             uint64_t size, D3D12_RESOURCE_STATES init_state)
++{
++   if (device->internal_buf_pool.disabled ||
++       (bucket == DZN_INTERNAL_BUF_DEFAULT && init_state != D3D12_RESOURCE_STATE_COPY_DEST))
++      return NULL;
++
++   struct dzn_internal_resource *found = NULL;
++   simple_mtx_lock(&device->internal_buf_pool.lock);
++   list_for_each_entry(struct dzn_internal_resource, res, &device->internal_buf_pool.bufs[bucket], link) {
++      if (res->size == size && res->init_state == init_state) {
++         list_del(&res->link);
++         device->internal_buf_pool.size -= res->size;
++         found = res;
++         break;
++      }
++   }
++   simple_mtx_unlock(&device->internal_buf_pool.lock);
++   return found;
++}
++
++void
++dzn_device_internal_buf_pool_finish(struct dzn_device *device)
++{
++   for (uint32_t bucket = 0; bucket < DZN_INTERNAL_BUF_BUCKET_COUNT; ++bucket) {
++      if (!device->internal_buf_pool.bufs[bucket].next)
++         continue;
++      list_for_each_entry_safe(struct dzn_internal_resource, res, &device->internal_buf_pool.bufs[bucket], link) {
++         list_del(&res->link);
++         ID3D12Resource_Release(res->res);
++         vk_free(&device->vk.alloc, res);
++      }
++   }
++   if (device->internal_buf_pool.bufs[0].next)
++      simple_mtx_destroy(&device->internal_buf_pool.lock);
++}
++
+ static void
+ dzn_cmd_buffer_destroy(struct vk_command_buffer *cbuf)
+ {
+@@ -404,13 +479,7 @@ dzn_cmd_buffer_destroy(struct vk_command_buffer *cbuf)
+    if (cmdbuf->cmdalloc)
+       ID3D12CommandAllocator_Release(cmdbuf->cmdalloc);
+ 
+-   for (uint32_t bucket = 0; bucket < DZN_INTERNAL_BUF_BUCKET_COUNT; ++bucket) {
+-      list_for_each_entry_safe(struct dzn_internal_resource, res, &cmdbuf->internal_bufs[bucket], link) {
+-         list_del(&res->link);
+-         ID3D12Resource_Release(res->res);
+-         vk_free(&cbuf->pool->alloc, res);
+-      }
+-   }
++   dzn_cmd_buffer_release_internal_bufs(cmdbuf);
+ 
+    dzn_descriptor_heap_pool_finish(&cmdbuf->cbv_srv_uav_pool);
+    dzn_descriptor_heap_pool_finish(&cmdbuf->sampler_pool);
+@@ -467,15 +536,7 @@ dzn_cmd_buffer_reset(struct vk_command_buffer *cbuf, VkCommandBufferResetFlags f
+    cmdbuf->state.multiview.num_views = 1;
+    cmdbuf->state.multiview.view_mask = 1;
+ 
+-   /* TODO: Return resources to the pool */
+-   for (uint32_t bucket = 0; bucket < DZN_INTERNAL_BUF_BUCKET_COUNT; ++bucket) {
+-      list_for_each_entry_safe(struct dzn_internal_resource, res, &cmdbuf->internal_bufs[bucket], link) {
+-         list_del(&res->link);
+-         ID3D12Resource_Release(res->res);
+-         vk_free(&cmdbuf->vk.pool->alloc, res);
+-      }
+-   }
+-   cmdbuf->cur_upload_buf = NULL;
++   dzn_cmd_buffer_release_internal_bufs(cmdbuf);
+ 
+    util_dynarray_clear(&cmdbuf->events.signal);
+    util_dynarray_clear(&cmdbuf->queries.reset);
+@@ -1827,8 +1888,22 @@ dzn_cmd_buffer_alloc_internal_buf(struct dzn_cmd_buffer *cmdbuf,
+       /* Walk through a 4MB upload buffer */
+       alloc_size = ALIGN_POT(size, 4 * 1024 * 1024);
+    else
+-      /* Align size on 64k (the default alignment) */
+-      alloc_size = ALIGN_POT(size, 64 * 1024);
++      /* Power of two from 64k (the default alignment) up, so pooled buffers get reused */
++      alloc_size = MAX2(util_next_power_of_two(size), 64 * 1024);
++
++   struct dzn_internal_resource *pooled =
++      dzn_device_take_internal_buf(device, bucket, alloc_size, init_state);
++   if (pooled) {
++      list_addtail(&pooled->link, &cmdbuf->internal_bufs[bucket]);
++      *out = pooled->res;
++      if (offset)
++         *offset = 0;
++      if (bucket == DZN_INTERNAL_BUF_UPLOAD) {
++         cmdbuf->cur_upload_buf = pooled;
++         cmdbuf->cur_upload_buf_offset = size;
++      }
++      return VK_SUCCESS;
++   }
+ 
+    D3D12_HEAP_PROPERTIES hprops = dzn_ID3D12Device4_GetCustomHeapProperties(device->dev, 0, heap_type);
+    D3D12_RESOURCE_DESC rdesc = {
+@@ -1855,8 +1930,8 @@ dzn_cmd_buffer_alloc_internal_buf(struct dzn_cmd_buffer *cmdbuf,
+    }
+ 
+    struct dzn_internal_resource *entry =
+-      vk_alloc(&cmdbuf->vk.pool->alloc, sizeof(*entry), 8,
+-               VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
++      vk_alloc(&device->vk.alloc, sizeof(*entry), 8,
++               VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
+    if (!entry) {
+       ID3D12Resource_Release(res);
+       return vk_command_buffer_set_error(&cmdbuf->vk, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+@@ -1864,6 +1939,7 @@ dzn_cmd_buffer_alloc_internal_buf(struct dzn_cmd_buffer *cmdbuf,
+ 
+    entry->res = res;
+    entry->size = alloc_size;
++   entry->init_state = init_state;
+    list_addtail(&entry->link, &cmdbuf->internal_bufs[bucket]);
+    *out = entry->res;
+    if (offset)
+diff --git a/src/microsoft/vulkan/dzn_device.c b/src/microsoft/vulkan/dzn_device.c
+index 0d809cc..7f42f31 100644
+--- a/src/microsoft/vulkan/dzn_device.c
++++ b/src/microsoft/vulkan/dzn_device.c
+@@ -2234,6 +2234,7 @@ dzn_device_destroy(struct dzn_device *device, const VkAllocationCallbacks *pAllo
+ 
+    dzn_device_query_finish(device);
+    dzn_meta_finish(device);
++   dzn_device_internal_buf_pool_finish(device);
+ 
+    dzn_foreach_pool_type(type) {
+       dzn_descriptor_heap_finish(&device->device_heaps[type].heap);
+@@ -2466,6 +2467,11 @@ dzn_device_create(struct dzn_physical_device *pdev,
+       }
+    }
+ 
++   simple_mtx_init(&device->internal_buf_pool.lock, mtx_plain);
++   for (uint32_t b = 0; b < ARRAY_SIZE(device->internal_buf_pool.bufs); b++)
++      list_inithead(&device->internal_buf_pool.bufs[b]);
++   device->internal_buf_pool.disabled = os_get_option("DZN_NO_BUFPOOL") != NULL;
++
+    assert(queue_count == qindex);
+    *out = dzn_device_to_handle(device);
+    return VK_SUCCESS;
+diff --git a/src/microsoft/vulkan/dzn_private.h b/src/microsoft/vulkan/dzn_private.h
+index 7392e1e..97a4af5 100644
+--- a/src/microsoft/vulkan/dzn_private.h
++++ b/src/microsoft/vulkan/dzn_private.h
+@@ -47,6 +47,7 @@
+ #include "util/blob.h"
+ #include "util/hash_table.h"
+ #include "util/u_dynarray.h"
++#include "util/simple_mtx.h"
+ #include "util/log.h"
+ #include "dzn_drirc.h"
+ 
+@@ -311,6 +312,17 @@ struct dzn_device {
+    bool bindless;
+    bool support_static_samplers;
+    struct dzn_device_descriptor_heap device_heaps[NUM_POOL_TYPES];
++
++   /* UWP port: command buffers hand their internal buffers back here on reset and later command
++    * buffers reuse them, instead of a CreateCommittedResource/Release pair per copy or upload
++    * chunk (dozens per frame in RPCS3). Index = enum dzn_internal_buf_bucket.
++    */
++   struct {
++      simple_mtx_t lock;
++      struct list_head bufs[2];
++      uint64_t size;
++      bool disabled;
++   } internal_buf_pool;
+ };
+ 
+ void dzn_meta_finish(struct dzn_device *device);
+@@ -546,8 +558,11 @@ struct dzn_internal_resource {
+    struct list_head link;
+    ID3D12Resource *res;
+    uint64_t size;
++   D3D12_RESOURCE_STATES init_state;
+ };
+ 
++void dzn_device_internal_buf_pool_finish(struct dzn_device *device);
++
+ enum dzn_event_state {
+    DZN_EVENT_STATE_RESET = 0,
+    DZN_EVENT_STATE_SET = 1,

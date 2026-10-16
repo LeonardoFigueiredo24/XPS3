@@ -117,6 +117,13 @@ bool serialize<rsx::rsx_iomap_table>(utils::serial& ar, rsx::rsx_iomap_table& o)
 	return true;
 }
 
+#ifdef RPCS3_UWP
+namespace vk
+{
+	extern atomic_t<u64> g_uwp_fence_wait_us, g_uwp_fence_waits; // VK/vkutils/sync.cpp
+}
+#endif
+
 namespace rsx
 {
 	std::function<bool(u32 addr, bool is_writing)> g_access_violation_handler;
@@ -3520,6 +3527,25 @@ namespace rsx
 			zcull_ctrl->clear(this, CELL_GCM_ZPASS_PIXEL_CNT | CELL_GCM_ZCULL_STATS);
 		}
 
+#ifdef RPCS3_UWP
+		// Where the time of slow frames goes (Xbox: no profiler). RSX idle = waiting for the game (FIFO
+		// empty or semaphores), GPU wait = RSX waiting for the GPU to finish work.
+		{
+			static u64 s_last_flip = 0, s_last_idle = 0, s_last_gpu_wait = 0, s_last_gpu_waits = 0;
+			const u64 now = get_system_time(), idle = performance_counters.idle_time;
+			const u64 gpu_wait = vk::g_uwp_fence_wait_us, gpu_waits = vk::g_uwp_fence_waits;
+			if (s_last_flip && now - s_last_flip >= 250'000)
+			{
+				const auto& st = m_frame_stats;
+				rsx_log.notice("UWP slow frame: %.0f ms, RSX idle %.0f ms, GPU wait %.0f ms (%llu waits) | %u draws, %u submits | setup %.1f, vertex upload %.1f, texture upload %.1f, draw %.1f ms | %u/%u program lookups skipped",
+					(now - s_last_flip) / 1000., (idle - s_last_idle) / 1000., (gpu_wait - s_last_gpu_wait) / 1000., gpu_waits - s_last_gpu_waits,
+					st.draw_calls, st.submit_count, st.setup_time / 1000., st.vertex_upload_time / 1000., st.textures_upload_time / 1000., st.draw_exec_time / 1000.,
+					st.program_cache_lookups_ellided, st.program_cache_lookups_total);
+			}
+			s_last_flip = now, s_last_idle = idle, s_last_gpu_wait = gpu_wait, s_last_gpu_waits = gpu_waits;
+		}
+#endif
+
 		// Save current state
 		m_queued_flip.stats = m_frame_stats;
 		m_queued_flip.push(buffer);
@@ -3566,7 +3592,11 @@ namespace rsx
 
 		// Reset current stats
 		m_frame_stats = {};
+#ifdef RPCS3_UWP
+		m_profiler.enabled = true; // for the slow-frame log above
+#else
 		m_profiler.enabled = !!g_cfg.video.debug_overlay;
+#endif
 	}
 
 	f64 thread::get_cached_display_refresh_rate()

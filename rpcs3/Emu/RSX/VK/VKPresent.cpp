@@ -240,6 +240,9 @@ void VKGSRender::queue_swap_request()
 	// Grab next cb in line and make it usable
 	m_current_command_buffer = m_primary_cb_list.next();
 	m_current_command_buffer->reset();
+#ifdef RPCS3_UWP
+	m_primary_cb_list.trim();
+#endif
 	m_current_command_buffer->begin();
 
 	// Set up new pointers for the next frame
