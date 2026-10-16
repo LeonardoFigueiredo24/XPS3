@@ -54,6 +54,15 @@ namespace rsx
 				//RSX(ctx)->flush_fifo();
 			}
 
+			// vsh's own FIFO (set up right after sys_rsx_device_map) waits on a semaphore in the
+			// device area (0x60000030) that lv1 initializes on real hardware and nothing in RPCS3
+			// ever writes. It always hit the 1 s driver timeout, stalling the XMB boot; don't wait.
+			if (const u32 dev = RSX(ctx)->device_addr; dev && addr >= dev && addr < dev + 0x100000)
+			{
+				rsx_log.warning("nv406e::semaphore_acquire on device semaphore 0x%X skipped (value=0x%x, expected=0x%x)", addr, u32{sema}, arg);
+				return;
+			}
+
 			u64 start = get_system_time();
 			u64 last_check_val = start;
 

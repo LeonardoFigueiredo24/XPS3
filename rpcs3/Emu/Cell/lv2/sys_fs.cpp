@@ -3865,6 +3865,14 @@ error_code sys_fs_mount(ppu_thread& ppu, vm::cptr<char> dev_name, vm::cptr<char>
 	if (vfs_path.empty())
 		return {CELL_ENOTSUP, device_name};
 
+	// vsh mounts /dev_flash2 itself on real hardware and retries six times, 100 ms apart, when
+	// that fails. RPCS3 maps it up front, so report the mount as done instead of EEXIST.
+	if (path_sv == "/dev_flash2"sv && device_name == "CELL_FS_IOS:BUILTIN_FLASH"sv && !vfs::get(path_sv).empty())
+	{
+		sys_fs.notice("sys_fs_mount(): /dev_flash2 is already mapped");
+		return CELL_OK;
+	}
+
 	if (root_name.empty() || !vfs::get(path_sv).empty())
 		return {CELL_EEXIST, path_sv};
 
