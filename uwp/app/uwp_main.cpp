@@ -552,13 +552,11 @@ namespace
 			Emu.SetUsr("00000001");
 			Emu.Init();
 
-			// Vulkan through Mesa's Dozen (D3D12) unless the menu's settings chose Null. An empty
-			// LocalState/null_renderer file forces the null renderer for CPU-only tests.
+			// Always Vulkan through Mesa's Dozen (D3D12). Emu.Init's default renderer is Null, so a fresh
+			// config.yml says Null; it must not be taken as a choice. An empty LocalState/null_renderer
+			// file forces the null renderer for CPU-only tests.
 			const bool use_null = fs::is_file(g_local_dir + "null_renderer");
-			if (use_null)
-				g_cfg.video.renderer.set(video_renderer::null);
-			else if (g_cfg.video.renderer != video_renderer::null)
-				g_cfg.video.renderer.set(video_renderer::vulkan);
+			g_cfg.video.renderer.set(use_null ? video_renderer::null : video_renderer::vulkan);
 			sys_log.always()("UWP: renderer: %s", g_cfg.video.renderer.get());
 			// XAudio2 sound; an empty LocalState/null_audio file turns it off.
 			const bool null_audio = fs::is_file(g_local_dir + "null_audio");
