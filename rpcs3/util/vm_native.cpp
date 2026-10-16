@@ -1379,6 +1379,10 @@ namespace utils
 		const auto target = reinterpret_cast<u8*>(reinterpret_cast<u64>(ptr) & -0x10000);
 
 #ifdef _WIN32
+		// Free (reserved or placeholder) neighbours only. The uncommitted pages of a lazily committed
+		// view next to this one are MEM_RESERVE too, but they belong to that view (MEM_MAPPED).
+		const auto is_free = [](const ::MEMORY_BASIC_INFORMATION& m) { return m.State == MEM_RESERVE && m.Type != MEM_MAPPED; };
+
 		if (is_memory_mappping_memory(ptr))
 		{
 			ensure(UnmapViewOfFile2(GetCurrentProcess(), target, MEM_PRESERVE_PLACEHOLDER));
@@ -1386,8 +1390,8 @@ namespace utils
 			::MEMORY_BASIC_INFORMATION mem{}, mem2{};
 			ensure(::VirtualQuery(target - 1, &mem, sizeof(mem)) && ::VirtualQuery(target + m_size, &mem2, sizeof(mem2)));
 
-			const auto size1 = mem.State == MEM_RESERVE ? target - static_cast<u8*>(mem.AllocationBase) : 0;
-			const auto size2 =  mem2.State == MEM_RESERVE ? mem2.RegionSize : 0;
+			const auto size1 = is_free(mem) ? target - static_cast<u8*>(mem.AllocationBase) : 0;
+			const auto size2 =  is_free(mem2) ? mem2.RegionSize : 0;
 
 			if (!size1 && !size2)
 			{
@@ -1406,20 +1410,20 @@ namespace utils
 			return;
 		}
 
-		if (mem.State == MEM_RESERVE && !::VirtualFree(mem.AllocationBase, 0, MEM_RELEASE))
+		if (is_free(mem) && !::VirtualFree(mem.AllocationBase, 0, MEM_RELEASE))
 		{
 			return;
 		}
 
-		if (mem2.State == MEM_RESERVE && !::VirtualFree(mem2.AllocationBase, 0, MEM_RELEASE))
+		if (is_free(mem2) && !::VirtualFree(mem2.AllocationBase, 0, MEM_RELEASE))
 		{
 			return;
 		}
 
-		const auto size1 = mem.State == MEM_RESERVE ? target - static_cast<u8*>(mem.AllocationBase) : 0;
-		const auto size2 = mem2.State == MEM_RESERVE ? mem2.RegionSize : 0;
+		const auto size1 = is_free(mem) ? target - static_cast<u8*>(mem.AllocationBase) : 0;
+		const auto size2 = is_free(mem2) ? mem2.RegionSize : 0;
 
-		if (!::VirtualAlloc(mem.State == MEM_RESERVE ? mem.AllocationBase : target, m_size + size1 + size2, MEM_RESERVE, PAGE_NOACCESS))
+		if (!::VirtualAlloc(is_free(mem) ? mem.AllocationBase : target, m_size + size1 + size2, MEM_RESERVE, PAGE_NOACCESS))
 		{
 			return;
 		}
