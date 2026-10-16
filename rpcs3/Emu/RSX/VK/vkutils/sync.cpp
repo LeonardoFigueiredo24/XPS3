@@ -560,8 +560,22 @@ namespace vk
 		);
 	}
 
+#ifdef RPCS3_UWP
+	// CPU time spent waiting for the GPU (Xbox slow-frame log in RSXThread.cpp).
+	atomic_t<u64> g_uwp_fence_wait_us{0}, g_uwp_fence_waits{0};
+
+	struct uwp_fence_wait_timer
+	{
+		u64 start = get_system_time();
+		~uwp_fence_wait_timer() { g_uwp_fence_wait_us += get_system_time() - start; g_uwp_fence_waits++; }
+	};
+#endif
+
 	VkResult wait_for_fence(fence* pFence, u64 timeout)
 	{
+#ifdef RPCS3_UWP
+		uwp_fence_wait_timer uwp_timer;
+#endif
 		pFence->wait_flush();
 
 		if (timeout)
