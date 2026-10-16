@@ -132,6 +132,16 @@ namespace vk
 		VkMemoryRequirements memory_req;
 		vkGetImageMemoryRequirements(m_device, value, &memory_req);
 
+		if (memory_req.size == 0 || memory_req.size >= (1ull << 40) || memory_req.alignment == 0) [[unlikely]]
+		{
+			// Dozen reports UINT64_MAX when D3D12 rejects the resource description; VMA then fails with
+			// VK_ERROR_INITIALIZATION_FAILED. Name the image so the cause can be found.
+			rsx_log.error("Invalid memory requirements (size=0x%llx, align=0x%llx) for image: type=%d format=%d extent=%ux%ux%u mips=%u layers=%u samples=%d usage=0x%x flags=0x%x tiling=%d sharing=%d",
+				memory_req.size, memory_req.alignment, static_cast<int>(info.imageType), static_cast<int>(info.format),
+				info.extent.width, info.extent.height, info.extent.depth, info.mipLevels, info.arrayLayers,
+				static_cast<int>(info.samples), info.usage, info.flags, static_cast<int>(info.tiling), static_cast<int>(info.sharingMode));
+		}
+
 		const auto allocation_type_info = memory_type.get(dev, access_flags, memory_req.memoryTypeBits);
 		if (!allocation_type_info)
 		{

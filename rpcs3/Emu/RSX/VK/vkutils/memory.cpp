@@ -276,6 +276,7 @@ namespace vk
 			return VK_NULL_HANDLE;
 		}
 
+		rsx_log.error("Memory allocation failed: error=%d size=0x%llx align=0x%llx pool=%d", static_cast<int>(error_code), request.size, request.alignment, static_cast<int>(request.pool));
 		die_with_error(error_code);
 		fmt::throw_exception("Unreachable! Error_code=0x%x", static_cast<u32>(error_code));
 	}
@@ -412,6 +413,7 @@ namespace vk
 			return VK_NULL_HANDLE;
 		}
 
+		rsx_log.error("Memory allocation failed: error=%d size=0x%llx align=0x%llx pool=%d", static_cast<int>(error_code), request.size, request.alignment, static_cast<int>(request.pool));
 		die_with_error(error_code);
 		fmt::throw_exception("Unreachable! Error_code=0x%x", static_cast<u32>(error_code));
 	}

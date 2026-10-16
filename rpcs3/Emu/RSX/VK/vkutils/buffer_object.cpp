@@ -65,6 +65,12 @@ namespace vk
 		VkMemoryRequirements memory_reqs;
 		vkGetBufferMemoryRequirements(m_device, value, &memory_reqs);
 
+		if (memory_reqs.size == 0 || memory_reqs.size >= (1ull << 40) || memory_reqs.alignment == 0) [[unlikely]]
+		{
+			rsx_log.error("Invalid memory requirements (size=0x%llx, align=0x%llx) for buffer: size=0x%llx usage=0x%x flags=0x%x",
+				memory_reqs.size, memory_reqs.alignment, info.size, info.usage, info.flags);
+		}
+
 		memory_type_info allocation_type_info = memory_type.get(dev, access_flags, memory_reqs.memoryTypeBits);
 		if (!allocation_type_info)
 		{
