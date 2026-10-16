@@ -13,6 +13,7 @@
 #include <winsock2.h>
 #include "winrt_min.h"
 #include "uwp_frontend.h"
+#include "uwp_localized.h"
 
 #include "Emu/System.h"
 #include "Emu/system_config.h"
@@ -427,9 +428,9 @@ namespace
 		g_emu_callbacks.on_missing_fw = []() { sys_log.error("UWP: PS3 firmware is not installed."); };
 		g_emu_callbacks.handle_taskbar_progress = [](s32, s32) {};
 
-		g_emu_callbacks.get_localized_string = [](localized_string_id, const char*) -> std::string { return {}; };
-		g_emu_callbacks.get_localized_u32string = [](localized_string_id, const char*) -> std::u32string { return {}; };
-		g_emu_callbacks.get_localized_setting = [](const cfg::_base*, u32) -> std::string { return {}; };
+		g_emu_callbacks.get_localized_string = uwp_localized_string;
+		g_emu_callbacks.get_localized_u32string = uwp_localized_u32string;
+		g_emu_callbacks.get_localized_setting = uwp_localized_setting;
 		g_emu_callbacks.get_photo_path = [](std::string_view) -> std::string { return {}; };
 		g_emu_callbacks.play_sound = [](const std::string&, std::optional<f32>) {};
 		g_emu_callbacks.get_image_info = [](const std::string&, std::string&, s32&, s32&, s32&) { return false; };
