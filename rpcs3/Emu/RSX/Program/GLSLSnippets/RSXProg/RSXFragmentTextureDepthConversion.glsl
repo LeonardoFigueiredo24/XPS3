@@ -1,5 +1,34 @@
 R"(
+#ifdef _STENCIL_TEXEL_FETCH
+// D3D12 (Vulkan over Dozen) can't use sample instructions on integer textures, so read the
+// stencil texel the nearest filter would pick with texelFetch instead.
+uint _stencil_fetch(const in usampler1D tex, const in float coord)
+{
+	const int size = textureSize(tex, 0);
+	return texelFetch(tex, clamp(int(floor(coord * float(size))), 0, size - 1), 0).x;
+}
+
+uint _stencil_fetch(const in usampler2D tex, const in vec2 coord)
+{
+	const ivec2 size = textureSize(tex, 0);
+	return texelFetch(tex, clamp(ivec2(floor(coord * vec2(size))), ivec2(0), size - 1), 0).x;
+}
+
+uint _stencil_fetch(const in usampler3D tex, const in vec3 coord)
+{
+	const ivec3 size = textureSize(tex, 0);
+	return texelFetch(tex, clamp(ivec3(floor(coord * vec3(size))), ivec3(0), size - 1), 0).x;
+}
+
+uint _stencil_fetch(const in usamplerCube tex, const in vec3 coord)
+{
+	return texture(tex, coord).x;
+}
+
+#define ZS_READ(index, coord) vec2(texture(TEX_NAME(index), coord).r, float(_stencil_fetch(TEX_NAME_STENCIL(index), coord)))
+#else
 #define ZS_READ(index, coord) vec2(texture(TEX_NAME(index), coord).r, float(texture(TEX_NAME_STENCIL(index), coord).x))
+#endif
 #define TEX1D_Z24X8_RGBA8(index, coord1) _process_texel(convert_z24x8_to_rgba8(ZS_READ(index, COORD_SCALE1(index, coord1)), TEX_PARAM(index).remap, TEX_FLAGS(index)), TEX_FLAGS(index))
 #define TEX2D_Z24X8_RGBA8(index, coord2) _process_texel(convert_z24x8_to_rgba8(ZS_READ(index, COORD_SCALE2(index, coord2)), TEX_PARAM(index).remap, TEX_FLAGS(index)), TEX_FLAGS(index))
 #define TEX3D_Z24X8_RGBA8(index, coord3) _process_texel(convert_z24x8_to_rgba8(ZS_READ(index, COORD_SCALE3(index, coord3)), TEX_PARAM(index).remap, TEX_FLAGS(index)), TEX_FLAGS(index))
