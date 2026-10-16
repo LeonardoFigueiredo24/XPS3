@@ -608,8 +608,9 @@ namespace utils
 	// Number of live lazily committed shm objects (memory_commit_lazy has nothing to do without them).
 	static atomic_t<u32> s_lazy_shm_count{0};
 
-	shm::shm(u64 size, lazy_commit_t)
-		: m_size(utils::align(size, 0x10000))
+	shm::shm(u64 size, lazy_commit_t, u32 flags)
+		: m_flags(flags)
+		, m_size(utils::align(size, 0x10000))
 	{
 		const ULARGE_INTEGER max_size{ .QuadPart = m_size };
 		m_handle = ::CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE | SEC_RESERVE, max_size.HighPart, max_size.LowPart, nullptr);
@@ -622,7 +623,10 @@ namespace utils
 
 		m_lazy = true;
 		s_lazy_shm_count++;
-		uwp_mem_log.notice("Lazily committed shm: 0x%x bytes", m_size);
+		if (m_size >= 0x100'0000)
+		{
+			uwp_mem_log.notice("Lazily committed shm: %u MB (flags 0x%x)", m_size >> 20, flags);
+		}
 	}
 
 	bool memory_commit_lazy(const void* pointer, usz size)
@@ -660,6 +664,20 @@ namespace utils
 					uwp_mem_log.error("Committing lazy shm pages at 0x%x (0x%x bytes) failed (%u)", addr, std::min(end, region_end) - addr, ::GetLastError());
 					return false;
 				}
+
+				// A commit that leaves the page uncommitted would make the faulting access retry forever.
+				::MEMORY_BASIC_INFORMATION after{};
+				if (!::VirtualQuery(reinterpret_cast<void*>(addr), &after, sizeof(after)) || after.State != MEM_COMMIT)
+				{
+					uwp_mem_log.error("Lazy shm page at 0x%x still not committed (state=0x%x, protect=0x%x)", addr, after.State, after.Protect);
+					return false;
+				}
+
+				// Progress log every 16 MB committed.
+				static atomic_t<u64> s_committed{0};
+				const u64 before = s_committed.fetch_add(hi - lo);
+				if ((before >> 24) != ((before + hi - lo) >> 24))
+					uwp_mem_log.notice("Lazy shm: 0x%x bytes committed so far", before + hi - lo);
 			}
 
 			addr = region_end;
@@ -751,8 +769,8 @@ namespace utils
 		}
 	}
 #else
-	shm::shm(u64 size, lazy_commit_t)
-		: shm(size, 0u)
+	shm::shm(u64 size, lazy_commit_t, u32 flags)
+		: shm(size, flags)
 	{
 	}
 
@@ -779,6 +797,12 @@ namespace utils
 #ifdef _WIN32
 		const ULARGE_INTEGER max_size{ .QuadPart = m_size };
 		m_handle = ensure(::CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, max_size.HighPart, max_size.LowPart, nullptr));
+#ifdef RPCS3_UWP
+		if (m_size >= 0x100'0000)
+		{
+			uwp_mem_log.warning("Fully committed shm: %u MB (flags 0x%x)", m_size >> 20, flags);
+		}
+#endif
 #elif defined(__linux__) || defined(__FreeBSD__)
 		m_file = -1;
 
@@ -828,6 +852,10 @@ namespace utils
 		if (!m_handle)
 		{
 			uwp_mem_log.fatal("CreateFileMappingFromApp(0x%x bytes) failed (%u)", m_size, ::GetLastError());
+		}
+		else if (m_size >= 0x100'0000)
+		{
+			uwp_mem_log.warning("Fully committed shm: %u MB (%s)", m_size >> 20, storage);
 		}
 #elif defined(_WIN32)
 		fs::file f;

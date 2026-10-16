@@ -319,19 +319,42 @@ namespace
 			total / mb, guest / mb, guest_base / mb, exec_table / mb, stat_area / mb, jit / mb, mapped / mb, priv / mb, biggest_priv / mb, biggest_priv_addr, image / mb);
 	}
 
-	void log_app_memory(std::string_view when)
+	UINT64 get_app_memory_usage(UINT64* limit = nullptr)
 	{
+		UINT64 usage = 0;
 		winrt_min::IMemoryManagerStatics* mm = nullptr;
 		if (SUCCEEDED(winrt_min::get_factory(L"Windows.System.MemoryManager", winrt_min::IID_IMemoryManagerStatics, &mm)))
 		{
-			UINT64 usage = 0, limit = 0;
 			mm->get_AppMemoryUsage(&usage);
-			mm->get_AppMemoryUsageLimit(&limit);
-			sys_log.notice("UWP: app memory %.3f GB of %.3f GB (%s)", usage / 1073741824.0, limit / 1073741824.0, when);
+			if (limit)
+				mm->get_AppMemoryUsageLimit(limit);
 			mm->Release();
 		}
+		return usage;
+	}
 
+	void log_app_memory(std::string_view when)
+	{
+		UINT64 limit = 0;
+		const UINT64 usage = get_app_memory_usage(&limit);
+		sys_log.notice("UWP: app memory %.3f GB of %.3f GB (%s)", usage / 1073741824.0, limit / 1073741824.0, when);
 		log_memory_breakdown();
+	}
+
+	// While a game runs: logs app memory every second when it moved by 64 MB or more, else every 10 s.
+	// The console ends an app silently when it goes over its limit, so the log keeps the trend.
+	void watch_app_memory(u32 ticks)
+	{
+		static UINT64 s_last = 0;
+		if (ticks % 100)
+			return;
+		const UINT64 usage = get_app_memory_usage();
+		const UINT64 diff = usage > s_last ? usage - s_last : s_last - usage;
+		if (diff >= (64ull << 20) || ticks % 1000 == 0)
+		{
+			s_last = usage;
+			log_app_memory("running");
+		}
 	}
 
 	// Pick what to boot: first file in LocalState/boot/, else the bundled test ELF (a GCM triangle).
@@ -647,6 +670,27 @@ namespace
 				g_cfg.video.vk.vram_allocation_limit.set(vram_mb);
 				sys_log.always()("UWP: VRAM allocation limit: %u MB", vram_mb);
 			}
+			// PS3 networking: RPCS3 ships with the network "Disconnected"; turn it on once so the XMB
+			// and games see an internet connection (the menu's Network setting can switch it off again,
+			// which then sticks). PSN stays off; RPCN needs an account.
+			if (!fs::is_file(g_local_dir + "net_default_set"))
+			{
+				g_cfg.net.net_active.set(np_internet_status::enabled);
+				fs::write_file(g_local_dir + "net_default_set", fs::rewrite, std::string_view("1"));
+			}
+			// An empty LocalState/no_network file forces it off for test runs (back on once removed).
+			if (fs::is_file(g_local_dir + "no_network"))
+			{
+				g_cfg.net.net_active.set(np_internet_status::disabled);
+				fs::write_file(g_local_dir + "net_forced_off", fs::rewrite, std::string_view("1"));
+			}
+			else if (fs::is_file(g_local_dir + "net_forced_off"))
+			{
+				g_cfg.net.net_active.set(np_internet_status::enabled);
+				fs::remove_file(g_local_dir + "net_forced_off");
+			}
+			sys_log.always()("UWP: network: %s, PSN: %s", g_cfg.net.net_active.get(), g_cfg.net.psn_status.get());
+
 			// Stats overlay (menu Settings toggle, off by default): top right, PS3 firmware font sized
 			// for a TV. Full detail (FPS, CPU, GPU) is the default once; the menu can change it.
 			g_cfg.video.perf_overlay.position.set(screen_quadrant::top_right);
@@ -705,8 +749,7 @@ namespace
 
 				if (g_state == shell_state::booting || g_state == shell_state::running)
 				{
-					if (ticks % 1000 == 0)
-						log_app_memory("running");
+					watch_app_memory(ticks);
 					start_background_precompile(ticks);
 					report_stall(ticks);
 				}

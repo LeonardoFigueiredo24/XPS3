@@ -32,6 +32,8 @@
   <Capabilities>
     <Capability Name="codeGeneration" />
     <Capability Name="internetClient" />
+    <Capability Name="internetClientServer" />
+    <Capability Name="privateNetworkClientServer" />
     <rescap:Capability Name="broadFileSystemAccess" />
     <uap:Capability Name="removableStorage" />
   </Capabilities>

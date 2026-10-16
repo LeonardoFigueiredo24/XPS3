@@ -98,7 +98,7 @@ namespace utils
 		// pages are committed on first access by the access violation handler. Same as shm(size) elsewhere.
 		struct lazy_commit_t {};
 		static constexpr lazy_commit_t lazy_commit{};
-		shm(u64 size, lazy_commit_t);
+		shm(u64 size, lazy_commit_t, u32 flags = 0);
 
 		// Construct with specified path as sparse file storage
 		shm(u64 size, const std::string& storage);
