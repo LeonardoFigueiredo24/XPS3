@@ -9,6 +9,7 @@ add_executable(rpcs3_uwp WIN32
     uwp_lazyimports.c
     uwp_lazyresolve.c
     uwp_heap_guard.cpp
+    uwp_d3d12_watch.cpp
     ${CMAKE_SOURCE_DIR}/rpcs3/rpcs3_version.cpp
     # Qt-free input code (upstream builds these in the Qt UI target).
     ${CMAKE_SOURCE_DIR}/rpcs3/Input/ds3_pad_handler.cpp

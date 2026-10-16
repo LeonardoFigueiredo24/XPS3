@@ -267,6 +267,7 @@ namespace
 	}
 
 	extern "C" void uwp_heap_guard_summary(char* buf, std::size_t size, unsigned top);
+	extern "C" void uwp_d3d12_watch_summary(char* buf, std::size_t size);
 
 	// What the committed memory of this process is, by kind, from a walk of the address space.
 	// Guest memory is counted in the sudo view only (the base view maps the same sections).
@@ -351,6 +352,10 @@ namespace
 		char heap[1024];
 		uwp_heap_guard_summary(heap, sizeof(heap), 12);
 		sys_log.notice("UWP heap: %s", heap);
+
+		char d3d12[1536];
+		uwp_d3d12_watch_summary(d3d12, sizeof(d3d12));
+		sys_log.notice("UWP D3D12: %s", d3d12);
 	}
 
 	UINT64 get_app_memory_usage(UINT64* limit = nullptr)
