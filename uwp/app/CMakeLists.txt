@@ -9,6 +9,7 @@ add_executable(rpcs3_uwp WIN32
     uwp_lazyimports.c
     uwp_lazyresolve.c
     uwp_heap_guard.cpp
+    uwp_d3d12_watch.cpp
     uwp_localized.cpp
     ${CMAKE_BINARY_DIR}/uwp_localized/uwp_localized_strings.inc
     ${CMAKE_SOURCE_DIR}/rpcs3/rpcs3_version.cpp
