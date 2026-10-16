@@ -549,6 +549,10 @@ error_code _sys_prx_load_module(ppu_thread& ppu, vm::cptr<char> path, u64 flags,
 	return prx_load_module(path.get_ptr(), flags, pOpt);
 }
 
+// Startup stall timing: when each PRX entered its module_start
+static std::mutex s_prx_start_mutex;
+static std::unordered_map<u32, std::chrono::steady_clock::time_point> s_prx_start_times;
+
 error_code _sys_prx_start_module(ppu_thread& ppu, u32 id, u64 flags, vm::ptr<sys_prx_start_stop_module_option_t> pOpt)
 {
 	ppu.state += cpu_flag::wait;
@@ -584,10 +588,26 @@ error_code _sys_prx_start_module(ppu_thread& ppu, u32 id, u64 flags, vm::ptr<sys
 		}
 
 		prx->load_exports();
+		{
+			std::lock_guard tlock(s_prx_start_mutex);
+			s_prx_start_times[id] = std::chrono::steady_clock::now();
+		}
 		break;
 	}
 	case 2:
 	{
+		// Startup stall timing: time between the two start calls is the guest module_start
+		{
+			std::lock_guard tlock(s_prx_start_mutex);
+			if (const auto it = s_prx_start_times.find(id); it != s_prx_start_times.end())
+			{
+				const double sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - it->second).count();
+				if (sec >= 0.05)
+					sys_prx.always()("module_start of %s took %.3fs", prx->name, sec);
+				s_prx_start_times.erase(it);
+			}
+		}
+
 		switch (const u64 res = pOpt->res)
 		{
 		case SYS_PRX_RESIDENT:
