@@ -578,6 +578,7 @@ namespace
 			g_cfg.video.perf_overlay.font_size.set(14);
 			g_cfg.video.perf_overlay.margin_x.set(3);
 			g_cfg.video.perf_overlay.margin_y.set(4);
+			g_cfg.video.perf_overlay.opacity.set(90); // the XMB clock under it showed through at 70
 			if (!fs::is_file(g_local_dir + "stats_overlay_defaults"))
 			{
 				g_cfg.video.perf_overlay.level.set(detail_level::high);
@@ -599,13 +600,23 @@ namespace
 
 			// The app opens its controller menu; the XMB is started from the Games tab. A
 			// LocalState/autoboot file (used by the remote test runs) boots straight away instead:
-			// the XMB if it contains "xmb", otherwise the first program in LocalState/boot/.
+			// the XMB if it contains "xmb", an installed game if it holds a title ID (BLUS12345),
+			// a game folder or .iso if it holds a path, otherwise the first program in LocalState/boot/.
 			const std::string xmb_path = g_cfg_vfs.get_dev_flash() + "vsh/module/vsh.self";
 			if (fs::is_file(g_local_dir + "autoboot"))
 			{
 				fs::file f(g_local_dir + "autoboot");
 				const std::string what = f ? fmt::trim(f.to_string(), " \t\r\n") : std::string();
-				const std::string target = what == "xmb" ? xmb_path : find_boot_target();
+				const std::string hdd0_game = g_cfg_vfs.get(g_cfg_vfs.dev_hdd0) + "game/" + what;
+				std::string target;
+				if (what == "xmb")
+					target = xmb_path;
+				else if (what.size() == 9 && fs::is_dir(hdd0_game))
+					target = hdd0_game;
+				else if (!what.empty() && fs::exists(what))
+					target = what;
+				else
+					target = find_boot_target();
 				if (!uwp_frontend::boot(target))
 					g_state = shell_state::failed;
 			}
