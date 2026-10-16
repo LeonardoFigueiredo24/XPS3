@@ -58,6 +58,7 @@
 #include <map>
 #include <mutex>
 #include <vector>
+#include <unordered_map>
 #include <d3d11_1.h>
 #include <dxgi1_2.h>
 
@@ -72,6 +73,8 @@ extern std::string g_android_config_dir;
 extern std::string g_android_cache_dir;
 extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_module<lv2_obj>*>* loaded_modules, bool is_fast_compilation);
 extern thread_local bool g_ppu_precompile_prx_only;
+
+extern u32 g_uwp_desc_pool_max; // VKProgramPipeline.cpp
 
 namespace
 {
@@ -263,6 +266,8 @@ namespace
 		return dir;
 	}
 
+	extern "C" void uwp_heap_guard_summary(char* buf, std::size_t size, unsigned top);
+
 	// What the committed memory of this process is, by kind, from a walk of the address space.
 	// Guest memory is counted in the sudo view only (the base view maps the same sections).
 	void log_memory_breakdown()
@@ -273,6 +278,7 @@ namespace
 
 		u64 guest = 0, guest_base = 0, exec_table = 0, stat_area = 0, jit = 0, mapped = 0, priv = 0, image = 0, total = 0;
 		u64 biggest_priv = 0, biggest_priv_addr = 0;
+		std::unordered_map<u64, u64> priv_by_base; // committed private bytes per allocation
 
 		for (u64 addr = 0x10000; addr < 0x7fff'ffff'0000;)
 		{
@@ -309,6 +315,7 @@ namespace
 			else
 			{
 				priv += size;
+				priv_by_base[reinterpret_cast<u64>(mem.AllocationBase)] += size;
 				if (size > biggest_priv)
 					biggest_priv = size, biggest_priv_addr = start;
 			}
@@ -317,6 +324,33 @@ namespace
 		constexpr double mb = 1048576.0;
 		sys_log.notice("UWP memory: committed %.0f MB = guest %.0f (base view %.0f) + PPU exec table %.0f + stat %.0f + JIT code %.0f + other mapped %.0f + private %.0f (largest %.0f at 0x%x) + images %.0f",
 			total / mb, guest / mb, guest_base / mb, exec_table / mb, stat_area / mb, jit / mb, mapped / mb, priv / mb, biggest_priv / mb, biggest_priv_addr, image / mb);
+
+		// Private memory by allocation size (heap segments, D3D12 heaps, big buffers), and the largest ones.
+		static constexpr u64 bucket_limits[] = {0x10'0000, 0x100'0000, 0x400'0000, ~0ull};
+		static constexpr const char* bucket_names[] = {"<1 MB", "1-16 MB", "16-64 MB", ">=64 MB"};
+		u64 bucket_bytes[4]{}, bucket_count[4]{};
+		std::vector<std::pair<u64, u64>> largest;
+		for (const auto& [alloc_base, bytes] : priv_by_base)
+		{
+			u32 b = 0;
+			while (bytes >= bucket_limits[b])
+				b++;
+			bucket_bytes[b] += bytes;
+			bucket_count[b]++;
+			largest.emplace_back(bytes, alloc_base);
+		}
+		std::sort(largest.begin(), largest.end(), std::greater<>());
+		std::string text;
+		for (u32 b = 0; b < 4; b++)
+			fmt::append(text, "%s%s: %u allocs %.0f MB", b ? ", " : "", bucket_names[b], bucket_count[b], bucket_bytes[b] / mb);
+		text += " | largest:";
+		for (usz i = 0; i < std::min<usz>(largest.size(), 8); i++)
+			fmt::append(text, " %.1f MB@0x%x", largest[i].first / mb, largest[i].second);
+		sys_log.notice("UWP private memory: %s", text);
+
+		char heap[1024];
+		uwp_heap_guard_summary(heap, sizeof(heap), 12);
+		sys_log.notice("UWP heap: %s", heap);
 	}
 
 	UINT64 get_app_memory_usage(UINT64* limit = nullptr)
@@ -669,6 +703,14 @@ namespace
 				}
 				g_cfg.video.vk.vram_allocation_limit.set(vram_mb);
 				sys_log.always()("UWP: VRAM allocation limit: %u MB", vram_mb);
+			}
+			// Largest descriptor subpool per shader program (RPCS3 default 4096 sets); test switch.
+			if (fs::file f{g_local_dir + "desc_pool_max"})
+			{
+				const u32 v = static_cast<u32>(std::strtoul(f.to_string().c_str(), nullptr, 10));
+				if (v >= 16 && v <= 4096)
+					g_uwp_desc_pool_max = v;
+				sys_log.always()("UWP: descriptor pool max sets: %u", g_uwp_desc_pool_max);
 			}
 			// PS3 networking: RPCS3 ships with the network "Disconnected"; turn it on once so the XMB
 			// and games see an internet connection (the menu's Network setting can switch it off again,
