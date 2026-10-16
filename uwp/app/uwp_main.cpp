@@ -623,6 +623,9 @@ namespace
 			// (LocalState/ext_host_mem) while it is a suspect for the startup heap corruption.
 			if (fs::is_file(g_local_dir + "ext_host_mem"))
 				_putenv_s("DZN_EXT_HOST_MEM", "1");
+			// Dozen reuses command buffers' internal D3D12 buffers; LocalState/no_dzn_bufpool turns that off (A/B).
+			if (fs::is_file(g_local_dir + "no_dzn_bufpool"))
+				_putenv_s("DZN_NO_BUFPOOL", "1");
 
 			// Errors and warnings from the Vulkan driver (Mesa Dozen), with Mesa's source file:line.
 			uwp_vkshim_log = [](const char* where, const char* text)

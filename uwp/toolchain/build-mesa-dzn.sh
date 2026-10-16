@@ -8,6 +8,8 @@ tc=$(dirname "$(realpath "$0")")
 git -C "$1" apply --check "$tc/mesa-dzn-uwp.patch" 2>/dev/null && git -C "$1" apply "$tc/mesa-dzn-uwp.patch"
 # Sampled depth images (D16/D32 + SAMPLED) as typeless resources when D3D12 has no castable-format list (Xbox).
 git -C "$1" apply --check "$tc/mesa-dzn-depth-typeless.patch" 2>/dev/null && git -C "$1" apply "$tc/mesa-dzn-depth-typeless.patch"
+# Reuse command buffers' internal D3D12 buffers through a device pool (DZN_NO_BUFPOOL turns it off).
+git -C "$1" apply --check "$tc/mesa-dzn-bufpool.patch" 2>/dev/null && git -C "$1" apply "$tc/mesa-dzn-bufpool.patch"
 # D3D12 command-list call tracer (logs the last calls when a command list fails to close).
 cp "$tc/mesa-dzn_trace.c" "$1/src/microsoft/vulkan/dzn_trace.c"
 cp "$tc/mesa-dzn_trace_macros.h" "$1/src/microsoft/vulkan/dzn_trace_macros.h"
