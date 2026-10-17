@@ -9043,6 +9043,11 @@ struct spu_llvm_worker
 
 	void operator()()
 	{
+#ifdef RPCS3_UWP
+		if (rpcs3::utils::uwp_compile_gate::low_priority)
+			thread_ctrl::set_native_priority(-1);
+#endif
+
 		// SPU LLVM Recompiler instance
 		std::unique_ptr<spu_recompiler_base> compiler;
 
