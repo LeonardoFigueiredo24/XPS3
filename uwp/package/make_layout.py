@@ -45,5 +45,6 @@ for f in os.listdir(test_dir):
     if os.path.isfile(os.path.join(test_dir, f)):
         shutil.copy(os.path.join(test_dir, f), os.path.join(out, 'test'))
 # Stress tests and benchmarks for LocalState/autotest "bench" (uwp/bench/README.md).
-shutil.copytree(os.path.join(src, 'bin', 'test', 'stress'), os.path.join(out, 'test', 'stress'))
+for d in ('stress', 'stress-rsx'):
+    shutil.copytree(os.path.join(src, 'bin', 'test', d), os.path.join(out, 'test', d))
 print('layout ready:', out)

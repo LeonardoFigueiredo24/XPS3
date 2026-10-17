@@ -10,7 +10,14 @@ Programs that stress the emulator outside of games, and the tools to run them on
   The checksum must be the same on every build and decoder; a different one means wrong code.
 - One folder per [ps3autotests](https://github.com/RPCS3/ps3autotests) program (commit b5cff06, GPLv2,
   see `ps3autotests-LICENSE.txt`): PPU integer/float/vector instructions, SPU instructions, lv2 sync,
-  and RSX shader/texture tests. Their `.expected` output stays in that repository.
+  and lv2 sync. Their `.expected` output stays in that repository.
+- `test/stress-rsx/`: the ps3autotests RSX shader/texture programs. They draw one picture and never
+  exit, so they are not in the `bench` batch; run them with the folder path and a short time limit
+  and take a screenshot to compare with the `.expected.png` in ps3autotests.
+
+`/mnt/project-files/rpcs3-xbox/bench/pc-reference-autotests.txt` (in the project) is the PC reference run
+(Linux, LLVM 22, no firmware). Many outputs differ from the real-PS3 `.expected` files because RPCS3
+skips FPSCR/XER flag bits and exact estimates by default; compare Xbox runs with that file instead.
 
 | bench test | what it measures |
 |---|---|
@@ -36,7 +43,7 @@ limit per program in seconds (default 300). On start the app renames it to `auto
 each program until it exits, and writes `LocalState/autotest_results.txt`:
 
 ```
-AUTOTEST <folder>: 28 programs, 300 s limit each, PPU Recompiler (LLVM), SPU Recompiler (LLVM)
+AUTOTEST <folder>: 22 programs, 300 s limit each, PPU Recompiler (LLVM), SPU Recompiler (LLVM)
 RUN <path>
 <TTY output, then output.txt if the program wrote one>
 END <path> ok|timeout|failed|boot-failed <seconds>s
