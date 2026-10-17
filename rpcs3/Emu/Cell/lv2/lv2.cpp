@@ -2156,6 +2156,14 @@ waitpkg_func static void __tpause(u32 cycles, u32 cstate)
 }
 #endif
 
+#ifdef RPCS3_UWP
+// The last part of an accurate sleep (sys_timer_usleep with "Usleep Only") that is spun (mwaitx)
+// instead of left to the OS wait. Any OS wait lasts until a timer tick or two later on the Xbox
+// (Sleep(1) ~1.9 ms at 1 ms resolution), so with RPCS3's 500 us a 1 ms usleep took ~1.5 ms
+// (bench lv2_usleep1000: 763 ms for 500 x 1 ms). LocalState/usleep_spin.
+u64 g_uwp_usleep_spin_us = 500;
+#endif
+
 bool lv2_obj::wait_timeout(u64 usec, ppu_thread* cpu, bool scale, bool is_usleep)
 {
 	static_assert(u64{umax} / max_timeout >= 100, "max timeout is not valid for scaling");
@@ -2225,6 +2233,8 @@ bool lv2_obj::wait_timeout(u64 usec, ppu_thread* cpu, bool scale, bool is_usleep
 #ifdef __linux__
 		// NOTE: Assumption that timer initialization has succeeded
 		constexpr u64 host_min_quantum = 10;
+#elif defined(RPCS3_UWP)
+		const u64 host_min_quantum = g_uwp_usleep_spin_us;
 #else
 		// Host scheduler quantum for windows (worst case)
 		// NOTE: On ps3 this function has very high accuracy
@@ -2243,6 +2253,9 @@ bool lv2_obj::wait_timeout(u64 usec, ppu_thread* cpu, bool scale, bool is_usleep
 #ifdef __linux__
 				// With timerslack set low, Linux is precise for all values above
 				wait_for(remaining);
+#elif defined(RPCS3_UWP)
+				// The OS wait overshoots by up to a tick: stop it host_min_quantum early, spin the rest
+				wait_for(remaining - host_min_quantum);
 #else
 				// Wait on multiple of min quantum for large durations to avoid overloading low thread cpus
 				wait_for(remaining - (remaining % host_min_quantum));

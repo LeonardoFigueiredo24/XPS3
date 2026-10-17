@@ -29,6 +29,7 @@ else()
 endif()
 
 option(RPCS3_UWP "Build the Qt-less core for the Xbox UWP port" OFF)
+option(RPCS3_BENCH_RUNNER "Build the Qt-less headless test runner (uwp/bench/runner) instead of the Qt UI" OFF)
 option(USE_NATIVE_INSTRUCTIONS "USE_NATIVE_INSTRUCTIONS makes rpcs3 compile with -march=native, which is useful for local builds, but not good for packages." ON)
 option(USE_ARM_LSE2 "Compile with LSE2 instructions" OFF)
 option(WITH_LLVM "Enable usage of LLVM library" ON)

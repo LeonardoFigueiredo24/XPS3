@@ -42,5 +42,9 @@ for f in ('DejaVuSans.ttf', 'DejaVu-LICENSE.txt'):
 
 test_dir = os.path.join(src, 'bin', 'test')
 for f in os.listdir(test_dir):
-    shutil.copy(os.path.join(test_dir, f), os.path.join(out, 'test'))
+    if os.path.isfile(os.path.join(test_dir, f)):
+        shutil.copy(os.path.join(test_dir, f), os.path.join(out, 'test'))
+# Stress tests and benchmarks for LocalState/autotest "bench" (uwp/bench/README.md).
+for d in ('stress', 'stress-rsx'):
+    shutil.copytree(os.path.join(src, 'bin', 'test', d), os.path.join(out, 'test', d))
 print('layout ready:', out)
