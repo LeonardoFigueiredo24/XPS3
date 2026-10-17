@@ -18,6 +18,11 @@
 #include "Emu/System.h"
 #include "Emu/system_utils.hpp"
 #include "Emu/Cell/PPUThread.h"
+#ifdef RPCS3_UWP
+#include "Emu/Cell/SPUThread.h"
+#include "Emu/IdManager.h"
+#include "util/sysinfo.hpp"
+#endif
 #include "Emu/Cell/timers.hpp"
 #include "Emu/Cell/lv2/sys_event.h"
 #include "Emu/Cell/lv2/sys_time.h"
@@ -33,6 +38,7 @@
 
 #include <span>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 
 class GSRender;
@@ -3543,6 +3549,59 @@ namespace rsx
 					st.program_cache_lookups_ellided, st.program_cache_lookups_total);
 			}
 			s_last_flip = now, s_last_idle = idle, s_last_gpu_wait = gpu_wait, s_last_gpu_waits = gpu_waits;
+		}
+
+		// Every 10 s: which thread limits the frame rate. busy = share of one core the thread used.
+		{
+			static u64 s_win_start = 0, s_win_idle = 0, s_win_frames = 0, s_win_draws = 0, s_win_submits = 0;
+			static u64 s_win_setup = 0, s_win_vertex = 0, s_win_tex = 0, s_win_draw = 0, s_win_rsx_cycles = 0;
+			static std::unordered_map<u32, u64> s_win_thread_cycles;
+			const u64 now = get_system_time(), idle = performance_counters.idle_time;
+			const auto& st = m_frame_stats;
+			s_win_frames++, s_win_draws += st.draw_calls, s_win_submits += st.submit_count;
+			s_win_setup += st.setup_time, s_win_vertex += st.vertex_upload_time, s_win_tex += st.textures_upload_time, s_win_draw += st.draw_exec_time;
+
+			if (!s_win_start || now < s_win_start)
+			{
+				s_win_start = now, s_win_idle = idle, s_win_rsx_cycles = get_cycles();
+				s_win_frames = s_win_draws = s_win_submits = s_win_setup = s_win_vertex = s_win_tex = s_win_draw = 0;
+				s_win_thread_cycles.clear();
+			}
+			else if (now - s_win_start >= 10'000'000)
+			{
+				const f64 secs = (now - s_win_start) / 1'000'000.;
+				const f64 hz = static_cast<f64>(utils::get_tsc_freq());
+				const auto busy = [&](u64 cycles) { return hz > 0 ? 100. * cycles / (secs * hz) : 0.; };
+				const u64 rsx_cycles = get_cycles();
+
+				std::string ppu_text, spu_text;
+				std::unordered_map<u32, u64> cycles_now;
+				idm::select<named_thread<ppu_thread>>([&](u32 id, named_thread<ppu_thread>& ppu)
+				{
+					const u64 c = thread_ctrl::get_cycles(ppu);
+					cycles_now[id] = c;
+					if (auto it = s_win_thread_cycles.find(id); it != s_win_thread_cycles.end() && c >= it->second && busy(c - it->second) >= 5.)
+						fmt::append(ppu_text, " %s %.0f%%", ppu.ppu_tname.load() ? *ppu.ppu_tname.load() : std::string("?"), busy(c - it->second));
+				});
+				idm::select<named_thread<spu_thread>>([&](u32 id, named_thread<spu_thread>& spu)
+				{
+					const u64 c = thread_ctrl::get_cycles(spu);
+					cycles_now[id] = c;
+					if (auto it = s_win_thread_cycles.find(id); it != s_win_thread_cycles.end() && c >= it->second)
+						fmt::append(spu_text, " %.0f%%", busy(c - it->second));
+				});
+
+				const f64 frames = static_cast<f64>(std::max<u64>(s_win_frames, 1));
+				rsx_log.notice("UWP perf: %.1f fps | RSX busy %.0f%% (idle %.0f%%) | %.0f draws, %.1f submits/frame | ms/frame: setup %.2f, vertex %.2f, texture %.2f, draw %.2f | PPU busy:%s | SPU busy:%s",
+					s_win_frames / secs, busy(rsx_cycles - s_win_rsx_cycles), 100. * (idle - s_win_idle) / (now - s_win_start),
+					s_win_draws / frames, s_win_submits / frames,
+					s_win_setup / frames / 1000., s_win_vertex / frames / 1000., s_win_tex / frames / 1000., s_win_draw / frames / 1000.,
+					ppu_text, spu_text);
+
+				s_win_start = now, s_win_idle = idle, s_win_rsx_cycles = rsx_cycles;
+				s_win_frames = s_win_draws = s_win_submits = s_win_setup = s_win_vertex = s_win_tex = s_win_draw = 0;
+				s_win_thread_cycles = std::move(cycles_now);
+			}
 		}
 #endif
 
