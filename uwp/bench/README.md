@@ -9,8 +9,7 @@ Programs that stress the emulator outside of games, and the tools to run them on
 - `bench/bench.elf`: our benchmark (source here). Every test prints `BENCH <name> <microseconds> us <checksum>`.
   The checksum must be the same on every build and decoder; a different one means wrong code.
 - One folder per [ps3autotests](https://github.com/RPCS3/ps3autotests) program (commit b5cff06, GPLv2,
-  see `ps3autotests-LICENSE.txt`): PPU integer/float/vector instructions, SPU instructions, lv2 sync,
-  and lv2 sync. Their `.expected` output stays in that repository.
+  see `ps3autotests-LICENSE.txt`): PPU integer/float/vector instructions, SPU instructions, and lv2 sync. Their `.expected` output stays in that repository.
 - `test/stress-rsx/`: the ps3autotests RSX shader/texture programs. They draw one picture and never
   exit, so they are not in the `bench` batch; run them with the folder path and a short time limit
   and take a screenshot to compare with the `.expected.png` in ps3autotests.
@@ -34,6 +33,8 @@ skips FPSCR/XER flag bits and exact estimates by default; compare Xbox runs with
 | spu_dma (x1, x6) | 16 KB MFC GET + PUT |
 | spu_atomic (x1, x6) | GETLLAR/PUTLLC increments of one shared line (reservations, the SPURS hot path) |
 | spu_pingpong | an SPU and a PPU thread taking turns on one line |
+| mix_ppu_alone | the PPU integer loop alone (30M), the base for the mix tests |
+| mix_ppu_spu6_poll, _evwait, _fp | the same PPU loop while six SPUs spin on GETLLAR, wait for the lock-line event (as SPURS idles), or compute: how much do SPUs slow the PPU down? |
 
 ## Running on the Xbox (no menu needed)
 
@@ -50,7 +51,17 @@ END <path> ok|timeout|failed|boot-failed <seconds>s
 AUTOTEST done in <seconds>s
 ```
 
-The decoder switches in LocalState (`spu_llvm`, `spu_interp`, ...) apply as for games, so the same
+Lines after the second are a config override in config.yml's YAML, applied to every program
+(written as `<program>.yml`, RPCS3's custom config next to an ELF), e.g.
+
+```
+benchonly
+120
+Core:
+  Preferred SPU Threads: 4
+```
+
+`benchonly` runs only `bench.elf`. The decoder switches in LocalState (`spu_llvm`, `spu_interp`, ...) apply as for games, so the same
 batch can be run per setting. Delete `autotest.done` and the results afterwards like other test files.
 
 ## Running on a PC

@@ -156,6 +156,7 @@ int main(int argc, char** argv)
 	}
 
 	static std::unique_ptr<logs::listener> log_file = logs::make_file_listener(fs::get_log_dir() + "RPCS3.log", 256 * 1024 * 1024);
+	logs::set_init({}); // or the logger keeps every line in memory
 	create_callbacks();
 	Emu.SetSupportedRenderers({video_renderer::null});
 	Emu.SetHasGui(false);

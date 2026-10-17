@@ -80,6 +80,7 @@ extern u32 g_uwp_pipeline_limit; // VKPresent.cpp
 extern bool g_uwp_static_pipeline_state; // VKPipelineCompiler.cpp
 extern "C" void* uwp_lazy_lookup(const wchar_t* dll, const char* name); // uwp_lazyresolve.c
 namespace rsx { extern u32 g_uwp_rsx_idle_sleep_us; } // RSXFIFO.cpp
+extern u64 g_uwp_usleep_spin_us; // lv2.cpp
 
 namespace
 {
@@ -644,6 +645,11 @@ namespace
 			fs::rename(g_local_dir + "mesa.log", g_local_dir + "mesa.prev.log", true);
 			fs::rename(g_local_dir + "memory.log", g_local_dir + "memory.prev.log", true);
 			static std::unique_ptr<logs::listener> log_file = logs::make_file_listener(g_android_config_dir + "RPCS3.log", 256 * 1024 * 1024);
+			// Hands the lines logged so far to the file and stops the logger keeping a copy of every
+			// line in memory, which it does until set_init (desktop RPCS3 calls it in main). Without
+			// it the app's memory grew by every log line ever written: 1.3 -> 4.2 GB in 2 minutes of
+			// a TTY-heavy test program until the app was killed, and slowly in every game.
+			logs::set_init({});
 			sys_log.always()("UWP: %s", storage_note);
 
 			// Any fatal log line (e.g. a dying RSX thread, which doesn't stop the emulator) turns the screen red.
@@ -788,6 +794,12 @@ namespace
 				rsx::g_uwp_rsx_idle_sleep_us = std::min<u32>(v, 2000);
 			}
 			sys_log.always()("UWP: RSX idle sleep: %u us", rsx::g_uwp_rsx_idle_sleep_us);
+			if (fs::file f{g_local_dir + "usleep_spin"})
+			{
+				const u64 v = std::strtoull(f.to_string().c_str(), nullptr, 10);
+				g_uwp_usleep_spin_us = std::clamp<u64>(v, 1, 5000);
+			}
+			sys_log.always()("UWP: usleep spin: last %u us", g_uwp_usleep_spin_us);
 			// Stencil masks and depth bias are baked into the Vulkan pipelines so Dozen builds their
 			// D3D12 PSOs in the background, not at the draw (hiccups in Portal 2). An empty
 			// LocalState/dynamic_stencil_bias file brings back RPCS3's dynamic state.
@@ -974,7 +986,23 @@ namespace
 		if (lines.size() > 1)
 			batch->limit_s = std::clamp<u32>(static_cast<u32>(std::strtoul(lines[1].c_str(), nullptr, 10)), 5, 3600);
 
-		std::string dir = what == "bench" || what.empty() ? get_package_dir() + "test/stress/" : what;
+		// Lines after the second are a config override (YAML, as in config.yml) for every program,
+		// e.g. "Core:" and "  Preferred SPU Threads: 4": written as <program>.yml, RPCS3's custom
+		// config next to an ELF. A/B runs of a setting need no app change.
+		std::string config;
+		for (usz i = 0, nl = 0; i < spec.size(); i++)
+		{
+			if (spec[i] == '\n' && ++nl == 2)
+			{
+				config = spec.substr(i + 1);
+				break;
+			}
+		}
+		if (config.find_first_not_of(" \t\r\n") == umax)
+			config.clear();
+
+		// "benchonly": only bench.elf (quick A/B runs).
+		std::string dir = what == "bench" || what == "benchonly" || what.empty() ? get_package_dir() + "test/stress/" : what;
 		if (!dir.ends_with('/') && !dir.ends_with('\\'))
 			dir += '/';
 
@@ -1020,10 +1048,21 @@ namespace
 			}
 		}
 		std::sort(batch->programs.begin(), batch->programs.end());
+		if (what == "benchonly")
+			std::erase_if(batch->programs, [](const std::string& p) { return !p.ends_with("/bench.elf"); });
+		for (const auto& prog : batch->programs)
+		{
+			if (!config.empty())
+				fs::write_file(prog + ".yml", fs::rewrite, config);
+			else if (prog.starts_with(g_local_dir))
+				fs::remove_file(prog + ".yml");
+		}
 
 		fs::remove_file(g_local_dir + "autotest_results.txt");
-		autotest_write(fmt::format("AUTOTEST %s: %u programs, %u s limit each, PPU %s, SPU %s\n", dir, batch->programs.size(), batch->limit_s,
-			g_cfg.core.ppu_decoder.get(), g_cfg.core.spu_decoder.get()));
+		autotest_write(fmt::format("AUTOTEST %s: %u programs, %u s limit each, PPU %s, SPU %s, usleep spin %u us\n", dir, batch->programs.size(), batch->limit_s,
+			g_cfg.core.ppu_decoder.get(), g_cfg.core.spu_decoder.get(), g_uwp_usleep_spin_us));
+		if (!config.empty())
+			autotest_write(fmt::format("CONFIG\n%s%sEND CONFIG\n", config, config.ends_with('\n') ? "" : "\n"));
 		sys_log.always()("UWP autotest: %u programs from %s", batch->programs.size(), dir);
 		batch->batch_started = std::chrono::steady_clock::now();
 		g_autotest = batch.release();

@@ -411,7 +411,7 @@ static u64 t_threads(u64 n)
 }
 
 // ---- SPU tests (spu.c) ----
-extern void spu_report_all(void (*rep)(const char*, u64, u64, u64), u64 (*tb)(void));
+extern void spu_report_all(void (*rep)(const char*, u64, u64, u64), u64 (*tb)(void), u64 (*ppu_work)(u64));
 
 #define RUN(name, fn, n) do { u64 t0 = mftb(); u64 s = fn(n); u64 t1 = mftb(); report(name, t0, t1, s); } while (0)
 
@@ -421,7 +421,7 @@ int bench_main(void)
 	if (!g_tb_freq)
 		g_tb_freq = 79800000;
 
-	print("BENCH start rpcs3-xbox-bench 1\n");
+	print("BENCH start rpcs3-xbox-bench 2\n");
 
 	RUN("ppu_int", t_int, 50000000);
 	RUN("ppu_fp", t_fp, 50000000);
@@ -440,7 +440,7 @@ int bench_main(void)
 	g_usleep_us = 1000;
 	RUN("lv2_usleep1000", t_usleep, 500);
 
-	spu_report_all(report, mftb);
+	spu_report_all(report, mftb, t_int);
 
 	print("BENCH done\n");
 	return 0;

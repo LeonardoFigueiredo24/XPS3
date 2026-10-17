@@ -90,12 +90,26 @@ static u64 spu_join(u32 nspu)
 	return s;
 }
 
+static u64 (*g_ppu_work)(u64);
+static u64 g_ppu_iters;
+
 static u64 run(u32 kernel, u32 nspu, u64 iters, u64* sum)
 {
 	for (u32 i = 0; i < 0x100000 / 8; i++)
 		((u64*)g_area)[i] = i * 0x9E3779B97F4A7C15ull;
-	if (spu_start(kernel, nspu, iters))
+	if (kernel == 8)
+	{
+		*sum = g_ppu_work(g_ppu_iters);
+		return 1;
+	}
+	if (spu_start(kernel == 7 ? 0 : kernel, nspu, iters))
 		return 0;
+	if (kernel == 7)
+	{
+		// Time the PPU work only, then wait for the SPUs outside the measurement.
+		*sum = g_ppu_work(g_ppu_iters);
+		return 1;
+	}
 
 	if (kernel == 4)
 	{
@@ -110,18 +124,33 @@ static u64 run(u32 kernel, u32 nspu, u64 iters, u64* sum)
 		}
 	}
 
+	if (kernel >= 5)
+	{
+		// SPUs idle (or busy) while the PPU works; then release the idle ones.
+		*sum = g_ppu_work(g_ppu_iters);
+		__atomic_fetch_add((u32*)g_area, 1, __ATOMIC_SEQ_CST);
+		spu_join(nspu);
+		return 1;
+	}
+
 	*sum = spu_join(nspu);
 	if (kernel == 3 || kernel == 4)
 		*sum = *(volatile u32*)g_area;
 	return 1;
 }
 
-void spu_report_all(void (*rep)(const char*, u64, u64, u64), u64 (*tb)(void))
+// mix_*: the PPU integer loop (ppu_int, 30M) while six SPUs spin on GETLLAR (an idle SPURS done
+// badly), wait for the lock-line event (SPURS idling), or compute (kernel 7 = fp kernel 0 with the
+// PPU timing only). How much do busy or idle SPUs slow the PPU down?
+void spu_report_all(void (*rep)(const char*, u64, u64, u64), u64 (*tb)(void), u64 (*ppu_work)(u64))
 {
+	g_ppu_work = ppu_work;
+	g_ppu_iters = 30000000;
 	static const struct { const char* name; u32 kernel, nspu; u64 iters; } tests[] =
 	{
 		{"spu_fp", 0, 1, 50000000},
 		{"spu_fp_x6", 0, 6, 50000000},
+		{"spu_fp_again", 0, 1, 50000000},
 		{"spu_int", 1, 1, 50000000},
 		{"spu_int_x6", 1, 6, 50000000},
 		{"spu_dma", 2, 1, 100000},
@@ -129,6 +158,10 @@ void spu_report_all(void (*rep)(const char*, u64, u64, u64), u64 (*tb)(void))
 		{"spu_atomic", 3, 1, 2000000},
 		{"spu_atomic_x6", 3, 6, 300000},
 		{"spu_pingpong", 4, 1, 200000},
+		{"mix_ppu_alone", 8, 0, 0},
+		{"mix_ppu_spu6_poll", 5, 6, 0},
+		{"mix_ppu_spu6_evwait", 6, 6, 0},
+		{"mix_ppu_spu6_fp", 7, 6, 100000000},
 	};
 
 	// Warm-up: the first run of each kernel includes compiling the SPU code.
@@ -137,6 +170,13 @@ void spu_report_all(void (*rep)(const char*, u64, u64, u64), u64 (*tb)(void))
 		u64 sum;
 		run(k, 1, 1, &sum);
 	}
+	g_ppu_iters = 1;
+	for (u32 k = 5; k <= 6; k++)
+	{
+		u64 sum;
+		run(k, 1, 0, &sum);
+	}
+	g_ppu_iters = 30000000;
 
 	for (u32 i = 0; i < sizeof(tests) / sizeof(tests[0]); i++)
 	{
@@ -144,6 +184,8 @@ void spu_report_all(void (*rep)(const char*, u64, u64, u64), u64 (*tb)(void))
 		u64 t0 = tb();
 		u64 ok = run(tests[i].kernel, tests[i].nspu, tests[i].iters, &sum);
 		u64 t1 = tb();
+		if (tests[i].kernel == 7)
+			spu_join(tests[i].nspu);
 		rep(tests[i].name, t0, ok ? t1 : t0, ok ? sum : 0xdeadull);
 	}
 }

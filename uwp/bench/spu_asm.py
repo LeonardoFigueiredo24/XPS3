@@ -80,6 +80,7 @@ class Asm:
 
 
 MFC_LSA, MFC_EAH, MFC_EAL, MFC_Size, MFC_TagID, MFC_Cmd = 16, 17, 18, 19, 20, 21
+SPU_RdEventStat, SPU_WrEventMask, SPU_WrEventAck = 0, 1, 2
 MFC_WrTagMask, MFC_WrTagUpdate, MFC_RdTagStat, MFC_RdAtomicStat, SPU_WrOutMbox = 22, 23, 24, 27, 28
 GET, PUT, GETLLAR, PUTLLC = 0x40, 0x20, 0xD0, 0xB4
 
@@ -115,7 +116,7 @@ def wait_tag():
     s.rdch(23, MFC_RdTagStat)
 
 
-for kid, lab in enumerate(['k_fp', 'k_int', 'k_dma', 'k_atomic', 'k_pingpong']):
+for kid, lab in enumerate(['k_fp', 'k_int', 'k_dma', 'k_atomic', 'k_pingpong', 'k_poll', 'k_evwait']):
     s.ceqi(10, 3, kid)
     s.brnz(10, lab)
 s.br('finish')
@@ -211,6 +212,33 @@ s.brnz(22, 'pp_loop')
 s.ai(4, 4, -1)
 s.brnz(4, 'pp_loop')
 s.br('finish')
+
+# --- k_poll: an idle SPU spinning on GETLLAR until the PPU makes word 0 non-zero ---
+s.label('k_poll')
+s.il(32, GETLLAR)
+s.label('poll_loop')
+dma(32, 44, 5, 47)
+s.rdch(23, MFC_RdAtomicStat)
+s.lqd(15, 44, 0)
+s.ai(21, 21, 1)
+s.brz(15, 'poll_loop')
+s.br('finish')
+
+# --- k_evwait: the same, waiting for the lock-line-lost event between reads (as SPURS idles) ---
+s.label('k_evwait')
+s.il(32, GETLLAR)
+s.il(34, 0x400)  # SPU_EVENT_LR
+s.label('ev_loop')
+dma(32, 44, 5, 47)
+s.rdch(23, MFC_RdAtomicStat)
+s.lqd(15, 44, 0)
+s.ai(21, 21, 1)
+s.brnz(15, 'finish')
+s.wrch(SPU_WrEventMask, 34)
+s.rdch(23, SPU_RdEventStat)
+s.wrch(SPU_WrEventMask, Z)
+s.wrch(SPU_WrEventAck, 34)
+s.br('ev_loop')
 
 # --- finish: PUT the result quadword to EA + 0x100000 + index*16, exit(0) ---
 s.label('finish')
