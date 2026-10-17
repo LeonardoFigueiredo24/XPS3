@@ -136,7 +136,7 @@ Empty files in the app's `LocalState` folder (via Device Portal file explorer):
 - `default_timer`: don't raise the system timer resolution (the app raises it to the finest the
   device allows, as desktop RPCS3 does; the log shows both).
 - `rsx_idle_sleep`: microseconds the RSX thread sleeps per check once the game has given it
-  nothing to do for 1 ms, instead of spinning (default 0 = spin).
+  nothing to do for 1 ms, instead of spinning (default 200; `0` spins as RPCS3 does).
 - `dynamic_stencil_bias`: keep stencil masks and depth bias as Vulkan dynamic state. By default
   they are baked into the pipelines, because Dozen otherwise builds a D3D12 PSO for each new value
   at draw time on the RSX thread (hitches of 0.1-4 s in Portal 2).

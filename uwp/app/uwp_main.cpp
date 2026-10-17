@@ -778,13 +778,14 @@ namespace
 					cur_res / 10000., max_res / 10000., min_res / 10000., raised ? fmt::format(", raised to %.2f ms", new_res / 10000.) : std::string(queried ? ", left as is" : ", query unavailable"),
 					before, raised ? measure_us() : before);
 			}
-			// RSX thread sleeps instead of spinning while the game gives it nothing to do (us per check).
+			// RSX thread sleeps instead of spinning while the game gives it nothing to do (us per check,
+			// default 200 in RSXFIFO.cpp; "0" spins as RPCS3 does).
 			if (fs::file f{g_local_dir + "rsx_idle_sleep"})
 			{
 				const u32 v = static_cast<u32>(std::strtoul(f.to_string().c_str(), nullptr, 10));
 				rsx::g_uwp_rsx_idle_sleep_us = std::min<u32>(v, 2000);
-				sys_log.always()("UWP: RSX idle sleep: %u us", rsx::g_uwp_rsx_idle_sleep_us);
 			}
+			sys_log.always()("UWP: RSX idle sleep: %u us", rsx::g_uwp_rsx_idle_sleep_us);
 			// Stencil masks and depth bias are baked into the Vulkan pipelines so Dozen builds their
 			// D3D12 PSOs in the background, not at the draw (hiccups in Portal 2). An empty
 			// LocalState/dynamic_stencil_bias file brings back RPCS3's dynamic state.

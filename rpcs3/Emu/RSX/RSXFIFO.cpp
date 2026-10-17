@@ -668,7 +668,9 @@ namespace rsx
 #ifdef RPCS3_UWP
 	// Microseconds the RSX thread sleeps per check once the FIFO has been empty (or jumping to
 	// itself) for 1 ms, instead of spinning; 0 = spin as RPCS3 does. LocalState/rsx_idle_sleep.
-	u32 g_uwp_rsx_idle_sleep_us = 0;
+	// Spinning takes a hardware thread the SPUs and PPU need on the Xbox: in Portal 2, 200 us
+	// removed the periodic stalls (16 slow frames -> 0) and halved the RSX thread's CPU time.
+	u32 g_uwp_rsx_idle_sleep_us = 200;
 
 	static void uwp_idle_backoff(u64 idle_since)
 	{
