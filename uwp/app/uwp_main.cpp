@@ -80,6 +80,7 @@ extern u32 g_uwp_pipeline_limit; // VKPresent.cpp
 extern bool g_uwp_static_pipeline_state; // VKPipelineCompiler.cpp
 extern "C" void* uwp_lazy_lookup(const wchar_t* dll, const char* name); // uwp_lazyresolve.c
 namespace rsx { extern u32 g_uwp_rsx_idle_sleep_us; } // RSXFIFO.cpp
+extern u64 g_uwp_usleep_spin_us; // lv2.cpp
 
 namespace
 {
@@ -103,6 +104,8 @@ namespace
 	std::string g_fatal_text;
 	void start_background_precompile(u32 ticks);
 	void report_stall(u32 ticks);
+	bool start_autotest();
+	void run_autotest();
 	// Triple buffer: the emulator fills g_frame_spare without the lock and swaps it into
 	// g_frame_pixels; the render loop swaps that out into its own buffer, so neither side
 	// holds the lock during an 8 MB copy.
@@ -642,6 +645,11 @@ namespace
 			fs::rename(g_local_dir + "mesa.log", g_local_dir + "mesa.prev.log", true);
 			fs::rename(g_local_dir + "memory.log", g_local_dir + "memory.prev.log", true);
 			static std::unique_ptr<logs::listener> log_file = logs::make_file_listener(g_android_config_dir + "RPCS3.log", 256 * 1024 * 1024);
+			// Hands the lines logged so far to the file and stops the logger keeping a copy of every
+			// line in memory, which it does until set_init (desktop RPCS3 calls it in main). Without
+			// it the app's memory grew by every log line ever written: 1.3 -> 4.2 GB in 2 minutes of
+			// a TTY-heavy test program until the app was killed, and slowly in every game.
+			logs::set_init({});
 			sys_log.always()("UWP: %s", storage_note);
 
 			// Any fatal log line (e.g. a dying RSX thread, which doesn't stop the emulator) turns the screen red.
@@ -786,6 +794,12 @@ namespace
 				rsx::g_uwp_rsx_idle_sleep_us = std::min<u32>(v, 2000);
 			}
 			sys_log.always()("UWP: RSX idle sleep: %u us", rsx::g_uwp_rsx_idle_sleep_us);
+			if (fs::file f{g_local_dir + "usleep_spin"})
+			{
+				const u64 v = std::strtoull(f.to_string().c_str(), nullptr, 10);
+				g_uwp_usleep_spin_us = std::clamp<u64>(v, 1, 5000);
+			}
+			sys_log.always()("UWP: usleep spin: last %u us", g_uwp_usleep_spin_us);
 			// Stencil masks and depth bias are baked into the Vulkan pipelines so Dozen builds their
 			// D3D12 PSOs in the background, not at the draw (hiccups in Portal 2). An empty
 			// LocalState/dynamic_stencil_bias file brings back RPCS3's dynamic state.
@@ -882,7 +896,11 @@ namespace
 			// the XMB if it contains "xmb", an installed game if it holds a title ID (BLUS12345),
 			// a game folder or .iso if it holds a path, otherwise the first program in LocalState/boot/.
 			const std::string xmb_path = g_cfg_vfs.get_dev_flash() + "vsh/module/vsh.self";
-			if (fs::is_file(g_local_dir + "autoboot"))
+			if (start_autotest())
+			{
+				// A batch test run (LocalState/autotest) boots its programs itself.
+			}
+			else if (fs::is_file(g_local_dir + "autoboot"))
 			{
 				fs::file f(g_local_dir + "autoboot");
 				const std::string what = f ? fmt::trim(f.to_string(), " \t\r\n") : std::string();
@@ -906,6 +924,7 @@ namespace
 			{
 				run_main_thread_queue();
 				Sleep(10);
+				run_autotest();
 
 				if (g_state == shell_state::booting || g_state == shell_state::running)
 				{
@@ -923,6 +942,207 @@ namespace
 
 		log_app_memory("end");
 		return 0;
+	}
+
+	// Batch test runs for stress tests and benchmarks. LocalState/autotest names a folder of PS3
+	// programs (.elf/.self; SPU images .spu.elf are skipped), or holds "bench" for the ones the
+	// package ships in test/stress/ (uwp/bench and ps3autotests). They boot one
+	// after another; each runs until it exits or for at most 300 s (or the seconds on the file's
+	// second line). Their TTY output (and an output.txt they write next to themselves) and run time
+	// go to LocalState/autotest_results.txt. The file is renamed to autotest.done before the first
+	// boot, so a batch that is cut off never starts again when the app is next opened.
+	struct autotest_batch
+	{
+		std::vector<std::string> programs;
+		usz next = 0;
+		bool running = false;
+		bool timed_out = false;
+		u32 limit_s = 300;
+		u64 tty_start = 0;
+		std::chrono::steady_clock::time_point started;
+		std::chrono::steady_clock::time_point batch_started;
+	};
+
+	autotest_batch* g_autotest = nullptr;
+
+	void autotest_write(const std::string& text)
+	{
+		fs::file f(g_local_dir + "autotest_results.txt", fs::write + fs::create + fs::append);
+		if (f)
+			f.write(text);
+	}
+
+	bool start_autotest()
+	{
+		if (!fs::is_file(g_local_dir + "autotest"))
+			return false;
+
+		const std::string spec = fs::file(g_local_dir + "autotest").to_string();
+		fs::rename(g_local_dir + "autotest", g_local_dir + "autotest.done", true);
+
+		const auto lines = fmt::split(spec, {"\n", "\r"});
+		std::string what = lines.empty() ? std::string() : fmt::trim(lines[0], " \t");
+		auto batch = std::make_unique<autotest_batch>();
+		if (lines.size() > 1)
+			batch->limit_s = std::clamp<u32>(static_cast<u32>(std::strtoul(lines[1].c_str(), nullptr, 10)), 5, 3600);
+
+		// Lines after the second are a config override (YAML, as in config.yml) for every program,
+		// e.g. "Core:" and "  Preferred SPU Threads: 4": written as <program>.yml, RPCS3's custom
+		// config next to an ELF. A/B runs of a setting need no app change.
+		std::string config;
+		for (usz i = 0, nl = 0; i < spec.size(); i++)
+		{
+			if (spec[i] == '\n' && ++nl == 2)
+			{
+				config = spec.substr(i + 1);
+				break;
+			}
+		}
+		if (config.find_first_not_of(" \t\r\n") == umax)
+			config.clear();
+
+		// "benchonly": only bench.elf (quick A/B runs).
+		std::string dir = what == "bench" || what == "benchonly" || what.empty() ? get_package_dir() + "test/stress/" : what;
+		if (!dir.ends_with('/') && !dir.ends_with('\\'))
+			dir += '/';
+
+		// The package is read-only and some tests write output.txt next to themselves: run copies.
+		if (dir.starts_with(get_package_dir()))
+		{
+			const std::string copy = g_local_dir + "autotest_programs/";
+			fs::remove_all(copy, false);
+			std::vector<std::string> sub{""};
+			for (usz i = 0; i < sub.size(); i++)
+			{
+				fs::create_path(copy + sub[i]);
+				for (const auto& entry : fs::dir(dir + sub[i]))
+				{
+					if (entry.name == "." || entry.name == "..")
+						continue;
+					if (entry.is_directory)
+						sub.push_back(sub[i] + entry.name + '/');
+					else
+						fs::copy_file(dir + sub[i] + entry.name, copy + sub[i] + entry.name, true);
+				}
+			}
+			dir = copy;
+		}
+
+		// Folders are walked one level deep (ps3autotests keeps one test per folder).
+		std::vector<std::string> dirs{dir};
+		for (usz i = 0; i < dirs.size(); i++)
+		{
+			for (const auto& entry : fs::dir(dirs[i]))
+			{
+				if (entry.name == "." || entry.name == "..")
+					continue;
+				if (entry.is_directory)
+				{
+					if (i == 0)
+						dirs.push_back(dirs[i] + entry.name + '/');
+				}
+				else if ((entry.name.ends_with(".elf") || entry.name.ends_with(".self")) && !entry.name.ends_with(".spu.elf"))
+				{
+					batch->programs.push_back(dirs[i] + entry.name);
+				}
+			}
+		}
+		std::sort(batch->programs.begin(), batch->programs.end());
+		if (what == "benchonly")
+			std::erase_if(batch->programs, [](const std::string& p) { return !p.ends_with("/bench.elf"); });
+		for (const auto& prog : batch->programs)
+		{
+			if (!config.empty())
+				fs::write_file(prog + ".yml", fs::rewrite, config);
+			else if (prog.starts_with(g_local_dir))
+				fs::remove_file(prog + ".yml");
+		}
+
+		fs::remove_file(g_local_dir + "autotest_results.txt");
+		autotest_write(fmt::format("AUTOTEST %s: %u programs, %u s limit each, PPU %s, SPU %s, usleep spin %u us\n", dir, batch->programs.size(), batch->limit_s,
+			g_cfg.core.ppu_decoder.get(), g_cfg.core.spu_decoder.get(), g_uwp_usleep_spin_us));
+		if (!config.empty())
+			autotest_write(fmt::format("CONFIG\n%s%sEND CONFIG\n", config, config.ends_with('\n') ? "" : "\n"));
+		sys_log.always()("UWP autotest: %u programs from %s", batch->programs.size(), dir);
+		batch->batch_started = std::chrono::steady_clock::now();
+		g_autotest = batch.release();
+		return true;
+	}
+
+	void run_autotest()
+	{
+		autotest_batch* b = g_autotest;
+		if (!b)
+			return;
+
+		const auto now = std::chrono::steady_clock::now();
+		const std::string tty_path = fs::get_log_dir() + "TTY.log";
+
+		if (b->running)
+		{
+			if (!Emu.IsStopped(true))
+			{
+				if (!b->timed_out && now - b->started > std::chrono::seconds(b->limit_s))
+				{
+					b->timed_out = true;
+					sys_log.always()("UWP autotest: time limit reached, stopping");
+					Emu.GracefulShutdown(false, true);
+				}
+				return;
+			}
+
+			const std::string& path = b->programs[b->next];
+			const double secs = std::chrono::duration<double>(now - b->started).count();
+			logs::listener::sync_all();
+			std::string out;
+			if (fs::file tty{tty_path}; tty && tty.size() > b->tty_start)
+			{
+				out.resize(tty.size() - b->tty_start);
+				out.resize(tty.read_at(b->tty_start, out.data(), out.size()));
+			}
+			const std::string output_txt = path.substr(0, path.find_last_of("/\\") + 1) + "output.txt";
+			if (fs::file f{output_txt})
+			{
+				out += "--- output.txt ---\n" + f.to_string();
+				f.close();
+				fs::remove_file(output_txt);
+			}
+			if (!out.empty() && !out.ends_with('\n'))
+				out += '\n';
+			const char* how = b->timed_out ? "timeout" : g_state == shell_state::failed ? "failed" : "ok";
+			autotest_write(fmt::format("%sEND %s %s %.3fs\n", out, path, how, secs));
+			sys_log.always()("UWP autotest: %s %s after %.3fs", path, how, secs);
+			b->running = false;
+			b->next++;
+			return;
+		}
+
+		if (b->next >= b->programs.size())
+		{
+			const double secs = std::chrono::duration<double>(now - b->batch_started).count();
+			autotest_write(fmt::format("AUTOTEST done in %.1fs\n", secs));
+			sys_log.always()("UWP autotest: done");
+			g_autotest = nullptr;
+			delete b;
+			return;
+		}
+
+		if (!Emu.IsStopped(true))
+			return;
+
+		const std::string& path = b->programs[b->next];
+		b->tty_start = fs::file(tty_path).size();
+		b->timed_out = false;
+		b->started = now;
+		autotest_write(fmt::format("RUN %s\n", path));
+		g_state = shell_state::booting;
+		if (!uwp_frontend::boot(path))
+		{
+			autotest_write(fmt::format("END %s boot-failed 0s\n", path));
+			b->next++;
+			return;
+		}
+		b->running = true;
 	}
 
 	// With LLVM precompilation off, XMB modules compile the first time they load, which stalls

@@ -23,7 +23,7 @@ if(UNIX AND NOT APPLE AND NOT ANDROID)
     endif()
 endif()
 
-if (NOT ANDROID AND NOT RPCS3_UWP)
+if (NOT ANDROID AND NOT RPCS3_UWP AND NOT RPCS3_BENCH_RUNNER)
     # Qt
     # finds Qt libraries and setups custom commands for MOC and UIC
     # Must be done here because generated MOC and UIC targets cant
@@ -34,7 +34,7 @@ endif()
 # subdirectories
 add_subdirectory(Emu)
 
-if (NOT ANDROID AND NOT RPCS3_UWP)
+if (NOT ANDROID AND NOT RPCS3_UWP AND NOT RPCS3_BENCH_RUNNER)
     add_subdirectory(rpcs3qt)
 endif()
 
@@ -42,9 +42,13 @@ if (RPCS3_UWP)
     add_subdirectory(${CMAKE_SOURCE_DIR}/uwp/app ${CMAKE_BINARY_DIR}/uwp_app)
 endif()
 
+if (RPCS3_BENCH_RUNNER)
+    add_subdirectory(${CMAKE_SOURCE_DIR}/uwp/bench/runner ${CMAKE_BINARY_DIR}/bench_runner)
+endif()
+
 gen_git_version(${CMAKE_CURRENT_SOURCE_DIR})
 
-if (NOT ANDROID AND NOT RPCS3_UWP)
+if (NOT ANDROID AND NOT RPCS3_UWP AND NOT RPCS3_BENCH_RUNNER)
     # Build rpcs3_lib
     add_library(rpcs3_lib STATIC)
 
