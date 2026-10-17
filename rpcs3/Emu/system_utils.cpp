@@ -7,6 +7,8 @@
 #include "Emu/System.h"
 #include "Emu/VFS.h"
 #include "util/sysinfo.hpp"
+#include "util/atomic.hpp"
+#include "Emu/Cell/timers.hpp"
 #include "Utilities/File.h"
 #include "Utilities/Thread.h"
 #include "Crypto/unpkg.h"
@@ -28,6 +30,65 @@ namespace rpcs3::utils
 		const u32 thread_count = max_threads > 0 ? std::min(max_threads, hw_threads) : hw_threads;
 		return thread_count;
 	}
+
+#ifdef RPCS3_UWP
+	u64 (*g_uwp_app_memory)(u64* limit) = nullptr;
+
+	static atomic_t<u32> s_uwp_compiles = 0;
+	static atomic_t<u64> s_uwp_compile_peak = 0;
+	static atomic_t<u64> s_uwp_compile_wait = 0;
+
+	uwp_compile_gate::uwp_compile_gate()
+	{
+		u64 wait_start = 0;
+
+		while (g_uwp_app_memory && !Emu.IsStopped())
+		{
+			u64 limit = 0;
+			const u64 usage = g_uwp_app_memory(&limit);
+			s_uwp_compile_peak.fetch_op([&](u64& v) { v = std::max(v, usage); });
+
+			// Jobs already running keep growing after they start, so each one counts for a share too.
+			const u64 needed = (u64{headroom_mb} << 20) + u64{s_uwp_compiles} * (u64{job_mb} << 20);
+
+			if (!limit || usage + needed < limit || s_uwp_compiles == 0)
+			{
+				break;
+			}
+
+			if (!wait_start)
+			{
+				wait_start = get_system_time();
+				sys_log.warning("UWP: compile waits for memory (%.2f GB of %.2f GB in use, %u jobs running)", usage / 1073741824., limit / 1073741824., +s_uwp_compiles);
+			}
+
+			std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		}
+
+		if (wait_start)
+		{
+			s_uwp_compile_wait += get_system_time() - wait_start;
+		}
+
+		s_uwp_compiles++;
+	}
+
+	uwp_compile_gate::~uwp_compile_gate()
+	{
+		if (g_uwp_app_memory)
+		{
+			const u64 usage = g_uwp_app_memory(nullptr);
+			s_uwp_compile_peak.fetch_op([&](u64& v) { v = std::max(v, usage); });
+		}
+
+		s_uwp_compiles--;
+	}
+
+	std::pair<u64, u64> uwp_compile_gate::take_stats()
+	{
+		return {s_uwp_compile_peak.exchange(0), s_uwp_compile_wait.exchange(0)};
+	}
+#endif
 
 	void configure_logs(bool force_enable)
 	{

@@ -1010,6 +1010,9 @@ void spu_cache::initialize(bool build_existing_cache)
 
 		auto compile_program = [&](spu_program&& program) -> spu_function_t
 		{
+#ifdef RPCS3_UWP
+			rpcs3::utils::uwp_compile_gate mem_gate;
+#endif
 #ifdef ARCH_ARM64
 			return compile_spu_llvm_with_retry(compiler, program);
 #else

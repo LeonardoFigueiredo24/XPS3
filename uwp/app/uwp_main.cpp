@@ -77,6 +77,7 @@ extern thread_local bool g_ppu_precompile_prx_only;
 
 extern u32 g_uwp_desc_pool_max; // VKProgramPipeline.cpp
 extern u32 g_uwp_pipeline_limit; // VKPresent.cpp
+extern bool g_uwp_static_pipeline_state; // VKPipelineCompiler.cpp
 
 namespace
 {
@@ -96,6 +97,8 @@ namespace
 
 	// Latest frame from the Vulkan renderer, picked up by the UI thread.
 	std::mutex g_frame_mutex;
+	// First fatal log line since the last boot, shown on the error screen (guarded by g_frame_mutex).
+	std::string g_fatal_text;
 	void start_background_precompile(u32 ticks);
 	void report_stall(u32 ticks);
 	// Triple buffer: the emulator fills g_frame_spare without the lock and swaps it into
@@ -362,14 +365,18 @@ namespace
 
 	UINT64 get_app_memory_usage(UINT64* limit = nullptr)
 	{
+		// The compile gate asks for every compile job; keep the factory instead of looking it up each time.
+		static winrt_min::IMemoryManagerStatics* const mm = []
+		{
+			winrt_min::IMemoryManagerStatics* p = nullptr;
+			return SUCCEEDED(winrt_min::get_factory(L"Windows.System.MemoryManager", winrt_min::IID_IMemoryManagerStatics, &p)) ? p : nullptr;
+		}();
 		UINT64 usage = 0;
-		winrt_min::IMemoryManagerStatics* mm = nullptr;
-		if (SUCCEEDED(winrt_min::get_factory(L"Windows.System.MemoryManager", winrt_min::IID_IMemoryManagerStatics, &mm)))
+		if (mm)
 		{
 			mm->get_AppMemoryUsage(&usage);
 			if (limit)
 				mm->get_AppMemoryUsageLimit(limit);
-			mm->Release();
 		}
 		return usage;
 	}
@@ -380,6 +387,10 @@ namespace
 		const UINT64 usage = get_app_memory_usage(&limit);
 		sys_log.notice("UWP: app memory %.3f GB of %.3f GB (%s)", usage / 1073741824.0, limit / 1073741824.0, when);
 		log_memory_breakdown();
+		// Also in a small file of its own: the console ends an app silently when it runs out of
+		// memory, and RPCS3.log may have stopped at its size cap long before that.
+		if (fs::file f{g_local_dir + "memory.log", fs::write + fs::create + fs::append})
+			f.write(fmt::format("%.1f s: app memory %.3f GB of %.3f GB (%s)\n", get_system_time() / 1'000'000., usage / 1073741824.0, limit / 1073741824.0, when));
 	}
 
 	// While a game runs: logs app memory every second when it moved by 64 MB or more, else every 10 s.
@@ -499,6 +510,10 @@ namespace
 
 		g_emu_callbacks.on_run = [](bool)
 		{
+			{
+				std::lock_guard lock(g_frame_mutex);
+				g_fatal_text.clear();
+			}
 			g_state = shell_state::running;
 			uwp_frontend::on_emulation_started();
 		};
@@ -540,7 +555,30 @@ namespace
 		g_emu_callbacks.check_microphone_permissions = []() {};
 		g_emu_callbacks.make_video_source = []() -> std::unique_ptr<video_source> { return nullptr; };
 		g_emu_callbacks.enable_gamemode = [](bool) {};
-		g_emu_callbacks.get_database_config = [](const std::string&) -> std::string { return {}; };
+		// Built-in settings for single games, applied unless the game has its own custom config
+		// (LocalState/rpcs3/config/custom_configs/config_<serial>.yml, which test runs use for A/B).
+		g_emu_callbacks.get_database_config = [](const std::string& title_id) -> std::string
+		{
+			struct game_config { std::string_view title_id, why, yaml; };
+			static constexpr game_config s_games[]
+			{
+				// Portal 2: the Xbox-wide Mega SPU blocks are only measured on the XMB and GTA V; the game
+				// is rated Playable on RPCS3's defaults, so keep its SPU blocks at the default (Safe).
+				{"BLUS30732", "Portal 2", "Core:\n  SPU Block Size: Safe\n"},
+				{"BLES01222", "Portal 2", "Core:\n  SPU Block Size: Safe\n"},
+			};
+
+			for (const auto& game : s_games)
+			{
+				if (title_id == game.title_id)
+				{
+					sys_log.always()("UWP: %s (%s): built-in game settings:\n%s", title_id, game.why, game.yaml);
+					return std::string(game.yaml);
+				}
+			}
+
+			return {};
+		};
 
 		// Desktop resolves paths with Qt's canonicalFilePath (forward slashes, no trailing slash,
 		// empty if missing). Boot code relies on that, e.g. "/dev_flash" + path.substr(resolved
@@ -596,16 +634,28 @@ namespace
 					fs::copy_file(icons_src + entry.name, icons_dst + entry.name, false);
 			}
 
+			// Keep the previous run's logs: after a crash the app is usually started again, which used
+			// to overwrite the only record of it.
+			fs::rename(g_android_config_dir + "RPCS3.log", g_android_config_dir + "RPCS3.prev.log", true);
+			fs::rename(g_local_dir + "mesa.log", g_local_dir + "mesa.prev.log", true);
+			fs::rename(g_local_dir + "memory.log", g_local_dir + "memory.prev.log", true);
 			static std::unique_ptr<logs::listener> log_file = logs::make_file_listener(g_android_config_dir + "RPCS3.log", 256 * 1024 * 1024);
 			sys_log.always()("UWP: %s", storage_note);
 
 			// Any fatal log line (e.g. a dying RSX thread, which doesn't stop the emulator) turns the screen red.
 			struct fatal_listener final : logs::listener
 			{
-				void log(u64, const logs::message& msg, std::string_view, std::string_view) override
+				void log(u64, const logs::message& msg, std::string_view prefix, std::string_view text) override
 				{
 					if (logs::level{msg} == logs::level::fatal)
+					{
+						{
+							std::lock_guard lock(g_frame_mutex);
+							if (g_fatal_text.empty())
+								g_fatal_text = fmt::format("%s%s", prefix, text.substr(0, 600));
+						}
 						g_state = shell_state::failed;
+					}
 				}
 			};
 			static fatal_listener s_fatal_listener;
@@ -669,14 +719,15 @@ namespace
 			g_cfg.audio.music.set(music_handler::null);
 			g_cfg.io.camera.set(camera_handler::null);
 
-			// PPU on the LLVM recompiler when LLVM is linked, else the interpreter; SPU on the ASMJIT
-			// recompiler. Empty files in LocalState switch decoders for tests: ppu_interpreter,
-			// spu_interpreter, spu_llvm, or interpreter (both interpreters).
+			// PPU and SPU on the LLVM recompilers when LLVM is linked, else the interpreters. SPU LLVM
+			// nearly doubled GTA V's frame rate over ASMJIT (5.7 -> 10-11 fps) once its cache was warm.
+			// Empty files in LocalState switch decoders for tests: ppu_interpreter, spu_interpreter,
+			// spu_asmjit, or interpreter (both interpreters).
 			const bool all_interp = fs::is_file(g_local_dir + "interpreter");
 			const bool spu_interp = all_interp || fs::is_file(g_local_dir + "spu_interpreter");
 #ifdef LLVM_AVAILABLE
 			const bool ppu_llvm = !all_interp && !fs::is_file(g_local_dir + "ppu_interpreter");
-			const bool spu_llvm = !spu_interp && fs::is_file(g_local_dir + "spu_llvm");
+			const bool spu_llvm = !spu_interp && !fs::is_file(g_local_dir + "spu_asmjit");
 #else
 			const bool ppu_llvm = false, spu_llvm = false;
 #endif
@@ -687,6 +738,26 @@ namespace
 				g_cfg.core.llvm_threads.set(6);
 			sys_log.always()("UWP: PPU decoder: %s, SPU decoder: %s, LLVM threads: %u",
 				g_cfg.core.ppu_decoder.get(), g_cfg.core.spu_decoder.get(), g_cfg.core.llvm_threads.get());
+			// PPU/SPU compile jobs wait while less than this is left of the app's memory (MB, default 1280).
+			rpcs3::utils::g_uwp_app_memory = [](u64* limit) -> u64 { return get_app_memory_usage(reinterpret_cast<UINT64*>(limit)); };
+			if (fs::file f{g_local_dir + "compile_headroom"})
+			{
+				const u32 v = static_cast<u32>(std::strtoul(f.to_string().c_str(), nullptr, 10));
+				if (v <= 4096)
+					rpcs3::utils::uwp_compile_gate::headroom_mb = v;
+			}
+			if (fs::file f{g_local_dir + "compile_job_mb"})
+			{
+				const u32 v = static_cast<u32>(std::strtoul(f.to_string().c_str(), nullptr, 10));
+				if (v <= 4096)
+					rpcs3::utils::uwp_compile_gate::job_mb = v;
+			}
+			sys_log.always()("UWP: compile memory headroom: %u MB + %u MB per running job", rpcs3::utils::uwp_compile_gate::headroom_mb, rpcs3::utils::uwp_compile_gate::job_mb);
+			// Stencil masks and depth bias are baked into the Vulkan pipelines so Dozen builds their
+			// D3D12 PSOs in the background, not at the draw (hiccups in Portal 2). An empty
+			// LocalState/dynamic_stencil_bias file brings back RPCS3's dynamic state.
+			g_uwp_static_pipeline_state = !fs::is_file(g_local_dir + "dynamic_stencil_bias");
+			sys_log.always()("UWP: stencil masks and depth bias as %s state", g_uwp_static_pipeline_state ? "pipeline" : "dynamic");
 			// LLVM precompilation compiles every module in dev_flash (~580) before the XMB starts:
 			// 36+ minutes on the first boot on the Xbox. Without it only the modules that load get
 			// compiled (the rest when first used). An empty LocalState/precompile file turns it on.
@@ -1019,6 +1090,47 @@ namespace
 		return true;
 	}
 
+	// The red error screen with the fatal log line that caused it, so a crash can be reported
+	// without the log. False (plain red) when there is no text or the menu isn't ready.
+	bool show_error_screen(ID3D11Device* dev, ID3D11DeviceContext* ctx, ID3D11RenderTargetView* rtv)
+	{
+		static ID3D11Texture2D* tex = nullptr;
+		static std::string shown;
+		std::string text;
+		{
+			std::lock_guard lock(g_frame_mutex);
+			text = g_fatal_text;
+		}
+		if (text.empty())
+			return false;
+		if (!tex)
+		{
+			D3D11_TEXTURE2D_DESC td{};
+			td.Width = uwp_frontend::canvas_width;
+			td.Height = uwp_frontend::canvas_height;
+			td.MipLevels = 1;
+			td.ArraySize = 1;
+			td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+			td.SampleDesc.Count = 1;
+			td.Usage = D3D11_USAGE_DEFAULT;
+			if (FAILED(dev->CreateTexture2D(&td, nullptr, &tex)))
+				return false;
+		}
+		if (shown != text)
+		{
+			const u32* pixels = nullptr;
+			if (!uwp_frontend::loading_frame("Emulation error", text + "\n\nThe full log is LocalState/rpcs3/RPCS3.log (RPCS3.prev.log after the app restarts).", 0, 0, pixels))
+				return false;
+			ctx->UpdateSubresource(tex, 0, nullptr, pixels, uwp_frontend::canvas_width * 4, 0);
+			shown = text;
+		}
+		ID3D11Resource* target = nullptr;
+		rtv->GetResource(&target);
+		ctx->CopyResource(target, tex);
+		target->Release();
+		return true;
+	}
+
 	template <typename I>
 	struct inspectable_impl : I
 	{
@@ -1224,7 +1336,7 @@ namespace
 					ctx->CopyResource(target, frame_tex);
 					target->Release();
 				}
-				else
+				else if (st != shell_state::failed || !show_error_screen(dev, ctx, rtv))
 				{
 					ctx->ClearRenderTargetView(rtv, st == shell_state::failed ? red : st == shell_state::finished ? green : blue);
 				}

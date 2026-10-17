@@ -1817,14 +1817,22 @@ shared_ptr<lv2_prx> ppu_load_prx(const ppu_prx_object& elf, bool virtual_load, c
 				case 10: //R_PPC64_REL24
 				{
 					const u32 value = *ensure(prx->get_ptr<ppu_bf_t<be_t<u32>, 6, 24>>(raddr)) = static_cast<u32>(rdata - raddr) >> 2;
+#ifdef RPCS3_UWP
+					ppu_loader.trace("**** RELOCATION(10): 0x%x <- 0x%06x (0x%llx)", raddr, value, rdata);
+#else
 					ppu_loader.warning("**** RELOCATION(10): 0x%x <- 0x%06x (0x%llx)", raddr, value, rdata);
+#endif
 					break;
 				}
 
 				case 11: //R_PPC64_REL14
 				{
 					const u32 value = *ensure(prx->get_ptr<ppu_bf_t<be_t<u32>, 16, 14>>(raddr)) = static_cast<u32>(rdata - raddr) >> 2;
+#ifdef RPCS3_UWP
+					ppu_loader.trace("**** RELOCATION(11): 0x%x <- 0x%06x (0x%llx)", raddr, value, rdata);
+#else
 					ppu_loader.warning("**** RELOCATION(11): 0x%x <- 0x%06x (0x%llx)", raddr, value, rdata);
+#endif
 					break;
 				}
 

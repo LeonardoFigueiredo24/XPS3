@@ -58,6 +58,16 @@ namespace vk
 			, m_vs(vs)
 			, m_fs(fs)
 		{
+#ifdef RPCS3_UWP
+			if (g_uwp_static_pipeline_state)
+			{
+				// Stencil masks and depth bias are baked into the pipeline (VKPipelineCompiler.cpp)
+				std::erase_if(m_dynamic_state_descriptors, [](VkDynamicState s)
+				{
+					return s == VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK || s == VK_DYNAMIC_STATE_STENCIL_WRITE_MASK || s == VK_DYNAMIC_STATE_DEPTH_BIAS;
+				});
+			}
+#endif
 		}
 
 		VkGraphicsPipelineCreateInfo compile()

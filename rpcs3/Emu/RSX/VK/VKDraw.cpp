@@ -189,14 +189,26 @@ void VKGSRender::update_draw_state()
 		const bool two_sided_stencil = rsx::method_registers.two_sided_stencil_test_enabled();
 		VkStencilFaceFlags face_flag = (two_sided_stencil) ? VK_STENCIL_FACE_FRONT_BIT : VK_STENCIL_FRONT_AND_BACK;
 
-		vkCmdSetStencilWriteMask(*m_current_command_buffer, face_flag, rsx::method_registers.stencil_mask());
-		vkCmdSetStencilCompareMask(*m_current_command_buffer, face_flag, rsx::method_registers.stencil_func_mask());
+#ifdef RPCS3_UWP
+		// Masks are baked into the pipeline (VKPipelineCompiler.cpp)
+		const bool dynamic_masks = !g_uwp_static_pipeline_state;
+#else
+		constexpr bool dynamic_masks = true;
+#endif
+		if (dynamic_masks)
+		{
+			vkCmdSetStencilWriteMask(*m_current_command_buffer, face_flag, rsx::method_registers.stencil_mask());
+			vkCmdSetStencilCompareMask(*m_current_command_buffer, face_flag, rsx::method_registers.stencil_func_mask());
+		}
 		vkCmdSetStencilReference(*m_current_command_buffer, face_flag, rsx::method_registers.stencil_func_ref());
 
 		if (two_sided_stencil)
 		{
-			vkCmdSetStencilWriteMask(*m_current_command_buffer, VK_STENCIL_FACE_BACK_BIT, rsx::method_registers.back_stencil_mask());
-			vkCmdSetStencilCompareMask(*m_current_command_buffer, VK_STENCIL_FACE_BACK_BIT, rsx::method_registers.back_stencil_func_mask());
+			if (dynamic_masks)
+			{
+				vkCmdSetStencilWriteMask(*m_current_command_buffer, VK_STENCIL_FACE_BACK_BIT, rsx::method_registers.back_stencil_mask());
+				vkCmdSetStencilCompareMask(*m_current_command_buffer, VK_STENCIL_FACE_BACK_BIT, rsx::method_registers.back_stencil_func_mask());
+			}
 			vkCmdSetStencilReference(*m_current_command_buffer, VK_STENCIL_FACE_BACK_BIT, rsx::method_registers.back_stencil_func_ref());
 		}
 	}
@@ -209,6 +221,13 @@ void VKGSRender::update_draw_state()
 		return;
 	}
 
+#ifdef RPCS3_UWP
+	if (g_uwp_static_pipeline_state)
+	{
+		// Depth bias is baked into the pipeline (VKPipelineCompiler.cpp)
+	}
+	else
+#endif
 	if (rsx::method_registers.poly_offset_fill_enabled())
 	{
 		// offset_bias is the constant factor, multiplied by the implementation factor R

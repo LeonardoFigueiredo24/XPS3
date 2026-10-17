@@ -221,6 +221,10 @@ namespace vk
 	pipe_compiler* get_pipe_compiler();
 }
 
+#ifdef RPCS3_UWP
+extern bool g_uwp_static_pipeline_state; // VKPipelineCompiler.cpp
+#endif
+
 namespace rpcs3
 {
 	template <>

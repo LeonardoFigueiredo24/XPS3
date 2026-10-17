@@ -42,7 +42,7 @@ Cold first start of the XMB compiles its PPU code with LLVM (~8.5 min); later st
 - Graphics: RPCS3's Vulkan renderer on Mesa **Dozen** (Vulkan over D3D12, `vulkan_dzn.dll`) with
   Microsoft's `dxil.dll`. There is no Vulkan loader: `uwp/vkshim` forwards `vk*` calls to Dozen.
   Frames are read back and shown through the shell's D3D11 swapchain (~1 ms).
-- CPU: PPU LLVM recompiler, SPU ASMJIT, 6 LLVM threads. Precompilation and background PRX
+- CPU: PPU LLVM recompiler, SPU LLVM recompiler (LocalState/spu_asmjit for ASMJIT), 6 LLVM threads. Precompilation and background PRX
   compilation are off by default (they starved the XMB).
 - Memory: UWP can't map executable or sparse-file views, so shared memory uses pagefile sections;
   `sys_vm` memory is committed lazily in 64 KB granules on first touch.
@@ -131,8 +131,18 @@ Empty files in the app's `LocalState` folder (via Device Portal file explorer):
 - `storage`: `local` or a folder path for the cache location.
 - `precompile`, `background_compile`: turn LLVM precompilation / background PRX compile back on.
 - `no_network`, `null_audio`, `null_renderer`, `heap_guard`, `ext_host_mem`: debugging switches.
+- `compile_headroom`, `compile_job_mb`: a new PPU/SPU compile job starts only while
+  headroom + job_mb per running job is left of the app's memory (defaults 1280 and 128 MB).
+- `dynamic_stencil_bias`: keep stencil masks and depth bias as Vulkan dynamic state. By default
+  they are baked into the pipelines, because Dozen otherwise builds a D3D12 PSO for each new value
+  at draw time on the RSX thread (hitches of 0.1-4 s in Portal 2).
 
-Logs: `LocalState/rpcs3/RPCS3.log` and `LocalState/mesa.log`.
+Per-game settings: `LocalState/rpcs3/config/custom_configs/config_<serial>.yml` (any subset of
+config.yml) overrides everything, including the app's built-in game settings (Portal 2: SPU blocks Safe).
+
+Logs: `LocalState/rpcs3/RPCS3.log` and `LocalState/mesa.log`; the previous run's are kept as
+`RPCS3.prev.log` and `mesa.prev.log`. `LocalState/memory.log` (and `memory.prev.log`) keeps the
+app memory trend even when RPCS3.log has hit its size cap. A fatal error shows its log line on the red screen.
 
 ## Branches
 

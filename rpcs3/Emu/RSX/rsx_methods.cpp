@@ -782,6 +782,15 @@ namespace rsx
 			state_signals[NV4097_SET_STENCIL_FUNC] = rsx::pipeline_config_dirty;
 			state_signals[NV4097_SET_BACK_STENCIL_FUNC] = rsx::pipeline_config_dirty;
 			state_signals[NV4097_SET_RESTART_INDEX_ENABLE] = rsx::pipeline_config_dirty;
+#ifdef RPCS3_UWP
+			// Stencil masks and depth bias are pipeline state on the Xbox (VKPipelineCompiler.cpp).
+			// The write masks and stencil enables already mark it in set_surface_options_dirty_bit.
+			state_signals[NV4097_SET_STENCIL_FUNC_MASK] = rsx::pipeline_config_dirty;
+			state_signals[NV4097_SET_BACK_STENCIL_FUNC_MASK] = rsx::pipeline_config_dirty;
+			state_signals[NV4097_SET_POLY_OFFSET_FILL_ENABLE] |= rsx::pipeline_config_dirty;
+			state_signals[NV4097_SET_POLYGON_OFFSET_SCALE_FACTOR] |= rsx::pipeline_config_dirty;
+			state_signals[NV4097_SET_POLYGON_OFFSET_BIAS] |= rsx::pipeline_config_dirty;
+#endif
 		}
 
 		// Sanity checks
