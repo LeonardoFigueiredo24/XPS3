@@ -76,6 +76,7 @@ extern void ppu_precompile(std::vector<std::string>& dir_queue, std::vector<ppu_
 extern thread_local bool g_ppu_precompile_prx_only;
 
 extern u32 g_uwp_desc_pool_max; // VKProgramPipeline.cpp
+extern bool g_uwp_deferred_shader_compile; // VKProgramPipeline.cpp
 extern u32 g_uwp_pipeline_limit; // VKPresent.cpp
 extern bool g_uwp_static_pipeline_state; // VKPipelineCompiler.cpp
 extern "C" void* uwp_lazy_lookup(const wchar_t* dll, const char* name); // uwp_lazyresolve.c
@@ -528,6 +529,13 @@ namespace
 		{
 			if (g_state != shell_state::failed)
 				g_state = shell_state::finished;
+			// The game's session so far as RPCS3.game.log (also copied at the next launch, for runs
+			// that end without a stop: the app closed or killed).
+			if (const std::string& id = Emu.GetTitleID(); id.size() == 9 && id[0] >= 'A' && id[0] <= 'Z')
+			{
+				logs::listener::sync_all();
+				fs::copy_file(g_android_config_dir + "RPCS3.log", g_android_config_dir + "RPCS3.game.log", true);
+			}
 			uwp_frontend::on_emulation_stopped();
 		};
 		g_emu_callbacks.on_ready = []() {};
@@ -651,6 +659,29 @@ namespace
 			fs::rename(g_android_config_dir + "RPCS3.log", g_android_config_dir + "RPCS3.prev.log", true);
 			fs::rename(g_local_dir + "mesa.log", g_local_dir + "mesa.prev.log", true);
 			fs::rename(g_local_dir + "memory.log", g_local_dir + "memory.prev.log", true);
+			// The last run that booted a game is also kept as RPCS3.game.log, so app restarts and
+			// menu-only runs after a play session don't rotate its log away.
+			if (fs::file prev{g_android_config_dir + "RPCS3.prev.log"})
+			{
+				static constexpr std::string_view marker = "} SYS: Serial: ";
+				std::string buf(4 << 20, '\0');
+				usz keep = 0;
+				bool game = false;
+				while (!game)
+				{
+					const usz n = prev.read(buf.data() + keep, buf.size() - keep);
+					if (!n)
+						break;
+					const std::string_view view(buf.data(), keep + n);
+					for (usz pos = view.find(marker); pos != umax && !game; pos = view.find(marker, pos + 1))
+						game = pos + marker.size() < view.size() && view[pos + marker.size()] >= 'A' && view[pos + marker.size()] <= 'Z';
+					keep = std::min<usz>(view.size(), marker.size());
+					std::memmove(buf.data(), view.data() + view.size() - keep, keep);
+				}
+				prev.close();
+				if (game)
+					fs::copy_file(g_android_config_dir + "RPCS3.prev.log", g_android_config_dir + "RPCS3.game.log", true);
+			}
 			static std::unique_ptr<logs::listener> log_file = logs::make_file_listener(g_android_config_dir + "RPCS3.log", 256 * 1024 * 1024);
 			// Hands the lines logged so far to the file and stops the logger keeping a copy of every
 			// line in memory, which it does until set_init (desktop RPCS3 calls it in main). Without
@@ -812,6 +843,10 @@ namespace
 			// LocalState/dynamic_stencil_bias file brings back RPCS3's dynamic state.
 			g_uwp_static_pipeline_state = !fs::is_file(g_local_dir + "dynamic_stencil_bias");
 			sys_log.always()("UWP: stencil masks and depth bias as %s state", g_uwp_static_pipeline_state ? "pipeline" : "dynamic");
+			// New shaders' SPIR-V compile on the pipeline compiler threads, not the RSX thread
+			// (VKProgramPipeline.cpp). An empty LocalState/sync_shader_compile file keeps it on RSX.
+			g_uwp_deferred_shader_compile = !fs::is_file(g_local_dir + "sync_shader_compile");
+			sys_log.always()("UWP: shader SPIR-V compile on %s", g_uwp_deferred_shader_compile ? "the pipeline compiler threads" : "the RSX thread");
 			// LLVM precompilation compiles every module in dev_flash (~580) before the XMB starts:
 			// 36+ minutes on the first boot on the Xbox. Without it only the modules that load get
 			// compiled (the rest when first used). An empty LocalState/precompile file turns it on.

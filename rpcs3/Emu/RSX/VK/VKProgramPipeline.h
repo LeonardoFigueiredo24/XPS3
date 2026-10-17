@@ -125,6 +125,10 @@ namespace vk
 			void create(::glsl::program_domain domain, const std::string& source);
 
 			VkShaderModule compile();
+#ifdef RPCS3_UWP
+			// compile() once, from any thread (a pipeline compiler thread for deferred shaders).
+			VkShaderModule compile_once();
+#endif
 
 			void destroy();
 
