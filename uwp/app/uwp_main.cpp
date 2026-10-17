@@ -78,6 +78,8 @@ extern thread_local bool g_ppu_precompile_prx_only;
 extern u32 g_uwp_desc_pool_max; // VKProgramPipeline.cpp
 extern u32 g_uwp_pipeline_limit; // VKPresent.cpp
 extern bool g_uwp_static_pipeline_state; // VKPipelineCompiler.cpp
+extern "C" void* uwp_lazy_lookup(const wchar_t* dll, const char* name); // uwp_lazyresolve.c
+namespace rsx { extern u32 g_uwp_rsx_idle_sleep_us; } // RSXFIFO.cpp
 
 namespace
 {
@@ -564,10 +566,10 @@ namespace
 			struct game_config { std::string_view title_id, why, yaml; };
 			static constexpr game_config s_games[]
 			{
-				// Portal 2: the Xbox-wide Mega SPU blocks are only measured on the XMB and GTA V; the game
-				// is rated Playable on RPCS3's defaults, so keep its SPU blocks at the default (Safe).
-				{"BLUS30732", "Portal 2", "Core:\n  SPU Block Size: Safe\n"},
-				{"BLES01222", "Portal 2", "Core:\n  SPU Block Size: Safe\n"},
+				// Portal 2: 4 SPURS threads and SPU loop detection measured on the Xbox in a big test chamber
+				// (22 -> 27 fps, no slow frames). SPU blocks stay at RPCS3's default (Safe).
+				{"BLUS30732", "Portal 2", "Core:\n  SPU Block Size: Safe\n  Max SPURS Threads: 4\n  SPU loop detection: true\n"},
+				{"BLES01222", "Portal 2", "Core:\n  SPU Block Size: Safe\n  Max SPURS Threads: 4\n  SPU loop detection: true\n"},
 			};
 
 			for (const auto& game : s_games)
@@ -755,6 +757,37 @@ namespace
 					rpcs3::utils::uwp_compile_gate::job_mb = v;
 			}
 			sys_log.always()("UWP: compile memory headroom: %u MB + %u MB per running job", rpcs3::utils::uwp_compile_gate::headroom_mb, rpcs3::utils::uwp_compile_gate::job_mb);
+			// Desktop RPCS3 raises the system timer resolution (rpcs3.cpp); without it every short
+			// sleep and timeout of the emulated threads lasts a whole timer tick. Measured below
+			// before and after. An empty LocalState/default_timer file leaves it alone.
+			{
+				const auto measure_us = []()
+				{
+					const u64 start = get_system_time();
+					for (int i = 0; i < 20; i++)
+						::Sleep(1);
+					return (get_system_time() - start) / 20.;
+				};
+				using query_fn = LONG(NTAPI*)(PULONG, PULONG, PULONG);
+				using set_fn = LONG(NTAPI*)(ULONG, BOOLEAN, PULONG);
+				const auto query = reinterpret_cast<query_fn>(uwp_lazy_lookup(L"ntdll.dll", "NtQueryTimerResolution"));
+				const auto set = reinterpret_cast<set_fn>(uwp_lazy_lookup(L"ntdll.dll", "NtSetTimerResolution"));
+				ULONG min_res = 0, max_res = 0, cur_res = 0, new_res = 0;
+				const bool queried = query && query(&min_res, &max_res, &cur_res) == 0;
+				const f64 before = measure_us();
+				const bool raised = queried && set && !fs::is_file(g_local_dir + "default_timer") && set(max_res, TRUE, &new_res) == 0;
+				sys_log.always()("UWP: timer resolution %.2f ms (range %.2f-%.2f ms)%s; Sleep(1) took %.0f us before, %.0f us after",
+					cur_res / 10000., max_res / 10000., min_res / 10000., raised ? fmt::format(", raised to %.2f ms", new_res / 10000.) : std::string(queried ? ", left as is" : ", query unavailable"),
+					before, raised ? measure_us() : before);
+			}
+			// RSX thread sleeps instead of spinning while the game gives it nothing to do (us per check,
+			// default 200 in RSXFIFO.cpp; "0" spins as RPCS3 does).
+			if (fs::file f{g_local_dir + "rsx_idle_sleep"})
+			{
+				const u32 v = static_cast<u32>(std::strtoul(f.to_string().c_str(), nullptr, 10));
+				rsx::g_uwp_rsx_idle_sleep_us = std::min<u32>(v, 2000);
+			}
+			sys_log.always()("UWP: RSX idle sleep: %u us", rsx::g_uwp_rsx_idle_sleep_us);
 			// Stencil masks and depth bias are baked into the Vulkan pipelines so Dozen builds their
 			// D3D12 PSOs in the background, not at the draw (hiccups in Portal 2). An empty
 			// LocalState/dynamic_stencil_bias file brings back RPCS3's dynamic state.
