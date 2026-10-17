@@ -1174,9 +1174,23 @@ namespace vm
 		ensure(addr % 4096 == 0);
 		ensure(size % 4096 == 0);
 
+#ifdef RPCS3_UWP
+		// VirtualLock always fails in the Xbox app: don't pay for the call and an error log line on
+		// every allocation (20k times while Portal 2 loads)
+		static atomic_t<bool> s_lock_failed = false;
+
+		if (s_lock_failed)
+		{
+			return;
+		}
+#endif
+
 		if (!utils::memory_lock(g_sudo_addr + addr, size))
 		{
 			vm_log.error("Failed to lock sudo memory (addr=0x%x, size=0x%x). Consider increasing your system limits.", addr, size);
+#ifdef RPCS3_UWP
+			s_lock_failed = true;
+#endif
 		}
 	}
 
