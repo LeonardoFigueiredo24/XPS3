@@ -140,6 +140,9 @@ Empty files in the app's `LocalState` folder (via Device Portal file explorer):
 - `dynamic_stencil_bias`: keep stencil masks and depth bias as Vulkan dynamic state. By default
   they are baked into the pipelines, because Dozen otherwise builds a D3D12 PSO for each new value
   at draw time on the RSX thread (hitches of 0.1-4 s in Portal 2).
+- `sync_shader_compile`: compile new shaders (GLSL to SPIR-V) on the RSX thread as RPCS3 does.
+  By default the pipeline compiler threads do it, since a room load in Portal 2 brings dozens of
+  new shaders at ~12 ms each.
 
 Per-game settings: `LocalState/rpcs3/config/custom_configs/config_<serial>.yml` (any subset of
 config.yml) overrides everything, including the app's built-in game settings (Portal 2: SPU blocks Safe;

@@ -4,6 +4,10 @@
 #include "VKPipelineCompiler.h"
 #include "../Program/ProgramStateCache.h"
 
+#ifdef RPCS3_UWP
+extern bool g_uwp_deferred_shader_compile; // VKProgramPipeline.cpp
+#endif
+
 namespace vk
 {
 	struct VKTraits
@@ -19,6 +23,10 @@ namespace vk
 		{
 			fragmentProgramData.Decompile(RSXFP);
 			fragmentProgramData.id = static_cast<u32>(ID);
+#ifdef RPCS3_UWP
+			if (g_uwp_deferred_shader_compile)
+				return; // compiled by build_pipeline's compiler thread
+#endif
 			fragmentProgramData.Compile();
 		}
 
@@ -27,6 +35,10 @@ namespace vk
 		{
 			vertexProgramData.Decompile(RSXVP);
 			vertexProgramData.id = static_cast<u32>(ID);
+#ifdef RPCS3_UWP
+			if (g_uwp_deferred_shader_compile)
+				return;
+#endif
 			vertexProgramData.Compile();
 		}
 
@@ -57,6 +69,21 @@ namespace vk
 			}
 
 			auto compiler = vk::get_pipe_compiler();
+#ifdef RPCS3_UWP
+			if (!vertexProgramData.handle || !fragmentProgramData.handle)
+			{
+				// Deferred SPIR-V compile; the program objects live in the program cache.
+				auto result = compiler->compile(
+					pipelineProperties,
+					&const_cast<vertex_program_type&>(vertexProgramData).shader,
+					&const_cast<fragment_program_type&>(fragmentProgramData).shader,
+					compiler_flags, callback,
+					vertexProgramData.uniforms,
+					fragmentProgramData.uniforms);
+
+				return callback(result);
+			}
+#endif
 			auto result = compiler->compile(
 				pipelineProperties,
 				vertexProgramData.handle,

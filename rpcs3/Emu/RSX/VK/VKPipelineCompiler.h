@@ -91,6 +91,18 @@ namespace vk
 			const std::vector<glsl::program_input>& vs_inputs = {},
 			const std::vector<glsl::program_input>& fs_inputs = {});
 
+#ifdef RPCS3_UWP
+		// Like the VkShaderModule overload, for shaders whose SPIR-V compile was deferred: the
+		// modules are compiled (once, shader::compile_once) on the thread that builds the pipeline.
+		std::unique_ptr<glsl::program> compile(
+			const vk::pipeline_props &create_info,
+			glsl::shader* vs,
+			glsl::shader* fs,
+			op_flags flags, callback_t callback,
+			const std::vector<glsl::program_input>& vs_inputs,
+			const std::vector<glsl::program_input>& fs_inputs);
+#endif
+
 		std::unique_ptr<glsl::program> compile(
 			graphics_pipe_create_callback_t get_create_info,
 			op_flags flags, callback_t callback,
@@ -124,6 +136,10 @@ namespace vk
 			vk::pipeline_props graphics_data;
 			compute_pipeline_props compute_data;
 			VkShaderModule graphics_modules[2];
+#ifdef RPCS3_UWP
+			glsl::shader* deferred_shaders[2] = {};
+			static inline VkShaderModule s_no_modules[2] = {};
+#endif
 			std::vector<glsl::program_input> inputs;
 
 			op_flags flags;
@@ -147,6 +163,21 @@ namespace vk
 				inputs.insert(inputs.end(), vs_in.begin(), vs_in.end());
 				inputs.insert(inputs.end(), fs_in.begin(), fs_in.end());
 			}
+
+#ifdef RPCS3_UWP
+			pipe_compiler_job(
+				const vk::pipeline_props& props,
+				glsl::shader* shaders[2],
+				const std::vector<glsl::program_input>& vs_in,
+				const std::vector<glsl::program_input>& fs_in,
+				op_flags flags_,
+				callback_t func)
+				: pipe_compiler_job(props, s_no_modules, vs_in, fs_in, flags_, std::move(func))
+			{
+				deferred_shaders[0] = shaders[0];
+				deferred_shaders[1] = shaders[1];
+			}
+#endif
 
 			pipe_compiler_job(
 				graphics_pipe_create_callback_t pipe_info_create_fn,

@@ -10,6 +10,10 @@
 
 #ifdef RPCS3_UWP
 u32 g_uwp_desc_pool_max = 4096;
+// New vertex/fragment programs are only decompiled on the RSX thread; their GLSL -> SPIR-V
+// compile (~12 ms each on the Xbox, dozens at once when a room loads) runs on the pipeline
+// compiler threads. LocalState/sync_shader_compile turns it off (uwp_main.cpp).
+bool g_uwp_deferred_shader_compile = true;
 #endif
 
 namespace vk
@@ -128,6 +132,16 @@ namespace vk
 
 			return m_handle;
 		}
+
+#ifdef RPCS3_UWP
+		VkShaderModule shader::compile_once()
+		{
+			// Programs are shared by many pipelines; whichever compiler thread gets there first compiles.
+			static std::mutex s_locks[16];
+			std::lock_guard lock(s_locks[(reinterpret_cast<uptr>(this) >> 6) % 16]);
+			return m_handle ? m_handle : compile();
+		}
+#endif
 
 		void shader::destroy()
 		{
