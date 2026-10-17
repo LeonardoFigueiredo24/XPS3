@@ -335,10 +335,21 @@ struct cpu_prof
 	void operator()()
 	{
 		std::unordered_map<shared_ptr<cpu_thread>, sample_info> threads;
+#ifdef RPCS3_UWP
+		// The Xbox app is usually killed, not stopped, so results are also printed every minute
+		u64 last_flush = get_system_time();
+#endif
 
 		while (thread_ctrl::state() != thread_state::aborting)
 		{
 			bool flush = false;
+#ifdef RPCS3_UWP
+			if (const u64 now = get_system_time(); now - last_flush >= 60'000'000)
+			{
+				last_flush = now;
+				flush = true;
+			}
+#endif
 
 			// Handle registration channel
 			for (u32 id : registered.pop_all())
