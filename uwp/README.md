@@ -133,8 +133,6 @@ Empty files in the app's `LocalState` folder (via Device Portal file explorer):
 - `no_network`, `null_audio`, `null_renderer`, `heap_guard`, `ext_host_mem`: debugging switches.
 - `compile_headroom`, `compile_job_mb`: a new PPU/SPU compile job starts only while
   headroom + job_mb per running job is left of the app's memory (defaults 1280 and 128 MB).
-- `compile_normal_priority`: run the shader pipeline and SPU LLVM compile threads at normal
-  priority. By default they run below normal, so compiling for a new area doesn't slow the game.
 - `default_timer`: don't raise the system timer resolution (the app raises it to the finest the
   device allows, as desktop RPCS3 does; the log shows both).
 - `rsx_idle_sleep`: microseconds the RSX thread sleeps per check once the game has given it

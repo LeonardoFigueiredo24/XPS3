@@ -6,9 +6,6 @@
 #include "Emu/system_config.h"
 
 #include "util/sysinfo.hpp"
-#ifdef RPCS3_UWP
-#include "Emu/system_utils.hpp"
-#endif
 
 #ifdef RPCS3_UWP
 // Stencil masks and depth bias are baked into the pipelines instead of being dynamic state
@@ -47,12 +44,6 @@ namespace vk
 
 	void pipe_compiler::operator()()
 	{
-#ifdef RPCS3_UWP
-		// Portal 2 stalled while new rooms' pipelines compiled (0.1-1.5 s each, two at a time).
-		if (rpcs3::utils::uwp_compile_gate::low_priority)
-			thread_ctrl::set_native_priority(-1);
-#endif
-
 		while (thread_ctrl::state() != thread_state::aborting)
 		{
 			for (auto&& job : m_work_queue.pop_all())

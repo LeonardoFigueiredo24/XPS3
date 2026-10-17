@@ -793,9 +793,6 @@ namespace
 					rpcs3::utils::uwp_compile_gate::job_mb = v;
 			}
 			sys_log.always()("UWP: compile memory headroom: %u MB + %u MB per running job", rpcs3::utils::uwp_compile_gate::headroom_mb, rpcs3::utils::uwp_compile_gate::job_mb);
-			// Pipeline and SPU compile threads below normal priority (system_utils.hpp).
-			rpcs3::utils::uwp_compile_gate::low_priority = !fs::is_file(g_local_dir + "compile_normal_priority");
-			sys_log.always()("UWP: pipeline/SPU compile threads at %s priority", rpcs3::utils::uwp_compile_gate::low_priority ? "below normal" : "normal");
 			// Desktop RPCS3 raises the system timer resolution (rpcs3.cpp); without it every short
 			// sleep and timeout of the emulated threads lasts a whole timer tick. Measured below
 			// before and after. An empty LocalState/default_timer file leaves it alone.

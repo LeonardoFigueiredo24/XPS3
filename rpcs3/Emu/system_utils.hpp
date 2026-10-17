@@ -42,10 +42,6 @@ namespace rpcs3::utils
 		static inline u32 headroom_mb = 1280;
 		// Counted for each job already running (they grow after they start). LocalState/compile_job_mb.
 		static inline u32 job_mb = 128;
-		// Shader pipeline (RSX.W) and SPU LLVM (SPUW) compile threads run below normal priority, so
-		// what they build while the game plays (new rooms) can't take CPU from the PPU/SPU/RSX
-		// threads. LocalState/compile_normal_priority turns it off.
-		static inline bool low_priority = true;
 
 		// Peak app memory seen by the gate and total time jobs waited, since the last call.
 		static std::pair<u64, u64> take_stats();
