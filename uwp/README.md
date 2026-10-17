@@ -15,7 +15,7 @@ PC, and is installed through the Xbox Device Portal.
 | Network and XMB web browser | Works; network is "Connected" by default, browser opens (lazily committed 256 MB `sys_vm` mapping) |
 | Controller, audio | Windows.Gaming.Input pads 1-4, XAudio2 |
 | Jetpack Joyride Deluxe | Runs, locked 60 fps |
-| Minecraft PlayStation 3 Edition | Runs, ~55 fps |
+| Minecraft PlayStation 3 Edition | Runs, ~55 fps in menus, ~30 fps in a new world (network off for it) |
 | Watch Dogs (BLES01854) | Title screen at 30 fps; in-game loading runs out of the 5 GB limit at ~85%. Memory work in PR #9 |
 | Plants vs. Zombies Garden Warfare (BLES02021) | Main menu at 5-7 fps with the PS3 network off (EA servers are gone). Auto network-off in PR #10 |
 | Stats overlay | Settings > Stats overlay (FPS, CPU, GPU, top right) |
@@ -142,7 +142,8 @@ Empty files in the app's `LocalState` folder (via Device Portal file explorer):
   at draw time on the RSX thread (hitches of 0.1-4 s in Portal 2).
 
 Per-game settings: `LocalState/rpcs3/config/custom_configs/config_<serial>.yml` (any subset of
-config.yml) overrides everything, including the app's built-in game settings (Portal 2: SPU blocks Safe).
+config.yml) overrides everything, including the app's built-in game settings (Portal 2: SPU blocks Safe;
+Minecraft PS3 Edition: PS3 network Disconnected, it hangs on "Finalizing" when Connected).
 
 Logs: `LocalState/rpcs3/RPCS3.log` and `LocalState/mesa.log`; the previous run's are kept as
 `RPCS3.prev.log` and `mesa.prev.log`. `LocalState/memory.log` (and `memory.prev.log`) keeps the
