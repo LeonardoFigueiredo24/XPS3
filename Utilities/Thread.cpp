@@ -3371,6 +3371,35 @@ u64 thread_base::get_cycles()
 	}
 }
 
+u64 thread_base::get_cpu_time_us() const
+{
+	const u64 handle = m_thread;
+
+#ifdef _WIN32
+	FILETIME ctime, etime, ktime, utime;
+	if (GetThreadTimes(reinterpret_cast<HANDLE>(handle), &ctime, &etime, &ktime, &utime))
+	{
+		return ((ktime.dwLowDateTime | static_cast<u64>(ktime.dwHighDateTime) << 32) + (utime.dwLowDateTime | static_cast<u64>(utime.dwHighDateTime) << 32)) / 10;
+	}
+#elif !defined(__APPLE__)
+	clockid_t _clock;
+	struct timespec thread_time;
+#ifdef ANDROID
+	pthread_t thread_id = handle;
+#else
+	pthread_t thread_id = reinterpret_cast<pthread_t>(handle);
+#endif
+	if (!pthread_getcpuclockid(thread_id, &_clock) && !clock_gettime(_clock, &thread_time))
+	{
+		return static_cast<u64>(thread_time.tv_sec) * 1'000'000 + thread_time.tv_nsec / 1000;
+	}
+#else
+	static_cast<void>(handle);
+#endif
+
+	return 0;
+}
+
 void thread_base::push(shared_ptr<thread_future> task)
 {
 	const auto next = &task->next;
