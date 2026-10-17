@@ -82,6 +82,7 @@ extern bool g_uwp_static_pipeline_state; // VKPipelineCompiler.cpp
 extern "C" void* uwp_lazy_lookup(const wchar_t* dll, const char* name); // uwp_lazyresolve.c
 namespace rsx { extern u32 g_uwp_rsx_idle_sleep_us; } // RSXFIFO.cpp
 extern u64 g_uwp_usleep_spin_us; // lv2.cpp
+extern std::string g_uwp_config_override_path; // System.cpp
 
 namespace
 {
@@ -838,6 +839,7 @@ namespace
 				g_uwp_usleep_spin_us = std::clamp<u64>(v, 1, 5000);
 			}
 			sys_log.always()("UWP: usleep spin: last %u us", g_uwp_usleep_spin_us);
+			g_uwp_config_override_path = g_local_dir + "config_override.yml";
 			// Stencil masks and depth bias are baked into the Vulkan pipelines so Dozen builds their
 			// D3D12 PSOs in the background, not at the draw (hiccups in Portal 2). An empty
 			// LocalState/dynamic_stencil_bias file brings back RPCS3's dynamic state.

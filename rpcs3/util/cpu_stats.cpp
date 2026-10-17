@@ -131,7 +131,10 @@ namespace utils
 #ifdef _WIN32
 		if (!m_cpu_cores || !m_cpu_query)
 		{
-			perf_log.warning("Can not collect per core cpu usage: The required API is not initialized.");
+			// Once: the perf overlay asks twice a second (the API is missing in the Xbox app)
+			static bool s_warned = false;
+			if (!std::exchange(s_warned, true))
+				perf_log.warning("Can not collect per core cpu usage: The required API is not initialized.");
 			return;
 		}
 

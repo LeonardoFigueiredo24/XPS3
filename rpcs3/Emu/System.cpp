@@ -80,6 +80,10 @@ emu_callbacks g_emu_callbacks {};
 
 std::string g_cfg_defaults;
 
+#ifdef RPCS3_UWP
+std::string g_uwp_config_override_path; // set by the app
+#endif
+
 atomic_t<u64> g_watchdog_hold_ctr{0};
 
 extern bool ppu_load_exec(const ppu_exec_object&, bool virtual_load, const std::string&, utils::serial* = nullptr);
@@ -1865,6 +1869,24 @@ game_boot_result Emulator::Load(const std::string& title_id, bool is_disc_patch,
 					sys_log.error("Failed to apply database config");
 				}
 			}
+
+#ifdef RPCS3_UWP
+			// Test runs: settings from LocalState/config_override.yml on top of every boot's config
+			// (YAML as in config.yml), for A/B runs in games without touching their own configs.
+			if (!g_uwp_config_override_path.empty())
+			{
+				if (fs::file cfg_file{g_uwp_config_override_path})
+				{
+					const std::string text = cfg_file.to_string();
+					sys_log.always()("UWP: applying config override %s:\n%s", g_uwp_config_override_path, text);
+
+					if (!g_cfg.from_string(text))
+					{
+						sys_log.error("UWP: failed to apply config override");
+					}
+				}
+			}
+#endif
 
 			// Disable incompatible settings
 			fixup_settings(&_psf);
