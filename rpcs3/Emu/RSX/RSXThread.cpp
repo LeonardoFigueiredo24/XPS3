@@ -21,7 +21,6 @@
 #ifdef RPCS3_UWP
 #include "Emu/Cell/SPUThread.h"
 #include "Emu/IdManager.h"
-#include "util/sysinfo.hpp"
 #endif
 #include "Emu/Cell/timers.hpp"
 #include "Emu/Cell/lv2/sys_event.h"
@@ -3551,7 +3550,8 @@ namespace rsx
 			s_last_flip = now, s_last_idle = idle, s_last_gpu_wait = gpu_wait, s_last_gpu_waits = gpu_waits;
 		}
 
-		// Every 10 s: which thread limits the frame rate. busy = share of one core the thread used.
+		// Every 10 s: which thread limits the frame rate. busy = share of one core the thread used
+		// (CPU time; RSX includes the spinning while idle).
 		{
 			// idle_time restarts from 0 when the perf overlay samples it (get_load), hence the per-frame steps.
 			static u64 s_win_start = 0, s_win_idle = 0, s_prev_idle = 0, s_win_frames = 0, s_win_draws = 0, s_win_submits = 0;
@@ -3566,29 +3566,28 @@ namespace rsx
 
 			if (!s_win_start || now < s_win_start)
 			{
-				s_win_start = now, s_win_idle = 0, s_win_rsx_cycles = get_cycles();
+				s_win_start = now, s_win_idle = 0, s_win_rsx_cycles = thread_ctrl::get_current() ? thread_ctrl::get_current()->get_cpu_time_us() : 0;
 				s_win_frames = s_win_draws = s_win_submits = s_win_setup = s_win_vertex = s_win_tex = s_win_draw = 0;
 				s_win_thread_cycles.clear();
 			}
 			else if (now - s_win_start >= 10'000'000)
 			{
 				const f64 secs = (now - s_win_start) / 1'000'000.;
-				const f64 hz = static_cast<f64>(utils::get_tsc_freq());
-				const auto busy = [&](u64 cycles) { return hz > 0 ? 100. * cycles / (secs * hz) : 0.; };
-				const u64 rsx_cycles = get_cycles();
+				const auto busy = [&](u64 cpu_us) { return 100. * cpu_us / (secs * 1'000'000.); };
+				const u64 rsx_cycles = thread_ctrl::get_current() ? thread_ctrl::get_current()->get_cpu_time_us() : 0;
 
 				std::string ppu_text, spu_text;
 				std::unordered_map<u32, u64> cycles_now;
 				idm::select<named_thread<ppu_thread>>([&](u32 id, named_thread<ppu_thread>& ppu)
 				{
-					const u64 c = thread_ctrl::get_cycles(ppu);
+					const u64 c = thread_ctrl::get_cpu_time_us(ppu);
 					cycles_now[id] = c;
 					if (auto it = s_win_thread_cycles.find(id); it != s_win_thread_cycles.end() && c >= it->second && busy(c - it->second) >= 5.)
 						fmt::append(ppu_text, " %s %.0f%%", ppu.ppu_tname.load() ? *ppu.ppu_tname.load() : std::string("?"), busy(c - it->second));
 				});
 				idm::select<named_thread<spu_thread>>([&](u32 id, named_thread<spu_thread>& spu)
 				{
-					const u64 c = thread_ctrl::get_cycles(spu);
+					const u64 c = thread_ctrl::get_cpu_time_us(spu);
 					cycles_now[id] = c;
 					if (auto it = s_win_thread_cycles.find(id); it != s_win_thread_cycles.end() && c >= it->second)
 						fmt::append(spu_text, " %.0f%%", busy(c - it->second));

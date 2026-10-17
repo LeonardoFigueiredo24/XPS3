@@ -564,10 +564,10 @@ namespace
 			struct game_config { std::string_view title_id, why, yaml; };
 			static constexpr game_config s_games[]
 			{
-				// Portal 2: the Xbox-wide Mega SPU blocks are only measured on the XMB and GTA V; the game
-				// is rated Playable on RPCS3's defaults, so keep its SPU blocks at the default (Safe).
-				{"BLUS30732", "Portal 2", "Core:\n  SPU Block Size: Safe\n"},
-				{"BLES01222", "Portal 2", "Core:\n  SPU Block Size: Safe\n"},
+				// Portal 2: 4 SPURS threads and SPU loop detection measured on the Xbox in a big test chamber
+				// (22 -> 27 fps, no slow frames). SPU blocks stay at RPCS3's default (Safe).
+				{"BLUS30732", "Portal 2", "Core:\n  SPU Block Size: Safe\n  Max SPURS Threads: 4\n  SPU loop detection: true\n"},
+				{"BLES01222", "Portal 2", "Core:\n  SPU Block Size: Safe\n  Max SPURS Threads: 4\n  SPU loop detection: true\n"},
 			};
 
 			for (const auto& game : s_games)
