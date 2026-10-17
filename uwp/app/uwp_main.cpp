@@ -1025,8 +1025,8 @@ namespace
 			std::string out;
 			if (fs::file tty{tty_path}; tty && tty.size() > b->tty_start)
 			{
-				tty.seek(b->tty_start);
-				out = tty.to_string();
+				out.resize(tty.size() - b->tty_start);
+				out.resize(tty.read_at(b->tty_start, out.data(), out.size()));
 			}
 			const std::string output_txt = path.substr(0, path.find_last_of("/\\") + 1) + "output.txt";
 			if (fs::file f{output_txt})

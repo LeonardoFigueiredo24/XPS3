@@ -22,6 +22,7 @@ Programs that stress the emulator outside of games, and the tools to run them on
 | ppu_threads3 | three PPU threads of compute at once (do they run in parallel?) |
 | lv2_pingpong | two PPU threads handing over a mutex + condition variable (thread wake-up latency) |
 | lv2_syscall, lv2_yield | cost of a cheap syscall, and of sys_ppu_thread_yield |
+| lv2_usleep100, lv2_usleep1000 | 2000 x 100 us and 500 x 1 ms sys_timer_usleep (both ideally 0.2 s / 0.5 s): host timer granularity |
 | spu_fp, spu_int (x1, x6) | SPU float and integer throughput on one SPU and on six at once |
 | spu_dma (x1, x6) | 16 KB MFC GET + PUT |
 | spu_atomic (x1, x6) | GETLLAR/PUTLLC increments of one shared line (reservations, the SPURS hot path) |

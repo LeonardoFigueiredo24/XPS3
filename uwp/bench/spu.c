@@ -9,7 +9,7 @@ u64 bench_sc8(u64 n, u64 a1, u64 a2, u64 a3, u64 a4, u64 a5, u64 a6, u64 a7, u64
 
 extern const char spu_image[], spu_image_end[];
 
-struct spu_segment { int32_t type; u32 ls, size, addr; };
+struct spu_segment { int32_t type; u32 ls, size, pad0, addr, pad1; }; // 0x18 bytes, address in the low half of a u64
 struct spu_image { u32 type, entry_point, segs; int32_t nsegs; };
 struct group_attr { u32 nsize, name; int32_t type; };
 struct thread_attr { u32 name, name_len, option; };
@@ -85,7 +85,7 @@ static u64 spu_join(u32 nspu)
 	for (u32 i = 0; i < nspu; i++)
 	{
 		const u32* r = (const u32*)(g_area + 0x100000 + i * 16);
-		s = (s << 7 | s >> 57) ^ r[0] ^ ((u64)r[1] << 32);
+		s = (s << 7 | s >> 57) ^ r[0] ^ ((u64)r[1] << 32) ^ ((u64)r[2] << 16) ^ ((u64)r[3] << 48);
 	}
 	return s;
 }
@@ -130,6 +130,13 @@ void spu_report_all(void (*rep)(const char*, u64, u64, u64), u64 (*tb)(void))
 		{"spu_atomic_x6", 3, 6, 300000},
 		{"spu_pingpong", 4, 1, 200000},
 	};
+
+	// Warm-up: the first run of each kernel includes compiling the SPU code.
+	for (u32 k = 0; k <= 4; k++)
+	{
+		u64 sum;
+		run(k, 1, 1, &sum);
+	}
 
 	for (u32 i = 0; i < sizeof(tests) / sizeof(tests[0]); i++)
 	{

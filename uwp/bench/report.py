@@ -5,8 +5,10 @@ rpcs3_bench_runner on PC) and prints a pass/fail table and the BENCH timings.
   report.py results.txt [--tests <ps3autotests checkout>] [--base other_results.txt]
 
 With --tests, each program's TTY / output.txt is compared with the .expected file next to the
-ELF in the ps3autotests checkout (matched by file name). With --base, BENCH lines are compared
-with another run (time ratio, and whether the checksums agree).
+ELF in the ps3autotests checkout (matched by file name). Real-PS3 .expected files include FPSCR/XER
+flag bits and exact estimates that RPCS3 skips by default, so many DIFF on PC too: the useful check
+is --base, which compares each output with another run (e.g. the PC reference) and the BENCH lines
+(time ratio, and whether the checksums agree).
 """
 import argparse
 import os
@@ -75,6 +77,14 @@ def main():
             else:
                 verdict = 'DIFF'
                 fails += 1
+        if name in base:
+            btext = ''.join(base[name]['out'])
+            if '--- output.txt ---\n' in btext:
+                btext = btext.split('--- output.txt ---\n', 1)[1]
+            strip = lambda s: '\n'.join(l for l in s.replace('\r\n', '\n').strip().split('\n') if not l.startswith('BENCH '))
+            same = strip(btext) == strip(text)
+            verdict += ' same output as base' if same else ' OUTPUT DIFFERS FROM BASE'
+            fails += not same
         print(f'{name:45} {status:8} {run["secs"]:8.2f}s  {verdict}')
 
         b = bench_lines(run)

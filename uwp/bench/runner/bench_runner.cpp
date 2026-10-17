@@ -4,6 +4,7 @@
 
 #include "stdafx.h"
 #include "Emu/System.h"
+#include "Emu/vfs_config.h"
 #include "Emu/system_config.h"
 #include "Emu/emu_callbacks.h"
 #include "Emu/IdManager.h"
@@ -35,6 +36,16 @@
 
 LOG_CHANNEL(sys_log, "SYS");
 
+extern const std::map<std::string_view, int> g_prx_list;
+
+// Normally in the Qt frontend: print and quit.
+[[noreturn]] void report_fatal_error(std::string_view text, bool, bool)
+{
+	std::fprintf(stderr, "FATAL: %.*s\n", static_cast<int>(text.size()), text.data());
+	logs::listener::sync_all();
+	std::_Exit(2);
+}
+
 namespace
 {
 	std::mutex g_queue_mutex;
@@ -64,7 +75,7 @@ namespace
 
 	void create_callbacks()
 	{
-		EmuCallbacks& cb = g_emu_callbacks;
+		auto& cb = g_emu_callbacks;
 		cb.update_emu_settings = []() {};
 		cb.save_emu_settings = []() {};
 		cb.try_to_quit = [](bool force, std::function<void()> on_exit) { if (force && on_exit) on_exit(); return force; };
@@ -156,6 +167,18 @@ int main(int argc, char** argv)
 	g_cfg.audio.renderer.set(audio_renderer::null);
 	g_cfg.core.ppu_decoder.set(ppu == "interp" ? ppu_decoder_type::_static : ppu_decoder_type::llvm);
 	g_cfg.core.spu_decoder.set(spu == "interp" ? spu_decoder_type::_static : spu == "asmjit" ? spu_decoder_type::asmjit : spu_decoder_type::llvm);
+	// Without firmware every firmware library must use RPCS3's built-in (HLE) version.
+	if (!fs::is_file(g_cfg_vfs.get_dev_flash() + "sys/external/liblv2.sprx"))
+	{
+		std::set<std::string> libs;
+		for (const auto& [name, hle] : g_prx_list)
+		{
+			if (!hle)
+				libs.emplace(std::string(name) + ":hle");
+		}
+		g_cfg.core.libraries_control.set_set(std::move(libs));
+		std::fprintf(stderr, "no firmware: using HLE for all firmware libraries\n");
+	}
 	Emulator::SaveSettings(g_cfg.to_string(), {});
 
 	const std::string tty_path = fs::get_log_dir() + "TTY.log";
@@ -189,9 +212,18 @@ int main(int argc, char** argv)
 		std::string out;
 		if (tty && tty.size() > tty_start)
 		{
-			tty.seek(tty_start);
-			out = tty.to_string();
+			out.resize(tty.size() - tty_start);
+			out.resize(tty.read_at(tty_start, out.data(), out.size()));
 		}
+		const std::string output_txt = elf.substr(0, elf.find_last_of('/') + 1) + "output.txt";
+		if (fs::file f{output_txt})
+		{
+			out += "--- output.txt ---\n" + f.to_string();
+			f.close();
+			fs::remove_file(output_txt);
+		}
+		if (!out.empty() && !out.ends_with('\n'))
+			out += '\n';
 		std::fwrite(out.data(), 1, out.size(), stdout);
 		std::printf("END %s %s %.3fs\n", elf.c_str(), res != game_boot_result::no_errors ? fmt::format("%s", res).c_str() : timed_out ? "timeout" : "ok", secs);
 		std::fflush(stdout);

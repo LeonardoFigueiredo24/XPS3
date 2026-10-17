@@ -122,13 +122,13 @@ s.br('finish')
 
 # --- k_fp: 8 independent FMA chains of 4 floats each ---
 s.label('k_fp')
-s.li32(11, 0x3F7FFF58)  # 0.99999
 s.li32(12, 0x3A83126F)  # 0.001
 for r in range(13, 21):
     s.li32(r, 0x3F800000 + (r << 12))
+    s.li32(r + 9, 0x3F7FFF58 - (r << 4))  # ~0.99999, a different factor per chain (r22-r29)
 s.label('fp_loop')
 for r in range(13, 21):
-    s.fma(r, r, 11, 12)
+    s.fma(r, r, r + 9, 12)
 s.ai(4, 4, -1)
 s.brnz(4, 'fp_loop')
 for r in range(13, 21):

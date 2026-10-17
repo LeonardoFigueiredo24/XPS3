@@ -387,6 +387,16 @@ static u64 t_yield(u64 n)
 	return n;
 }
 
+// sys_timer_usleep accuracy: N sleeps of a fixed length (the time per sleep shows the host's
+// timer granularity; a PS3 wakes after ~the asked time).
+static u64 g_usleep_us;
+static u64 t_usleep(u64 n)
+{
+	for (u64 i = 0; i < n; i++)
+		SYS(141, g_usleep_us);
+	return n;
+}
+
 // Two PPU threads of pure compute next to the main one: tests that PPU threads run in parallel.
 static u64 t_threads(u64 n)
 {
@@ -425,6 +435,10 @@ int bench_main(void)
 	RUN("lv2_pingpong", t_pingpong, 20000);
 	RUN("lv2_syscall", t_syscall, 1000000);
 	RUN("lv2_yield", t_yield, 200000);
+	g_usleep_us = 100;
+	RUN("lv2_usleep100", t_usleep, 2000);
+	g_usleep_us = 1000;
+	RUN("lv2_usleep1000", t_usleep, 500);
 
 	spu_report_all(report, mftb);
 
