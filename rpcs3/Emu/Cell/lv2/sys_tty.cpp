@@ -95,7 +95,9 @@ error_code sys_tty_write([[maybe_unused]] ppu_thread& ppu, s32 ch, vm::cptr<char
 {
 	ppu.state += cpu_flag::wait;
 
-	sys_tty.notice("sys_tty_write(ch=%d, buf=*0x%x, len=%d, pwritelen=*0x%x)", ch, buf, len, pwritelen);
+	// The text itself is logged below; this line doubled the log for programs that print one
+	// character per call (910k lines in 2 minutes of spu_alu on the Xbox).
+	sys_tty.trace("sys_tty_write(ch=%d, buf=*0x%x, len=%d, pwritelen=*0x%x)", ch, buf, len, pwritelen);
 
 	std::string msg;
 
