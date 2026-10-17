@@ -176,6 +176,9 @@ struct cpu_prof
 		// Total number of sample collected in reservation operation
 		u64 reservation_samples = 0;
 
+		// PPU idle samples by the syscall or HLE function the thread was in (where it waits)
+		std::unordered_map<const char*, u64> idle_in;
+
 		// Avoid printing replicas or when not much changed
 		u64 new_samples = 0;
 
@@ -185,6 +188,7 @@ struct cpu_prof
 		void reset()
 		{
 			freq.clear();
+			idle_in.clear();
 			samples = 0;
 			idle = 0;
 			new_samples = 0;
@@ -261,7 +265,32 @@ struct cpu_prof
 			}
 
 			// Print results
-			const std::string results = format(chart, samples, idle, ptr->id_type());
+			std::string results = format(chart, samples, idle, ptr->id_type());
+
+			if (!idle_in.empty())
+			{
+				std::multimap<u64, const char*, std::greater<u64>> waits;
+
+				for (auto& [func, count] : idle_in)
+				{
+					waits.emplace(count, func);
+				}
+
+				results += "\n\tIdle in:";
+
+				usz shown = 0;
+
+				for (auto& [count, func] : waits)
+				{
+					fmt::append(results, "\n\t%s: %.4f%% (%u)", func ? func : "(guest code)", get_percent(count, samples), count);
+
+					if (++shown >= 12)
+					{
+						break;
+					}
+				}
+			}
+
 			profiler.notice("Thread \"%s\" [0x%08x]: %u samples (%.4f%% idle), %u new, %u reservation (%.4f%%):\n%s", ptr->get_name(), ptr->id, samples, get_percent(idle, samples), new_samples, reservation_samples, get_percent(reservation_samples, samples - idle), results);
 
 			new_samples = 0;
@@ -437,6 +466,11 @@ struct cpu_prof
 						}
 
 						info.idle++;
+
+						if (ppu)
+						{
+							info.idle_in[atomic_storage<const char*>::load(ppu->current_function)]++;
+						}
 					}
 				}
 				else
