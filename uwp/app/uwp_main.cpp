@@ -641,6 +641,29 @@ namespace
 			fs::rename(g_android_config_dir + "RPCS3.log", g_android_config_dir + "RPCS3.prev.log", true);
 			fs::rename(g_local_dir + "mesa.log", g_local_dir + "mesa.prev.log", true);
 			fs::rename(g_local_dir + "memory.log", g_local_dir + "memory.prev.log", true);
+			// The last run that booted a game is also kept as RPCS3.game.log, so app restarts and
+			// menu-only runs after a play session don't rotate its log away.
+			if (fs::file prev{g_android_config_dir + "RPCS3.prev.log"})
+			{
+				static constexpr std::string_view marker = "} SYS: Serial: ";
+				std::string buf(4 << 20, '\0');
+				usz keep = 0;
+				bool game = false;
+				while (!game)
+				{
+					const usz n = prev.read(buf.data() + keep, buf.size() - keep);
+					if (!n)
+						break;
+					const std::string_view view(buf.data(), keep + n);
+					for (usz pos = view.find(marker); pos != umax && !game; pos = view.find(marker, pos + 1))
+						game = pos + marker.size() < view.size() && view[pos + marker.size()] >= 'A' && view[pos + marker.size()] <= 'Z';
+					keep = std::min<usz>(view.size(), marker.size());
+					std::memmove(buf.data(), view.data() + view.size() - keep, keep);
+				}
+				prev.close();
+				if (game)
+					fs::copy_file(g_android_config_dir + "RPCS3.prev.log", g_android_config_dir + "RPCS3.game.log", true);
+			}
 			static std::unique_ptr<logs::listener> log_file = logs::make_file_listener(g_android_config_dir + "RPCS3.log", 256 * 1024 * 1024);
 			sys_log.always()("UWP: %s", storage_note);
 

@@ -147,7 +147,8 @@ Per-game settings: `LocalState/rpcs3/config/custom_configs/config_<serial>.yml` 
 config.yml) overrides everything, including the app's built-in game settings (Portal 2: SPU blocks Safe).
 
 Logs: `LocalState/rpcs3/RPCS3.log` and `LocalState/mesa.log`; the previous run's are kept as
-`RPCS3.prev.log` and `mesa.prev.log`. `LocalState/memory.log` (and `memory.prev.log`) keeps the
+`RPCS3.prev.log` and `mesa.prev.log`, and the last run that booted a game also as
+`RPCS3.game.log`. `LocalState/memory.log` (and `memory.prev.log`) keeps the
 app memory trend even when RPCS3.log has hit its size cap. A fatal error shows its log line on the red screen.
 
 ## Branches
