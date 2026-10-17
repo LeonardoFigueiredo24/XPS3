@@ -3553,17 +3553,20 @@ namespace rsx
 
 		// Every 10 s: which thread limits the frame rate. busy = share of one core the thread used.
 		{
-			static u64 s_win_start = 0, s_win_idle = 0, s_win_frames = 0, s_win_draws = 0, s_win_submits = 0;
+			// idle_time restarts from 0 when the perf overlay samples it (get_load), hence the per-frame steps.
+			static u64 s_win_start = 0, s_win_idle = 0, s_prev_idle = 0, s_win_frames = 0, s_win_draws = 0, s_win_submits = 0;
 			static u64 s_win_setup = 0, s_win_vertex = 0, s_win_tex = 0, s_win_draw = 0, s_win_rsx_cycles = 0;
 			static std::unordered_map<u32, u64> s_win_thread_cycles;
 			const u64 now = get_system_time(), idle = performance_counters.idle_time;
 			const auto& st = m_frame_stats;
+			s_win_idle += idle >= s_prev_idle ? idle - s_prev_idle : idle;
+			s_prev_idle = idle;
 			s_win_frames++, s_win_draws += st.draw_calls, s_win_submits += st.submit_count;
 			s_win_setup += st.setup_time, s_win_vertex += st.vertex_upload_time, s_win_tex += st.textures_upload_time, s_win_draw += st.draw_exec_time;
 
 			if (!s_win_start || now < s_win_start)
 			{
-				s_win_start = now, s_win_idle = idle, s_win_rsx_cycles = get_cycles();
+				s_win_start = now, s_win_idle = 0, s_win_rsx_cycles = get_cycles();
 				s_win_frames = s_win_draws = s_win_submits = s_win_setup = s_win_vertex = s_win_tex = s_win_draw = 0;
 				s_win_thread_cycles.clear();
 			}
@@ -3593,12 +3596,12 @@ namespace rsx
 
 				const f64 frames = static_cast<f64>(std::max<u64>(s_win_frames, 1));
 				rsx_log.notice("UWP perf: %.1f fps | RSX busy %.0f%% (idle %.0f%%) | %.0f draws, %.1f submits/frame | ms/frame: setup %.2f, vertex %.2f, texture %.2f, draw %.2f | PPU busy:%s | SPU busy:%s",
-					s_win_frames / secs, busy(rsx_cycles - s_win_rsx_cycles), 100. * (idle - s_win_idle) / (now - s_win_start),
+					s_win_frames / secs, busy(rsx_cycles - s_win_rsx_cycles), 100. * s_win_idle / (now - s_win_start),
 					s_win_draws / frames, s_win_submits / frames,
 					s_win_setup / frames / 1000., s_win_vertex / frames / 1000., s_win_tex / frames / 1000., s_win_draw / frames / 1000.,
 					ppu_text, spu_text);
 
-				s_win_start = now, s_win_idle = idle, s_win_rsx_cycles = rsx_cycles;
+				s_win_start = now, s_win_idle = 0, s_win_rsx_cycles = rsx_cycles;
 				s_win_frames = s_win_draws = s_win_submits = s_win_setup = s_win_vertex = s_win_tex = s_win_draw = 0;
 				s_win_thread_cycles = std::move(cycles_now);
 			}

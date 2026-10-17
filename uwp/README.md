@@ -133,6 +133,10 @@ Empty files in the app's `LocalState` folder (via Device Portal file explorer):
 - `no_network`, `null_audio`, `null_renderer`, `heap_guard`, `ext_host_mem`: debugging switches.
 - `compile_headroom`, `compile_job_mb`: a new PPU/SPU compile job starts only while
   headroom + job_mb per running job is left of the app's memory (defaults 1280 and 128 MB).
+- `default_timer`: don't raise the system timer resolution (the app raises it to the finest the
+  device allows, as desktop RPCS3 does; the log shows both).
+- `rsx_idle_sleep`: microseconds the RSX thread sleeps per check once the game has given it
+  nothing to do for 1 ms, instead of spinning (default 0 = spin).
 - `dynamic_stencil_bias`: keep stencil masks and depth bias as Vulkan dynamic state. By default
   they are baked into the pipelines, because Dozen otherwise builds a D3D12 PSO for each new value
   at draw time on the RSX thread (hitches of 0.1-4 s in Portal 2).

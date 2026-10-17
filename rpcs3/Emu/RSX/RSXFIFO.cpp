@@ -665,6 +665,25 @@ namespace rsx
 		}
 	}
 
+#ifdef RPCS3_UWP
+	// Microseconds the RSX thread sleeps per check once the FIFO has been empty (or jumping to
+	// itself) for 1 ms, instead of spinning; 0 = spin as RPCS3 does. LocalState/rsx_idle_sleep.
+	u32 g_uwp_rsx_idle_sleep_us = 0;
+
+	static void uwp_idle_backoff(u64 idle_since)
+	{
+		if (g_uwp_rsx_idle_sleep_us && get_system_time() - idle_since >= 1000)
+			thread_ctrl::wait_for(g_uwp_rsx_idle_sleep_us, false);
+		else
+			std::this_thread::yield();
+	}
+#else
+	static void uwp_idle_backoff(u64)
+	{
+		std::this_thread::yield();
+	}
+#endif
+
 	void thread::run_FIFO()
 	{
 		FIFO::register_pair command;
@@ -695,7 +714,7 @@ namespace rsx
 				}
 				else
 				{
-					std::this_thread::yield();
+					uwp_idle_backoff(performance_counters.FIFO_idle_timestamp);
 				}
 
 				return;
@@ -728,6 +747,12 @@ namespace rsx
 						performance_counters.FIFO_idle_timestamp = get_system_time();
 						sync_point_request.release(true);
 					}
+#ifdef RPCS3_UWP
+					else if (performance_counters.state == FIFO::state::spinning)
+					{
+						uwp_idle_backoff(performance_counters.FIFO_idle_timestamp);
+					}
+#endif
 
 					performance_counters.state = FIFO::state::spinning;
 				}
