@@ -571,6 +571,13 @@ namespace
 				// (22 -> 27 fps, no slow frames). SPU blocks stay at RPCS3's default (Safe).
 				{"BLUS30732", "Portal 2", "Core:\n  SPU Block Size: Safe\n  Max SPURS Threads: 4\n  SPU loop detection: true\n"},
 				{"BLES01222", "Portal 2", "Core:\n  SPU Block Size: Safe\n  Max SPURS Threads: 4\n  SPU loop detection: true\n"},
+				// Minecraft: PS3 Edition: with the PS3 network Connected and no PSN, a new world sits on
+				// "Finalizing" forever (the game's server thread quits right after it starts); offline it
+				// generates the world and plays (A/B on the Xbox, 0.1.34.41).
+				{"BLES01976", "Minecraft", "Net:\n  Internet enabled: Disconnected\n"},
+				{"BLUS31426", "Minecraft", "Net:\n  Internet enabled: Disconnected\n"},
+				{"NPEB01899", "Minecraft", "Net:\n  Internet enabled: Disconnected\n"},
+				{"NPUB31419", "Minecraft", "Net:\n  Internet enabled: Disconnected\n"},
 			};
 
 			for (const auto& game : s_games)
