@@ -7,6 +7,16 @@
 
 #include "util/sysinfo.hpp"
 
+#ifdef RPCS3_UWP
+// Stencil masks and depth bias are baked into the pipelines instead of being dynamic state
+// (LocalState/dynamic_stencil_bias turns it off, uwp_main.cpp). Dozen on the Xbox's D3D12
+// (no IndependentFrontAndBackStencilRefMask, no DynamicDepthBias) can't make those dynamic: it
+// builds a D3D12 PSO per value set at the first draw that uses it, on the RSX thread, which
+// stalled Portal 2 for 0.1-4 s at a time. Baked in, the PSO is made when the pipeline is
+// created, which is on the async pipeline compiler threads.
+bool g_uwp_static_pipeline_state = true;
+#endif
+
 namespace vk
 {
 	// Global list of worker threads
@@ -104,9 +114,17 @@ namespace vk
 		dynamic_state_descriptors.push_back(VK_DYNAMIC_STATE_SCISSOR);
 		dynamic_state_descriptors.push_back(VK_DYNAMIC_STATE_LINE_WIDTH);
 		dynamic_state_descriptors.push_back(VK_DYNAMIC_STATE_BLEND_CONSTANTS);
-		dynamic_state_descriptors.push_back(VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK);
-		dynamic_state_descriptors.push_back(VK_DYNAMIC_STATE_STENCIL_WRITE_MASK);
+#ifdef RPCS3_UWP
+		if (!g_uwp_static_pipeline_state)
+#endif
+		{
+			dynamic_state_descriptors.push_back(VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK);
+			dynamic_state_descriptors.push_back(VK_DYNAMIC_STATE_STENCIL_WRITE_MASK);
+		}
 		dynamic_state_descriptors.push_back(VK_DYNAMIC_STATE_STENCIL_REFERENCE);
+#ifdef RPCS3_UWP
+		if (!g_uwp_static_pipeline_state)
+#endif
 		dynamic_state_descriptors.push_back(VK_DYNAMIC_STATE_DEPTH_BIAS);
 
 		auto pdss = &create_info.state.ds;

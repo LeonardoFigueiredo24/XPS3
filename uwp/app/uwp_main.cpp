@@ -77,6 +77,7 @@ extern thread_local bool g_ppu_precompile_prx_only;
 
 extern u32 g_uwp_desc_pool_max; // VKProgramPipeline.cpp
 extern u32 g_uwp_pipeline_limit; // VKPresent.cpp
+extern bool g_uwp_static_pipeline_state; // VKPipelineCompiler.cpp
 
 namespace
 {
@@ -752,6 +753,11 @@ namespace
 					rpcs3::utils::uwp_compile_gate::job_mb = v;
 			}
 			sys_log.always()("UWP: compile memory headroom: %u MB + %u MB per running job", rpcs3::utils::uwp_compile_gate::headroom_mb, rpcs3::utils::uwp_compile_gate::job_mb);
+			// Stencil masks and depth bias are baked into the Vulkan pipelines so Dozen builds their
+			// D3D12 PSOs in the background, not at the draw (hiccups in Portal 2). An empty
+			// LocalState/dynamic_stencil_bias file brings back RPCS3's dynamic state.
+			g_uwp_static_pipeline_state = !fs::is_file(g_local_dir + "dynamic_stencil_bias");
+			sys_log.always()("UWP: stencil masks and depth bias as %s state", g_uwp_static_pipeline_state ? "pipeline" : "dynamic");
 			// LLVM precompilation compiles every module in dev_flash (~580) before the XMB starts:
 			// 36+ minutes on the first boot on the Xbox. Without it only the modules that load get
 			// compiled (the rest when first used). An empty LocalState/precompile file turns it on.

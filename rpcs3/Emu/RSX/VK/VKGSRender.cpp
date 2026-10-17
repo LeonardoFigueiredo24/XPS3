@@ -274,6 +274,14 @@ namespace vk
 		}
 		properties.state.enable_depth_bias(true);
 		properties.state.enable_depth_bounds_test(depth_bounds_support);
+#ifdef RPCS3_UWP
+		// Depth bias is pipeline state here (VKPipelineCompiler.cpp), as vkCmdSetDepthBias would set it.
+		if (g_uwp_static_pipeline_state && REGS(ctx)->poly_offset_fill_enabled())
+		{
+			properties.state.rs.depthBiasConstantFactor = REGS(ctx)->poly_offset_bias();
+			properties.state.rs.depthBiasSlopeFactor = REGS(ctx)->poly_offset_scale();
+		}
+#endif
 
 		if (REGS(ctx)->depth_test_enabled())
 		{
@@ -371,6 +379,18 @@ namespace vk
 					vk::get_compare_func(REGS(ctx)->back_stencil_func()),
 					0xFF, 0xFF); //write mask, func_mask, ref are dynamic
 			}
+
+#ifdef RPCS3_UWP
+			if (g_uwp_static_pipeline_state)
+			{
+				// Masks are pipeline state here (VKPipelineCompiler.cpp); the reference stays dynamic.
+				properties.state.ds.front.compareMask = REGS(ctx)->stencil_func_mask();
+				properties.state.ds.front.writeMask = REGS(ctx)->stencil_mask();
+				const bool two_sided = REGS(ctx)->two_sided_stencil_test_enabled();
+				properties.state.ds.back.compareMask = two_sided ? REGS(ctx)->back_stencil_func_mask() : REGS(ctx)->stencil_func_mask();
+				properties.state.ds.back.writeMask = two_sided ? REGS(ctx)->back_stencil_mask() : REGS(ctx)->stencil_mask();
+			}
+#endif
 
 			if (ds && ds->samples() > 1 && !(ds->stencil_init_flags & 0xFF00))
 			{

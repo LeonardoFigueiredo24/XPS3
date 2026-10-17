@@ -133,6 +133,9 @@ Empty files in the app's `LocalState` folder (via Device Portal file explorer):
 - `no_network`, `null_audio`, `null_renderer`, `heap_guard`, `ext_host_mem`: debugging switches.
 - `compile_headroom`, `compile_job_mb`: a new PPU/SPU compile job starts only while
   headroom + job_mb per running job is left of the app's memory (defaults 1280 and 384 MB).
+- `dynamic_stencil_bias`: keep stencil masks and depth bias as Vulkan dynamic state. By default
+  they are baked into the pipelines, because Dozen otherwise builds a D3D12 PSO for each new value
+  at draw time on the RSX thread (hitches of 0.1-4 s in Portal 2).
 
 Per-game settings: `LocalState/rpcs3/config/custom_configs/config_<serial>.yml` (any subset of
 config.yml) overrides everything, including the app's built-in game settings (Portal 2: SPU blocks Safe).
