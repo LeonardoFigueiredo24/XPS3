@@ -528,6 +528,13 @@ namespace
 		{
 			if (g_state != shell_state::failed)
 				g_state = shell_state::finished;
+			// The game's session so far as RPCS3.game.log (also copied at the next launch, for runs
+			// that end without a stop: the app closed or killed).
+			if (const std::string& id = Emu.GetTitleID(); id.size() == 9 && id[0] >= 'A' && id[0] <= 'Z')
+			{
+				logs::listener::sync_all();
+				fs::copy_file(g_android_config_dir + "RPCS3.log", g_android_config_dir + "RPCS3.game.log", true);
+			}
 			uwp_frontend::on_emulation_stopped();
 		};
 		g_emu_callbacks.on_ready = []() {};

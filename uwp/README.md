@@ -147,7 +147,7 @@ Minecraft PS3 Edition: PS3 network Disconnected, it hangs on "Finalizing" when C
 
 Logs: `LocalState/rpcs3/RPCS3.log` and `LocalState/mesa.log`; the previous run's are kept as
 `RPCS3.prev.log` and `mesa.prev.log`, and the last run that booted a game also as
-`RPCS3.game.log`. `LocalState/memory.log` (and `memory.prev.log`) keeps the
+`RPCS3.game.log` (written when the game stops, or at the next launch). `LocalState/memory.log` (and `memory.prev.log`) keeps the
 app memory trend even when RPCS3.log has hit its size cap. A fatal error shows its log line on the red screen.
 
 ## Branches
