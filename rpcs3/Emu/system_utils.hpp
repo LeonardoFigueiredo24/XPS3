@@ -41,7 +41,7 @@ namespace rpcs3::utils
 
 		static inline u32 headroom_mb = 1280;
 		// Counted for each job already running (they grow after they start). LocalState/compile_job_mb.
-		static inline u32 job_mb = 384;
+		static inline u32 job_mb = 128;
 
 		// Peak app memory seen by the gate and total time jobs waited, since the last call.
 		static std::pair<u64, u64> take_stats();
