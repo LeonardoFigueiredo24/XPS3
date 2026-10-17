@@ -2162,6 +2162,9 @@ waitpkg_func static void __tpause(u32 cycles, u32 cstate)
 // (Sleep(1) ~1.9 ms at 1 ms resolution), so with RPCS3's 500 us a 1 ms usleep took ~1.5 ms
 // (bench lv2_usleep1000: 763 ms for 500 x 1 ms). LocalState/usleep_spin.
 u64 g_uwp_usleep_spin_us = 500;
+// Pause the core with MWAITX/TPAUSE for the spun tail of short sleeps instead of a yield loop.
+// RPCS3 only does that on 12+ host threads; the Xbox gives the app 8 (LocalState/um_wait).
+bool g_uwp_um_wait = false;
 #endif
 
 bool lv2_obj::wait_timeout(u64 usec, ppu_thread* cpu, bool scale, bool is_usleep)
@@ -2263,7 +2266,11 @@ bool lv2_obj::wait_timeout(u64 usec, ppu_thread* cpu, bool scale, bool is_usleep
 			}
 			// TODO: Determine best value for yield delay
 #if defined(ARCH_X64)
+#ifdef RPCS3_UWP
+			else if (utils::has_appropriate_um_wait() || (g_uwp_um_wait && utils::has_um_wait()))
+#else
 			else if (utils::has_appropriate_um_wait())
+#endif
 			{
 				const u32 us_in_tsc_clocks = ::narrow<u32>(remaining * (utils::get_tsc_freq() / 1000000ULL));
 
