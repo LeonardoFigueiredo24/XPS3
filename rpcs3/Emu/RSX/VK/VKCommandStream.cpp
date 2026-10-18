@@ -14,6 +14,12 @@ namespace vk
 	// global submit guard to prevent race condition on queue submit
 	shared_mutex g_submit_mutex;
 
+#ifdef RPCS3_UWP
+	// Time in queue submits (lock + vkQueueSubmit) and in the swapchain's frame hand-over
+	// (fence wait for the previous frame, copy to the shell); read by the hitch frame log.
+	atomic_t<u64> g_uwp_submit_us{0}, g_uwp_present_wait_us{0}, g_uwp_present_copy_us{0};
+#endif
+
 	void acquire_global_submit_lock()
 	{
 		g_submit_mutex.lock();
@@ -28,6 +34,9 @@ namespace vk
 	static void queue_submit_impl(const queue_submit_t& submit_info)
 	{
 		ensure(submit_info.pfence);
+#ifdef RPCS3_UWP
+		const u64 uwp_start = get_system_time();
+#endif
 		acquire_global_submit_lock();
 		VkSubmitInfo info
 		{
@@ -44,6 +53,9 @@ namespace vk
 
 		vkQueueSubmit(submit_info.queue, 1, &info, submit_info.pfence->handle);
 		release_global_submit_lock();
+#ifdef RPCS3_UWP
+		g_uwp_submit_us += get_system_time() - uwp_start;
+#endif
 
 		// Signal fence
 		submit_info.pfence->signal_flushed();

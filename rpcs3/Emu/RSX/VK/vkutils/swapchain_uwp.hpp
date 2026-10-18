@@ -15,6 +15,7 @@ namespace vk
 {
 	void acquire_global_submit_lock();
 	void release_global_submit_lock();
+	extern atomic_t<u64> g_uwp_present_wait_us, g_uwp_present_copy_us; // VKCommandStream.cpp
 
 	class swapchain_UWP : public native_swapchain_base
 	{
@@ -48,8 +49,11 @@ namespace vk
 			uwp_present_frame(src.second->get_pixels(), m_width, m_height);
 			src.second->free_pixels();
 			src.first = false;
+			const u64 t2 = now_us();
 			m_wait_sum_us += t1 - t0;
-			m_copy_sum_us += now_us() - t1;
+			m_copy_sum_us += t2 - t1;
+			g_uwp_present_wait_us += t1 - t0;
+			g_uwp_present_copy_us += t2 - t1;
 		}
 
 		void release_fences()
