@@ -674,6 +674,7 @@ namespace rsx
 
 	static void uwp_idle_backoff(u64 idle_since)
 	{
+		uwp_rsx_scope uwp_scope(uwp_phase_fifo_idle);
 		if (g_uwp_rsx_idle_sleep_us && get_system_time() - idle_since >= 1000)
 			thread_ctrl::wait_for(g_uwp_rsx_idle_sleep_us, false);
 		else
@@ -941,7 +942,13 @@ namespace rsx
 
 			if (auto method = methods[reg])
 			{
+#ifdef RPCS3_UWP
+				g_uwp_rsx_where.release((u32{uwp_phase_method} << 16) | reg);
 				method(m_ctx, reg, value);
+				g_uwp_rsx_where.release(u32{uwp_phase_fifo} << 16);
+#else
+				method(m_ctx, reg, value);
+#endif
 
 				if (state & cpu_flag::again)
 				{

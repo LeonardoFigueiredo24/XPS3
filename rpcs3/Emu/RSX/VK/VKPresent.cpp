@@ -433,6 +433,9 @@ vk::viewable_image* VKGSRender::get_present_source(/* inout */ vk::present_surfa
 void VKGSRender::flip(const rsx::display_flip_info_t& info)
 {
 #ifdef RPCS3_UWP
+	rsx::uwp_rsx_scope uwp_scope(rsx::uwp_phase_flip);
+#endif
+#ifdef RPCS3_UWP
 	// Every pipeline costs host memory in Dozen/D3D12 (about 1 MB on the Xbox) and RPCS3 never frees them:
 	// evict ones unused for 10 s once more than g_uwp_pipeline_limit exist.
 	static u64 s_evicted_pipelines = 0;

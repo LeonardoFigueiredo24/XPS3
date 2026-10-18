@@ -35,6 +35,7 @@
 
 #include "util/asm.hpp"
 
+#include <algorithm>
 #include <span>
 #include <thread>
 #include <unordered_map>
@@ -139,6 +140,69 @@ namespace rsx
 	atomic_t<u64> g_uwp_overlay_update_at_us = 0, g_uwp_overlay_update_max_us = 0;
 	static u32 g_uwp_hitches = 0;
 	static std::string g_uwp_hitch_text;
+
+	atomic_t<u32> g_uwp_rsx_where = 0;
+	thread_local bool g_uwp_on_rsx_thread = false;
+	static atomic_t<u32> g_uwp_rsx_frame = 0;
+
+	// Samples g_uwp_rsx_where every 1 ms. Frames of 60 ms or more are logged with their most common
+	// samples and the RSX thread's CPU time (low CPU time = it was waiting or not scheduled).
+	static void uwp_rsx_sampler(const thread_base* rsx_thread, const atomic_t<bool>* stop)
+	{
+		static constexpr const char* names[uwp_phase_count] = { "other", "fifo", "fifo idle", "method", "flip", "local task",
+			"zcull", "fifo wait", "external pause", "semaphore", "frame limit", "submit", "query", "fence", "invalidate" };
+
+		thread_ctrl::set_native_priority(1);
+
+		std::vector<std::pair<u32, u32>> hist;
+		u32 frame = g_uwp_rsx_frame.observe(), samples = 0, logged = 0;
+		u64 start = get_system_time(), cpu_start = rsx_thread->get_cpu_time_us();
+
+		while (!stop->observe())
+		{
+			std::this_thread::sleep_for(1ms);
+
+			if (const u32 f = g_uwp_rsx_frame.observe(); f != frame)
+			{
+				const u64 now = get_system_time(), cpu = rsx_thread->get_cpu_time_us();
+
+				if (now - start >= 60'000 && logged < 1000)
+				{
+					logged++;
+					std::sort(hist.begin(), hist.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+
+					std::string text, name;
+					for (usz i = 0; i < hist.size() && i < 6; i++)
+					{
+						const u32 phase = std::min<u32>(hist[i].first >> 16, uwp_phase_count - 1);
+						const u32 reg = hist[i].first & 0xffff;
+						fmt::append(text, " %s", names[phase]);
+						if (reg)
+						{
+							const auto [prefix, method] = get_method_name(reg, name);
+							fmt::append(text, " (%s)", name.empty() ? std::string(method) : name);
+						}
+						fmt::append(text, " %u%%;", hist[i].second * 100 / std::max<u32>(samples, 1));
+					}
+
+					rsx_log.notice("UWP RSX sampled: %.0f ms frame, RSX CPU %.0f ms, %u samples:%s", (now - start) / 1000.,
+						(cpu - cpu_start) / 1000., samples, text);
+				}
+
+				hist.clear();
+				samples = 0;
+				frame = f, start = now, cpu_start = cpu;
+			}
+
+			const u32 where = g_uwp_rsx_where.observe();
+			samples++;
+
+			if (auto it = std::find_if(hist.begin(), hist.end(), [&](const auto& e) { return e.first == where; }); it != hist.end())
+				it->second++;
+			else
+				hist.emplace_back(where, 1);
+		}
+	}
 #endif
 
 	std::function<bool(u32 addr, bool is_writing)> g_access_violation_handler;
@@ -1063,6 +1127,9 @@ namespace rsx
 
 	void thread::cpu_wait(bs_t<cpu_flag> old)
 	{
+#ifdef RPCS3_UWP
+		uwp_rsx_scope uwp_scope(uwp_phase_fifo_wait);
+#endif
 		if (external_interrupt_lock)
 		{
 			wait_pause();
@@ -1295,6 +1362,21 @@ namespace rsx
 		// Raise priority above other threads
 		thread_ctrl::scoped_priority high_prio(+1);
 
+#ifdef RPCS3_UWP
+		g_uwp_on_rsx_thread = true;
+		g_uwp_rsx_where.release(u32{uwp_phase_fifo} << 16);
+
+		struct uwp_sampler
+		{
+			atomic_t<bool> stop = false;
+			std::thread thread;
+			~uwp_sampler() { stop.release(true); if (thread.joinable()) thread.join(); }
+		} uwp_sampler_obj;
+
+		if (const thread_base* self = thread_ctrl::get_current())
+			uwp_sampler_obj.thread = std::thread(uwp_rsx_sampler, self, &uwp_sampler_obj.stop);
+#endif
+
 		if (g_cfg.core.thread_scheduler != thread_scheduler_mode::os)
 		{
 			thread_ctrl::set_thread_affinity_mask(thread_ctrl::get_affinity_mask(thread_class::rsx));
@@ -1332,10 +1414,20 @@ namespace rsx
 			if ((m_cycles_counter++ & 63) == 0 || m_eng_interrupt_mask)
 			{
 				// Execute backend-local tasks first
-				do_local_task(performance_counters.state);
+				{
+#ifdef RPCS3_UWP
+					uwp_rsx_scope uwp_scope(uwp_phase_local_task);
+#endif
+					do_local_task(performance_counters.state);
+				}
 
 				// Update other sub-units
-				zcull_ctrl->update(this);
+				{
+#ifdef RPCS3_UWP
+					uwp_rsx_scope uwp_scope(uwp_phase_zcull);
+#endif
+					zcull_ctrl->update(this);
+				}
 
 				if (m_host_dma_ctrl)
 				{
@@ -3384,6 +3476,9 @@ namespace rsx
 	{
 		AUDIT(!m_mtx_task.is_free());
 		m_eng_interrupt_mask.clear(rsx::memory_config_interrupt);
+#ifdef RPCS3_UWP
+		uwp_rsx_scope uwp_scope(uwp_phase_invalidate);
+#endif
 
 		if (!m_invalidated_memory_range.valid())
 		{
@@ -3434,6 +3529,9 @@ namespace rsx
 
 	void thread::wait_pause()
 	{
+#ifdef RPCS3_UWP
+		uwp_rsx_scope uwp_scope(uwp_phase_ext_pause);
+#endif
 		do
 		{
 			if (g_cfg.video.multithreaded_rsx)
@@ -3566,6 +3664,7 @@ namespace rsx
 				s_avg = s_avg ? (s_avg * 15 + std::min(dt, s_avg * 2)) / 16 : dt;
 			}
 			s_prev = now;
+			g_uwp_rsx_frame++;
 		}
 
 		// Where the time of slow frames goes (Xbox: no profiler). RSX idle = waiting for the game (FIFO
@@ -3814,6 +3913,9 @@ namespace rsx
 				if (target_rsx_flip_time > time + 1000)
 				{
 					const auto delay_us = target_rsx_flip_time - time;
+#ifdef RPCS3_UWP
+					uwp_rsx_scope uwp_scope(uwp_phase_frame_limit);
+#endif
 					lv2_obj::wait_timeout(delay_us, nullptr, false);
 					performance_counters.idle_time += delay_us;
 				}

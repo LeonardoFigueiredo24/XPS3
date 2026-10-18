@@ -1607,6 +1607,9 @@ void VKGSRender::clear_surface(u32 mask)
 
 void VKGSRender::flush_command_queue(bool hard_sync, bool do_not_switch)
 {
+#ifdef RPCS3_UWP
+	rsx::uwp_rsx_scope uwp_scope(rsx::uwp_phase_submit);
+#endif
 	close_and_submit_command_buffer();
 
 	if (hard_sync)
@@ -2894,6 +2897,9 @@ bool VKGSRender::check_occlusion_query_status(rsx::reports::occlusion_query_info
 
 void VKGSRender::get_occlusion_query_result(rsx::reports::occlusion_query_info* query)
 {
+#ifdef RPCS3_UWP
+	rsx::uwp_rsx_scope uwp_scope(rsx::uwp_phase_query);
+#endif
 	auto &data = m_occlusion_map[query->driver_handle];
 	if (data.indices.empty())
 		return;

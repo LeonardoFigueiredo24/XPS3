@@ -7,6 +7,7 @@
 #include "shared.h"
 
 #include "Emu/Cell/timers.hpp"
+#include "Emu/RSX/uwp_rsx_sampler.h"
 
 #include "util/sysinfo.hpp"
 #include "util/asm.hpp"
@@ -566,6 +567,7 @@ namespace vk
 
 	struct uwp_fence_wait_timer
 	{
+		rsx::uwp_rsx_scope phase{rsx::uwp_phase_fence};
 		u64 start = get_system_time();
 		~uwp_fence_wait_timer() { g_uwp_fence_wait_us += get_system_time() - start; g_uwp_fence_waits++; }
 	};
