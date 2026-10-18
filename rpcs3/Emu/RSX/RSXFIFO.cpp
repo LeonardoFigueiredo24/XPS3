@@ -126,6 +126,11 @@ namespace rsx
 					}
 				}
 
+#ifdef RPCS3_UWP
+				uwp_rsx_scope uwp_scope(uwp_phase_fifo_fetch);
+				g_uwp_fifo.refills++;
+#endif
+
 				// Make mask of cache lines to fetch
 				u8 to_fetch = static_cast<u8>((1u << (m_cache_size / 128)) - 1);
 
@@ -167,9 +172,16 @@ namespace rsx
 							}
 
 							bytes_read += 128;
+#ifdef RPCS3_UWP
+							g_uwp_fifo.refill_bytes += 128;
+#endif
 							continue;
 						}
 					}
+
+#ifdef RPCS3_UWP
+					g_uwp_fifo.retries++;
+#endif
 
 					if (!start_time)
 					{
@@ -200,6 +212,10 @@ namespace rsx
 					}
 					else
 					{
+#ifdef RPCS3_UWP
+						uwp_rsx_scope uwp_spin(uwp_phase_fifo_spin);
+						g_uwp_fifo.spins++;
+#endif
 						busy_wait(200);
 					}
 
@@ -710,6 +726,9 @@ namespace rsx
 			}
 			case FIFO::FIFO_EMPTY:
 			{
+#ifdef RPCS3_UWP
+				g_uwp_fifo.empty++;
+#endif
 				if (performance_counters.state == FIFO::state::running)
 				{
 					performance_counters.FIFO_idle_timestamp = get_system_time();
@@ -764,6 +783,9 @@ namespace rsx
 					last_known_code_start = offs;
 				}
 
+#ifdef RPCS3_UWP
+				g_uwp_fifo.jumps++;
+#endif
 				//rsx_log.warning("rsx jump(0x%x) #addr=0x%x, cmd=0x%x, get=0x%x, put=0x%x", offs, m_ioAddress + get, cmd, get, put);
 				fifo_ctrl->set_get(offs, cmd);
 				return;
@@ -779,6 +801,9 @@ namespace rsx
 				}
 
 				const u32 offs = cmd & RSX_METHOD_CALL_OFFSET_MASK;
+#ifdef RPCS3_UWP
+				g_uwp_fifo.calls++;
+#endif
 				fifo_ret_addr = fifo_ctrl->get_pos() + 4;
 				fifo_ctrl->set_get(offs);
 				last_known_code_start = offs;
@@ -938,6 +963,9 @@ namespace rsx
 			const u32 reg = (command.reg & 0xffff) >> 2;
 			const u32 value = command.value;
 
+#ifdef RPCS3_UWP
+			g_uwp_fifo.commands++;
+#endif
 			m_ctx->register_state->decode(reg, value);
 
 			if (auto method = methods[reg])

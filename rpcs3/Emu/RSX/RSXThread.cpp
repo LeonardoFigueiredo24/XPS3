@@ -142,6 +142,7 @@ namespace rsx
 	static std::string g_uwp_hitch_text;
 
 	atomic_t<u32> g_uwp_rsx_where = 0;
+	uwp_fifo_counters g_uwp_fifo;
 	thread_local bool g_uwp_on_rsx_thread = false;
 	static atomic_t<u32> g_uwp_rsx_frame = 0;
 
@@ -150,7 +151,8 @@ namespace rsx
 	static void uwp_rsx_sampler(const thread_base* rsx_thread, const atomic_t<bool>* stop)
 	{
 		static constexpr const char* names[uwp_phase_count] = { "other", "fifo", "fifo idle", "method", "flip", "local task",
-			"zcull", "fifo wait", "external pause", "semaphore", "frame limit", "submit", "query", "fence", "invalidate" };
+			"zcull", "fifo wait", "external pause", "semaphore", "frame limit", "submit", "query", "fence", "invalidate",
+			"fifo fetch", "fifo spin" };
 
 		thread_ctrl::set_native_priority(1);
 
@@ -3676,6 +3678,15 @@ namespace rsx
 			static u64 s_last_pipelines = 0, s_last_submit = 0, s_last_pwait = 0, s_last_pcopy = 0;
 			const u64 pipelines = vk::g_uwp_pipelines_created;
 			const u64 submit_us = vk::g_uwp_submit_us, pwait_us = vk::g_uwp_present_wait_us, pcopy_us = vk::g_uwp_present_copy_us;
+			static uwp_fifo_counters s_last_fifo;
+			const uwp_fifo_counters& fc = g_uwp_fifo;
+			if (s_last_flip && (now - s_last_flip >= 250'000 || uwp_hitch))
+			{
+				rsx_log.notice("UWP FIFO this frame: %llu commands, %llu refills (%llu KB), %llu line retries, %llu spins, %llu jumps, %llu calls, %llu empty polls",
+					fc.commands - s_last_fifo.commands, fc.refills - s_last_fifo.refills, (fc.refill_bytes - s_last_fifo.refill_bytes) >> 10,
+					fc.retries - s_last_fifo.retries, fc.spins - s_last_fifo.spins, fc.jumps - s_last_fifo.jumps, fc.calls - s_last_fifo.calls, fc.empty - s_last_fifo.empty);
+			}
+			s_last_fifo = fc;
 			if (s_last_flip && (now - s_last_flip >= 250'000 || uwp_hitch))
 			{
 				const auto& st = m_frame_stats;
@@ -3737,6 +3748,15 @@ namespace rsx
 					s_win_draws / frames, s_win_submits / frames,
 					s_win_setup / frames / 1000., s_win_vertex / frames / 1000., s_win_tex / frames / 1000., s_win_draw / frames / 1000.,
 					ppu_text, spu_text);
+				{
+					static uwp_fifo_counters s_win_fifo;
+					const uwp_fifo_counters& fc = g_uwp_fifo;
+					rsx_log.notice("UWP FIFO per frame: %.0f commands, %.1f refills (%.1f KB), %.1f line retries, %.1f spins, %.1f jumps, %.1f calls, %.1f empty polls",
+						(fc.commands - s_win_fifo.commands) / frames, (fc.refills - s_win_fifo.refills) / frames, (fc.refill_bytes - s_win_fifo.refill_bytes) / 1024. / frames,
+						(fc.retries - s_win_fifo.retries) / frames, (fc.spins - s_win_fifo.spins) / frames, (fc.jumps - s_win_fifo.jumps) / frames,
+						(fc.calls - s_win_fifo.calls) / frames, (fc.empty - s_win_fifo.empty) / frames);
+					s_win_fifo = fc;
+				}
 				rsx_log.notice("UWP hitches: %u in 10 s%s | memory poll max %.1f ms, stats overlay update max %.1f ms",
 					g_uwp_hitches, g_uwp_hitch_text, g_uwp_mem_poll_max_us.exchange(0) / 1000., g_uwp_overlay_update_max_us.exchange(0) / 1000.);
 				g_uwp_hitches = 0, g_uwp_hitch_text.clear();
