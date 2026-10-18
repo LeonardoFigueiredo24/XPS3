@@ -30,6 +30,7 @@ namespace rsx
 	};
 
 	extern uwp_fifo_counters g_uwp_fifo;
+	extern bool g_uwp_fifo_partial_line; // RSXFIFO.cpp
 	extern thread_local bool g_uwp_on_rsx_thread;
 
 	// Marks a phase on the RSX thread (no-op elsewhere), keeping the method it runs inside.

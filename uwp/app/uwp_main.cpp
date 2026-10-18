@@ -81,7 +81,7 @@ extern u32 g_uwp_pipeline_limit; // VKPresent.cpp
 extern bool g_uwp_static_pipeline_state; // VKPipelineCompiler.cpp
 extern bool g_uwp_pso_library; // VKPipelineCompiler.cpp
 extern "C" void* uwp_lazy_lookup(const wchar_t* dll, const char* name); // uwp_lazyresolve.c
-namespace rsx { extern u32 g_uwp_rsx_idle_sleep_us; } // RSXFIFO.cpp
+namespace rsx { extern u32 g_uwp_rsx_idle_sleep_us; extern bool g_uwp_fifo_partial_line; } // RSXFIFO.cpp
 namespace rsx { extern atomic_t<u64> g_uwp_mem_poll_at_us, g_uwp_mem_poll_max_us; } // RSXThread.cpp
 extern u64 g_uwp_usleep_spin_us; // lv2.cpp
 extern bool g_uwp_um_wait; // lv2.cpp
@@ -841,6 +841,9 @@ namespace
 				rsx::g_uwp_rsx_idle_sleep_us = std::min<u32>(v, 2000);
 			}
 			sys_log.always()("UWP: RSX idle sleep: %u us", rsx::g_uwp_rsx_idle_sleep_us);
+			// The FIFO cache line holding PUT is copied without the atomic re-read (RSXFIFO.cpp).
+			rsx::g_uwp_fifo_partial_line = !fs::is_file(g_local_dir + "fifo_partial_line_atomic");
+			sys_log.always()("UWP: FIFO line at PUT: %s", rsx::g_uwp_fifo_partial_line ? "plain copy" : "atomic re-read");
 			if (fs::file f{g_local_dir + "usleep_spin"})
 			{
 				const u64 v = std::strtoull(f.to_string().c_str(), nullptr, 10);

@@ -134,10 +134,32 @@ namespace rsx
 				// Make mask of cache lines to fetch
 				u8 to_fetch = static_cast<u8>((1u << (m_cache_size / 128)) - 1);
 
+#ifdef RPCS3_UWP
+				u32 partial_line = umax;
+#endif
+
 				if (addr < put && put < m_cache_addr + m_cache_size)
 				{
 					// Adjust to knownly-prepared FIFO buffer bounds
 					m_cache_size = put - m_cache_addr;
+
+#ifdef RPCS3_UWP
+					// The line holding PUT is usually still being written past PUT by the game. Its bytes
+					// below PUT are final, but the whole-line check below fails while the rest changes:
+					// in Minecraft the RSX thread re-read it ~600k times (~100 ms, a frame drop every
+					// second) and slowed the writer down by fighting over the line. Copy that line
+					// plainly, and skip the line starting at PUT when PUT is line-aligned (all unused).
+					if (g_uwp_fifo_partial_line)
+					{
+						const u32 lines = (m_cache_size + 127) / 128;
+						to_fetch &= static_cast<u8>((1u << lines) - 1);
+
+						if (m_cache_size % 128)
+						{
+							partial_line = lines - 1;
+						}
+					}
+#endif
 				}
 
 				// Atomic FIFO debug options
@@ -149,9 +171,19 @@ namespace rsx
 
 				u64 start_time = 0;
 				u32 bytes_read = 0;
+				int first_line = 0;
+
+#ifdef RPCS3_UWP
+				if (partial_line < 8)
+				{
+					mov_rdata(m_cache[partial_line], src[partial_line]);
+					to_fetch &= ~(1u << partial_line);
+					first_line = std::countr_zero<u32>(to_fetch);
+				}
+#endif
 
 				// Find the next set bit after every iteration
-				for (int i = 0;; i = (std::countr_zero<u32>(std::rotl<u8>(to_fetch, 0 - i - 1)) + i + 1) % 8)
+				for (int i = first_line; to_fetch; i = (std::countr_zero<u32>(std::rotl<u8>(to_fetch, 0 - i - 1)) + i + 1) % 8)
 				{
 					// If a reservation is being updated, try to load another
 					const auto& res = vm::reservation_acquire(addr1 + i * 128);
@@ -687,6 +719,10 @@ namespace rsx
 	// Spinning takes a hardware thread the SPUs and PPU need on the Xbox: in Portal 2, 200 us
 	// removed the periodic stalls (16 slow frames -> 0) and halved the RSX thread's CPU time.
 	u32 g_uwp_rsx_idle_sleep_us = 200;
+
+	// Copy the FIFO cache line holding PUT without the atomic re-read (see fetch_u32).
+	// LocalState/fifo_partial_line_atomic turns it off.
+	bool g_uwp_fifo_partial_line = true;
 
 	static void uwp_idle_backoff(u64 idle_since)
 	{
