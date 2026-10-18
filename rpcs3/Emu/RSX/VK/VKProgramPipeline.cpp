@@ -18,6 +18,10 @@ bool g_uwp_deferred_shader_compile = true;
 
 namespace vk
 {
+#ifdef RPCS3_UWP
+	extern atomic_t<u64> g_uwp_pipelines_created; // VKPipelineCompiler.cpp
+#endif
+
 	namespace glsl
 	{
 		using namespace ::glsl;
@@ -305,6 +309,9 @@ namespace vk
 				static atomic_t<u64> s_count = 0, s_us = 0;
 				const u64 us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - pipe_start).count();
 				const u64 n = ++s_count, total = s_us += us;
+#ifdef RPCS3_UWP
+				g_uwp_pipelines_created++;
+#endif
 
 				if (us >= 50'000 || (n & (n - 1)) == 0)
 					rsx_log.always()("VK: %s pipeline took %.3fs (%u pipelines, %.3fs total)", is_graphics_pipe ? "graphics" : "compute", us / 1e6, n, total / 1e6);

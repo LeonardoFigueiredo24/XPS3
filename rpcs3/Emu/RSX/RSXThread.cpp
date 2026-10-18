@@ -126,6 +126,7 @@ bool serialize<rsx::rsx_iomap_table>(utils::serial& ar, rsx::rsx_iomap_table& o)
 namespace vk
 {
 	extern atomic_t<u64> g_uwp_fence_wait_us, g_uwp_fence_waits; // VK/vkutils/sync.cpp
+	extern atomic_t<u64> g_uwp_pipelines_created; // VK/VKPipelineCompiler.cpp
 }
 #endif
 
@@ -3541,25 +3542,9 @@ namespace rsx
 		}
 
 #ifdef RPCS3_UWP
-		// Where the time of slow frames goes (Xbox: no profiler). RSX idle = waiting for the game (FIFO
-		// empty or semaphores), GPU wait = RSX waiting for the GPU to finish work.
-		{
-			static u64 s_last_flip = 0, s_last_idle = 0, s_last_gpu_wait = 0, s_last_gpu_waits = 0;
-			const u64 now = get_system_time(), idle = performance_counters.idle_time;
-			const u64 gpu_wait = vk::g_uwp_fence_wait_us, gpu_waits = vk::g_uwp_fence_waits;
-			if (s_last_flip && now - s_last_flip >= 250'000)
-			{
-				const auto& st = m_frame_stats;
-				rsx_log.notice("UWP slow frame: %.0f ms, RSX idle %.0f ms, GPU wait %.0f ms (%llu waits) | %u draws, %u submits | setup %.1f, vertex upload %.1f, texture upload %.1f, draw %.1f ms | %u/%u program lookups skipped",
-					(now - s_last_flip) / 1000., (idle >= s_last_idle ? idle - s_last_idle : idle) / 1000., (gpu_wait - s_last_gpu_wait) / 1000., gpu_waits - s_last_gpu_waits,
-					st.draw_calls, st.submit_count, st.setup_time / 1000., st.vertex_upload_time / 1000., st.textures_upload_time / 1000., st.draw_exec_time / 1000.,
-					st.program_cache_lookups_ellided, st.program_cache_lookups_total);
-			}
-			s_last_flip = now, s_last_idle = idle, s_last_gpu_wait = gpu_wait, s_last_gpu_waits = gpu_waits;
-		}
-
 		// Hitches: frames that took 1.4x the running average or more, with how long before each one
 		// the app polled its memory and the stats overlay updated (to find periodic stutter).
+		bool uwp_hitch = false;
 		{
 			static u64 s_prev = 0, s_avg = 0;
 			const u64 now = get_system_time();
@@ -3569,6 +3554,7 @@ namespace rsx
 				if (s_avg && dt >= s_avg * 14 / 10 && dt >= 20'000)
 				{
 					g_uwp_hitches++;
+					uwp_hitch = g_uwp_hitches <= 10;
 					if (g_uwp_hitches <= 10)
 					{
 						const auto ago = [&](u64 t) { return t && now >= t ? (now - t) / 1000. : -1.; };
@@ -3579,6 +3565,26 @@ namespace rsx
 				s_avg = s_avg ? (s_avg * 15 + std::min(dt, s_avg * 2)) / 16 : dt;
 			}
 			s_prev = now;
+		}
+
+		// Where the time of slow frames goes (Xbox: no profiler). RSX idle = waiting for the game (FIFO
+		// empty or semaphores), GPU wait = RSX waiting for the GPU to finish work.
+		{
+			static u64 s_last_flip = 0, s_last_idle = 0, s_last_gpu_wait = 0, s_last_gpu_waits = 0;
+			const u64 now = get_system_time(), idle = performance_counters.idle_time;
+			const u64 gpu_wait = vk::g_uwp_fence_wait_us, gpu_waits = vk::g_uwp_fence_waits;
+			static u64 s_last_pipelines = 0;
+			const u64 pipelines = vk::g_uwp_pipelines_created;
+			if (s_last_flip && (now - s_last_flip >= 250'000 || uwp_hitch))
+			{
+				const auto& st = m_frame_stats;
+				rsx_log.notice("UWP %s: %.0f ms, %llu new pipelines, RSX idle %.0f ms, GPU wait %.0f ms (%llu waits) | %u draws, %u submits | setup %.1f, vertex upload %.1f, texture upload %.1f, draw %.1f ms | %u/%u program lookups skipped",
+					now - s_last_flip >= 250'000 ? "slow frame" : "hitch frame", (now - s_last_flip) / 1000., pipelines - s_last_pipelines, (idle >= s_last_idle ? idle - s_last_idle : idle) / 1000., (gpu_wait - s_last_gpu_wait) / 1000., gpu_waits - s_last_gpu_waits,
+					st.draw_calls, st.submit_count, st.setup_time / 1000., st.vertex_upload_time / 1000., st.textures_upload_time / 1000., st.draw_exec_time / 1000.,
+					st.program_cache_lookups_ellided, st.program_cache_lookups_total);
+			}
+			s_last_pipelines = pipelines;
+			s_last_flip = now, s_last_idle = idle, s_last_gpu_wait = gpu_wait, s_last_gpu_waits = gpu_waits;
 		}
 
 		// Every 10 s: which thread limits the frame rate. busy = share of one core the thread used

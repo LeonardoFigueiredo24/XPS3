@@ -24,6 +24,7 @@
 #include "../Program/SPIRVCommon.h"
 
 #include "util/asm.hpp"
+#include "Emu/cache_utils.hpp"
 #include <vulkan/vulkan_core.h>
 
 namespace vk
@@ -629,6 +630,17 @@ VKGSRender::VKGSRender(utils::serial* ar) noexcept : GSRender(ar)
 		: g_cfg.video.shader_compiler_threads_count;  // Respect user override if set
 
 	spirv::initialize_compiler_context();
+#ifdef RPCS3_UWP
+	if (std::string cache_path = rpcs3::cache::get_ppu_cache(); !cache_path.empty())
+	{
+		fs::create_path(cache_path + "shaders_cache/");
+		g_uwp_pipeline_cache_path = cache_path + "shaders_cache/dzn_pipeline_cache.bin";
+	}
+	else
+	{
+		g_uwp_pipeline_cache_path.clear();
+	}
+#endif
 	vk::initialize_pipe_compiler(preferred_compiler_threads);
 
 	m_prog_buffer = std::make_unique<vk::program_cache>
