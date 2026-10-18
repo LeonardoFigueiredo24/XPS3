@@ -131,6 +131,14 @@ namespace vk
 
 namespace rsx
 {
+#ifdef RPCS3_UWP
+	// Set by the app's memory poll (uwp_main.cpp) and the perf overlay: when they last ran, longest run.
+	atomic_t<u64> g_uwp_mem_poll_at_us = 0, g_uwp_mem_poll_max_us = 0;
+	atomic_t<u64> g_uwp_overlay_update_at_us = 0, g_uwp_overlay_update_max_us = 0;
+	static u32 g_uwp_hitches = 0;
+	static std::string g_uwp_hitch_text;
+#endif
+
 	std::function<bool(u32 addr, bool is_writing)> g_access_violation_handler;
 
 	// TODO: Proper context manager
@@ -3550,6 +3558,29 @@ namespace rsx
 			s_last_flip = now, s_last_idle = idle, s_last_gpu_wait = gpu_wait, s_last_gpu_waits = gpu_waits;
 		}
 
+		// Hitches: frames that took 1.4x the running average or more, with how long before each one
+		// the app polled its memory and the stats overlay updated (to find periodic stutter).
+		{
+			static u64 s_prev = 0, s_avg = 0;
+			const u64 now = get_system_time();
+			if (s_prev && now > s_prev)
+			{
+				const u64 dt = now - s_prev;
+				if (s_avg && dt >= s_avg * 14 / 10 && dt >= 20'000)
+				{
+					g_uwp_hitches++;
+					if (g_uwp_hitches <= 10)
+					{
+						const auto ago = [&](u64 t) { return t && now >= t ? (now - t) / 1000. : -1.; };
+						fmt::append(g_uwp_hitch_text, " %.0fms@%.2fs(mem %.0f, ovl %.0f ms ago)", dt / 1000., now / 1e6,
+							ago(g_uwp_mem_poll_at_us.load()), ago(g_uwp_overlay_update_at_us.load()));
+					}
+				}
+				s_avg = s_avg ? (s_avg * 15 + std::min(dt, s_avg * 2)) / 16 : dt;
+			}
+			s_prev = now;
+		}
+
 		// Every 10 s: which thread limits the frame rate. busy = share of one core the thread used
 		// (CPU time; RSX includes the spinning while idle).
 		{
@@ -3599,6 +3630,9 @@ namespace rsx
 					s_win_draws / frames, s_win_submits / frames,
 					s_win_setup / frames / 1000., s_win_vertex / frames / 1000., s_win_tex / frames / 1000., s_win_draw / frames / 1000.,
 					ppu_text, spu_text);
+				rsx_log.notice("UWP hitches: %u in 10 s%s | memory poll max %.1f ms, stats overlay update max %.1f ms",
+					g_uwp_hitches, g_uwp_hitch_text, g_uwp_mem_poll_max_us.exchange(0) / 1000., g_uwp_overlay_update_max_us.exchange(0) / 1000.);
+				g_uwp_hitches = 0, g_uwp_hitch_text.clear();
 
 				s_win_start = now, s_win_idle = 0, s_win_rsx_cycles = rsx_cycles;
 				s_win_frames = s_win_draws = s_win_submits = s_win_setup = s_win_vertex = s_win_tex = s_win_draw = 0;
