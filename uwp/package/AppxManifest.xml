@@ -4,9 +4,9 @@
          xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
          IgnorableNamespaces="uap rescap">
   <!-- Publisher must match the signing certificate (the probe's test certificate). -->
-  <Identity Name="RPCS3Xbox" Publisher="CN=RPCS3XboxProbe" Version="0.1.34.56" ProcessorArchitecture="x64" />
+  <Identity Name="RPCS3Xbox" Publisher="CN=RPCS3XboxProbe" Version="0.1.34.57" ProcessorArchitecture="x64" />
   <Properties>
-    <DisplayName>RPCS3 Xbox (test)</DisplayName>
+    <DisplayName>RPCS3 Xbox (Beta)</DisplayName>
     <PublisherDisplayName>RPCS3 Xbox port project</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
@@ -18,7 +18,7 @@
   </Resources>
   <Applications>
     <Application Id="App" Executable="rpcs3_uwp.exe" EntryPoint="RPCS3Xbox.App">
-      <uap:VisualElements DisplayName="RPCS3 Xbox (test)" Description="RPCS3 PS3 emulator, Xbox UWP port test build"
+      <uap:VisualElements DisplayName="RPCS3 Xbox (Beta)" Description="RPCS3 PS3 emulator, Xbox UWP port beta build"
                           BackgroundColor="#1A1A1F" Square150x150Logo="Assets\Square150x150Logo.png" Square44x44Logo="Assets\Square44x44Logo.png">
         <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
         <uap:SplashScreen Image="Assets\SplashScreen.png" />
