@@ -3682,9 +3682,9 @@ namespace rsx
 			const uwp_fifo_counters& fc = g_uwp_fifo;
 			if (s_last_flip && (now - s_last_flip >= 250'000 || uwp_hitch))
 			{
-				rsx_log.notice("UWP FIFO this frame: %llu commands, %llu refills (%llu KB), %llu line retries, %llu spins, %llu jumps, %llu calls, %llu empty polls",
+				rsx_log.notice("UWP FIFO this frame: %llu commands, %llu refills (%llu KB), %llu line retries, %llu spins, %llu forced copies, %llu jumps, %llu calls, %llu empty polls",
 					fc.commands - s_last_fifo.commands, fc.refills - s_last_fifo.refills, (fc.refill_bytes - s_last_fifo.refill_bytes) >> 10,
-					fc.retries - s_last_fifo.retries, fc.spins - s_last_fifo.spins, fc.jumps - s_last_fifo.jumps, fc.calls - s_last_fifo.calls, fc.empty - s_last_fifo.empty);
+					fc.retries - s_last_fifo.retries, fc.spins - s_last_fifo.spins, fc.forced - s_last_fifo.forced, fc.jumps - s_last_fifo.jumps, fc.calls - s_last_fifo.calls, fc.empty - s_last_fifo.empty);
 			}
 			s_last_fifo = fc;
 			if (s_last_flip && (now - s_last_flip >= 250'000 || uwp_hitch))
@@ -3751,9 +3751,9 @@ namespace rsx
 				{
 					static uwp_fifo_counters s_win_fifo;
 					const uwp_fifo_counters& fc = g_uwp_fifo;
-					rsx_log.notice("UWP FIFO per frame: %.0f commands, %.1f refills (%.1f KB), %.1f line retries, %.1f spins, %.1f jumps, %.1f calls, %.1f empty polls",
+					rsx_log.notice("UWP FIFO per frame: %.0f commands, %.1f refills (%.1f KB), %.1f line retries, %.1f spins, %.2f forced copies, %.1f jumps, %.1f calls, %.1f empty polls",
 						(fc.commands - s_win_fifo.commands) / frames, (fc.refills - s_win_fifo.refills) / frames, (fc.refill_bytes - s_win_fifo.refill_bytes) / 1024. / frames,
-						(fc.retries - s_win_fifo.retries) / frames, (fc.spins - s_win_fifo.spins) / frames, (fc.jumps - s_win_fifo.jumps) / frames,
+						(fc.retries - s_win_fifo.retries) / frames, (fc.spins - s_win_fifo.spins) / frames, (fc.forced - s_win_fifo.forced) / frames, (fc.jumps - s_win_fifo.jumps) / frames,
 						(fc.calls - s_win_fifo.calls) / frames, (fc.empty - s_win_fifo.empty) / frames);
 					s_win_fifo = fc;
 				}

@@ -26,11 +26,12 @@ namespace rsx
 		u64 refill_bytes = 0;
 		u64 retries = 0;   // cache lines re-read because the guest was writing them
 		u64 spins = 0;     // 200-cycle waits for such lines
+		u64 forced = 0;    // lines copied plainly after 50 us of failed re-reads
 		u64 jumps = 0, calls = 0, empty = 0;
 	};
 
 	extern uwp_fifo_counters g_uwp_fifo;
-	extern bool g_uwp_fifo_partial_line; // RSXFIFO.cpp
+	extern bool g_uwp_fifo_partial_line, g_uwp_fifo_retry_cap; // RSXFIFO.cpp
 	extern thread_local bool g_uwp_on_rsx_thread;
 
 	// Marks a phase on the RSX thread (no-op elsewhere), keeping the method it runs inside.

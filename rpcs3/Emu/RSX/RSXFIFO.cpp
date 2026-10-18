@@ -229,6 +229,24 @@ namespace rsx
 					}
 
 					auto now = get_system_time();
+#ifdef RPCS3_UWP
+					// A line still failing after 50 us is copied plainly, as Fast fetch does: on the Xbox
+					// such lines stayed busy for ~100 ms at a time (600k re-reads, a visible frame drop).
+					if (g_uwp_fifo_retry_cap && now - start_time >= 50u)
+					{
+						for (u32 j = 0; j < 8; j++)
+						{
+							if (to_fetch & (1u << j))
+							{
+								mov_rdata(m_cache[j], src[j]);
+								g_uwp_fifo.forced++;
+							}
+						}
+
+						to_fetch = 0;
+						break;
+					}
+#endif
 					if (now - start_time >= 50u)
 					{
 						if (m_thread->is_stopped())
@@ -723,6 +741,10 @@ namespace rsx
 	// Copy the FIFO cache line holding PUT without the atomic re-read (see fetch_u32).
 	// LocalState/fifo_partial_line_atomic turns it off.
 	bool g_uwp_fifo_partial_line = true;
+
+	// Copy a FIFO cache line plainly once it has failed the atomic read for 50 us (see fetch_u32).
+	// LocalState/fifo_no_retry_cap turns it off.
+	bool g_uwp_fifo_retry_cap = true;
 
 	static void uwp_idle_backoff(u64 idle_since)
 	{
