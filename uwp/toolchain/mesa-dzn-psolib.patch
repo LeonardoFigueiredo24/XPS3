@@ -31,7 +31,7 @@ index 7f42f31..c08a046 100644
        /* Keep a copy of each serialized root signature so a failing PSO can dump its own. */
        static simple_mtx_t lock = SIMPLE_MTX_INITIALIZER;
 diff --git a/src/microsoft/vulkan/dzn_pipeline.c b/src/microsoft/vulkan/dzn_pipeline.c
-index 52f0b4b..4dcf069 100644
+index 52f0b4b..156816c 100644
 --- a/src/microsoft/vulkan/dzn_pipeline.c
 +++ b/src/microsoft/vulkan/dzn_pipeline.c
 @@ -39,6 +39,9 @@
@@ -55,7 +55,7 @@ index 52f0b4b..4dcf069 100644
        if (FAILED(hres)) {
           mesa_loge("dzn: CreatePipelineState for a graphics pipeline failed: 0x%08x", (unsigned)hres);
           dzn_pso_failure_probe(device, pdev, pipeline, pipeline->templates.stream_buf, stream_desc->SizeInBytes);
-@@ -2265,6 +2266,288 @@ dzn_pso_subobject_size(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE type, size_t *off)
+@@ -2265,6 +2266,304 @@ dzn_pso_subobject_size(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE type, size_t *off)
     }
  }
  
@@ -277,6 +277,22 @@ index 52f0b4b..4dcf069 100644
 +   if (!n || n >= sizeof(path))
 +      return;
 +
++   /* On the Xbox, CreatePipelineLibrary removed the device when the driver doesn't report
++    * library support: only call it when D3D12 says it has it. */
++   D3D12_FEATURE_DATA_SHADER_CACHE cache_caps = { 0 };
++   HRESULT caps_hr = ID3D12Device1_CheckFeatureSupport(device->dev, D3D12_FEATURE_SHADER_CACHE, &cache_caps, sizeof(cache_caps));
++   mesa_logw("dzn: D3D12 shader cache support 0x%x (0x%08x): single PSO %d, library %d, in-process %d, disk %d, driver-managed %d",
++             (unsigned)cache_caps.SupportFlags, (unsigned)caps_hr,
++             !!(cache_caps.SupportFlags & D3D12_SHADER_CACHE_SUPPORT_SINGLE_PSO),
++             !!(cache_caps.SupportFlags & D3D12_SHADER_CACHE_SUPPORT_LIBRARY),
++             !!(cache_caps.SupportFlags & D3D12_SHADER_CACHE_SUPPORT_AUTOMATIC_INPROC_CACHE),
++             !!(cache_caps.SupportFlags & D3D12_SHADER_CACHE_SUPPORT_AUTOMATIC_DISK_CACHE),
++             !!(cache_caps.SupportFlags & D3D12_SHADER_CACHE_SUPPORT_DRIVER_MANAGED_CACHE));
++   if (FAILED(caps_hr) || !(cache_caps.SupportFlags & D3D12_SHADER_CACHE_SUPPORT_LIBRARY)) {
++      mesa_logw("dzn: no D3D12 pipeline library support, not keeping PSOs");
++      return;
++   }
++
 +   size_t size = 0;
 +   void *blob = NULL;
 +   FILE *f = fopen(path, "rb");
@@ -344,7 +360,7 @@ index 52f0b4b..4dcf069 100644
  
  /* Rebuild a PSO stream with some subobjects dropped or converted, to find which one a driver rejects. */
  #define DZN_REBUILD_DS1_TO_DS (1u << 31)
-@@ -2638,9 +2921,7 @@ dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
+@@ -2638,9 +2937,7 @@ dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
  
        update_stencil_state(pdev, pipeline, stream_buf, &masked_key);
  
@@ -355,7 +371,7 @@ index 52f0b4b..4dcf069 100644
        if (FAILED(hres)) {
           mesa_loge("dzn: CreatePipelineState for a pipeline variant failed: 0x%08x (strip cut %d)",
                     (unsigned)hres, (int)masked_key.ib_strip_cut);
-@@ -3019,9 +3300,7 @@ dzn_compute_pipeline_create(struct dzn_device *device,
+@@ -3019,9 +3316,7 @@ dzn_compute_pipeline_create(struct dzn_device *device,
     if (ret != VK_SUCCESS)
        goto out;
  

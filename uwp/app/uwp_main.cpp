@@ -847,7 +847,8 @@ namespace
 				g_uwp_usleep_spin_us = std::clamp<u64>(v, 1, 5000);
 			}
 			sys_log.always()("UWP: usleep spin: last %u us", g_uwp_usleep_spin_us);
-			g_uwp_pso_library = !fs::is_file(g_local_dir + "no_pso_library");
+			// Off by default: on .51 CreatePipelineLibrary removed the D3D12 device on the Xbox.
+			g_uwp_pso_library = fs::is_file(g_local_dir + "pso_library") && !fs::is_file(g_local_dir + "no_pso_library");
 			sys_log.always()("UWP: D3D12 PSO library: %s", g_uwp_pso_library ? "on" : "off");
 			g_mem_watch = !fs::is_file(g_local_dir + "no_mem_watch");
 			sys_log.always()("UWP: app memory poll every second: %s", g_mem_watch ? "on" : "off");

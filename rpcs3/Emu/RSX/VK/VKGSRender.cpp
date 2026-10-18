@@ -439,7 +439,7 @@ VKGSRender::VKGSRender(utils::serial* ar) noexcept : GSRender(ar)
 #ifdef RPCS3_UWP
 	// Per game: the VkPipelineCache file (VKPipelineCompiler.cpp) and Dozen's D3D12 PSO library,
 	// which Dozen opens when the device is created (DZN_PSO_LIBRARY) and saves along with the
-	// pipeline cache. LocalState/no_pso_library turns the library off (uwp_main.cpp).
+	// pipeline cache. Opt-in with LocalState/pso_library (uwp_main.cpp).
 	if (std::string cache_path = rpcs3::cache::get_ppu_cache(); !cache_path.empty())
 	{
 		fs::create_path(cache_path + "shaders_cache/");
