@@ -25,6 +25,7 @@ bool g_uwp_static_pipeline_state = true;
 // (8 minutes of compile) in a Portal 2 session with warm caches. Kept per game in this file
 // (VKGSRender.cpp sets it), loaded at start and saved in the background after new pipelines.
 std::string g_uwp_pipeline_cache_path;
+bool g_uwp_pso_library = true;
 #endif
 
 namespace vk

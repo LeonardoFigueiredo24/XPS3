@@ -79,6 +79,7 @@ extern u32 g_uwp_desc_pool_max; // VKProgramPipeline.cpp
 extern bool g_uwp_deferred_shader_compile; // VKProgramPipeline.cpp
 extern u32 g_uwp_pipeline_limit; // VKPresent.cpp
 extern bool g_uwp_static_pipeline_state; // VKPipelineCompiler.cpp
+extern bool g_uwp_pso_library; // VKPipelineCompiler.cpp
 extern "C" void* uwp_lazy_lookup(const wchar_t* dll, const char* name); // uwp_lazyresolve.c
 namespace rsx { extern u32 g_uwp_rsx_idle_sleep_us; } // RSXFIFO.cpp
 namespace rsx { extern atomic_t<u64> g_uwp_mem_poll_at_us, g_uwp_mem_poll_max_us; } // RSXThread.cpp
@@ -846,6 +847,8 @@ namespace
 				g_uwp_usleep_spin_us = std::clamp<u64>(v, 1, 5000);
 			}
 			sys_log.always()("UWP: usleep spin: last %u us", g_uwp_usleep_spin_us);
+			g_uwp_pso_library = !fs::is_file(g_local_dir + "no_pso_library");
+			sys_log.always()("UWP: D3D12 PSO library: %s", g_uwp_pso_library ? "on" : "off");
 			g_mem_watch = !fs::is_file(g_local_dir + "no_mem_watch");
 			sys_log.always()("UWP: app memory poll every second: %s", g_mem_watch ? "on" : "off");
 			g_uwp_um_wait = fs::is_file(g_local_dir + "um_wait");

@@ -255,6 +255,7 @@ namespace vk
 #ifdef RPCS3_UWP
 extern bool g_uwp_static_pipeline_state; // VKPipelineCompiler.cpp
 extern std::string g_uwp_pipeline_cache_path; // VKPipelineCompiler.cpp
+extern bool g_uwp_pso_library; // VKPipelineCompiler.cpp
 #endif
 
 namespace rpcs3

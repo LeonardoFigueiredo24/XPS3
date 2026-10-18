@@ -436,6 +436,26 @@ u64 VKGSRender::get_cycles()
 
 VKGSRender::VKGSRender(utils::serial* ar) noexcept : GSRender(ar)
 {
+#ifdef RPCS3_UWP
+	// Per game: the VkPipelineCache file (VKPipelineCompiler.cpp) and Dozen's D3D12 PSO library,
+	// which Dozen opens when the device is created (DZN_PSO_LIBRARY) and saves along with the
+	// pipeline cache. LocalState/no_pso_library turns the library off (uwp_main.cpp).
+	if (std::string cache_path = rpcs3::cache::get_ppu_cache(); !cache_path.empty())
+	{
+		fs::create_path(cache_path + "shaders_cache/");
+		g_uwp_pipeline_cache_path = cache_path + "shaders_cache/dzn_pipeline_cache.bin";
+	}
+	else
+	{
+		g_uwp_pipeline_cache_path.clear();
+	}
+
+	const std::string pso_library = g_uwp_pipeline_cache_path.empty() || !g_uwp_pso_library ? std::string() : g_uwp_pipeline_cache_path.substr(0, g_uwp_pipeline_cache_path.size() - 22) + "dzn_pso_library.bin";
+#ifdef _WIN32
+	_putenv_s("DZN_PSO_LIBRARY", pso_library.c_str()); // empty removes it (also from the process environment)
+#endif
+	rsx_log.notice("UWP: D3D12 PSO library: %s", pso_library.empty() ? "off" : pso_library);
+#endif
 	// Initialize dependencies
 	g_fxo->need<rsx::dma_manager>();
 	g_fxo->need<vk::driver_manager_thread>();
@@ -630,17 +650,6 @@ VKGSRender::VKGSRender(utils::serial* ar) noexcept : GSRender(ar)
 		: g_cfg.video.shader_compiler_threads_count;  // Respect user override if set
 
 	spirv::initialize_compiler_context();
-#ifdef RPCS3_UWP
-	if (std::string cache_path = rpcs3::cache::get_ppu_cache(); !cache_path.empty())
-	{
-		fs::create_path(cache_path + "shaders_cache/");
-		g_uwp_pipeline_cache_path = cache_path + "shaders_cache/dzn_pipeline_cache.bin";
-	}
-	else
-	{
-		g_uwp_pipeline_cache_path.clear();
-	}
-#endif
 	vk::initialize_pipe_compiler(preferred_compiler_threads);
 
 	m_prog_buffer = std::make_unique<vk::program_cache>
