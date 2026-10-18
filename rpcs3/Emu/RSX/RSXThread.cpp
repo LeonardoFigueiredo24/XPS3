@@ -35,6 +35,7 @@
 
 #include "util/asm.hpp"
 
+#include <algorithm>
 #include <span>
 #include <thread>
 #include <unordered_map>
@@ -126,11 +127,86 @@ bool serialize<rsx::rsx_iomap_table>(utils::serial& ar, rsx::rsx_iomap_table& o)
 namespace vk
 {
 	extern atomic_t<u64> g_uwp_fence_wait_us, g_uwp_fence_waits; // VK/vkutils/sync.cpp
+	extern atomic_t<u64> g_uwp_pipelines_created; // VK/VKPipelineCompiler.cpp
+	extern atomic_t<u64> g_uwp_submit_us, g_uwp_present_wait_us, g_uwp_present_copy_us; // VK/VKCommandStream.cpp
 }
 #endif
 
 namespace rsx
 {
+#ifdef RPCS3_UWP
+	// Set by the app's memory poll (uwp_main.cpp) and the perf overlay: when they last ran, longest run.
+	atomic_t<u64> g_uwp_mem_poll_at_us = 0, g_uwp_mem_poll_max_us = 0;
+	atomic_t<u64> g_uwp_overlay_update_at_us = 0, g_uwp_overlay_update_max_us = 0;
+	static u32 g_uwp_hitches = 0;
+	static std::string g_uwp_hitch_text;
+
+	atomic_t<u32> g_uwp_rsx_where = 0;
+	uwp_fifo_counters g_uwp_fifo;
+	thread_local bool g_uwp_on_rsx_thread = false;
+	static atomic_t<u32> g_uwp_rsx_frame = 0;
+
+	// Samples g_uwp_rsx_where every 1 ms. Frames of 60 ms or more are logged with their most common
+	// samples and the RSX thread's CPU time (low CPU time = it was waiting or not scheduled).
+	static void uwp_rsx_sampler(const thread_base* rsx_thread, const atomic_t<bool>* stop)
+	{
+		static constexpr const char* names[uwp_phase_count] = { "other", "fifo", "fifo idle", "method", "flip", "local task",
+			"zcull", "fifo wait", "external pause", "semaphore", "frame limit", "submit", "query", "fence", "invalidate",
+			"fifo fetch", "fifo spin" };
+
+		thread_ctrl::set_native_priority(1);
+
+		std::vector<std::pair<u32, u32>> hist;
+		u32 frame = g_uwp_rsx_frame.observe(), samples = 0, logged = 0;
+		u64 start = get_system_time(), cpu_start = rsx_thread->get_cpu_time_us();
+
+		while (!stop->observe())
+		{
+			std::this_thread::sleep_for(1ms);
+
+			if (const u32 f = g_uwp_rsx_frame.observe(); f != frame)
+			{
+				const u64 now = get_system_time(), cpu = rsx_thread->get_cpu_time_us();
+
+				if (now - start >= 60'000 && logged < 1000)
+				{
+					logged++;
+					std::sort(hist.begin(), hist.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+
+					std::string text, name;
+					for (usz i = 0; i < hist.size() && i < 6; i++)
+					{
+						const u32 phase = std::min<u32>(hist[i].first >> 16, uwp_phase_count - 1);
+						const u32 reg = hist[i].first & 0xffff;
+						fmt::append(text, " %s", names[phase]);
+						if (reg)
+						{
+							const auto [prefix, method] = get_method_name(reg, name);
+							fmt::append(text, " (%s)", name.empty() ? std::string(method) : name);
+						}
+						fmt::append(text, " %u%%;", hist[i].second * 100 / std::max<u32>(samples, 1));
+					}
+
+					rsx_log.notice("UWP RSX sampled: %.0f ms frame, RSX CPU %.0f ms, %u samples:%s", (now - start) / 1000.,
+						(cpu - cpu_start) / 1000., samples, text);
+				}
+
+				hist.clear();
+				samples = 0;
+				frame = f, start = now, cpu_start = cpu;
+			}
+
+			const u32 where = g_uwp_rsx_where.observe();
+			samples++;
+
+			if (auto it = std::find_if(hist.begin(), hist.end(), [&](const auto& e) { return e.first == where; }); it != hist.end())
+				it->second++;
+			else
+				hist.emplace_back(where, 1);
+		}
+	}
+#endif
+
 	std::function<bool(u32 addr, bool is_writing)> g_access_violation_handler;
 
 	// TODO: Proper context manager
@@ -1053,6 +1129,9 @@ namespace rsx
 
 	void thread::cpu_wait(bs_t<cpu_flag> old)
 	{
+#ifdef RPCS3_UWP
+		uwp_rsx_scope uwp_scope(uwp_phase_fifo_wait);
+#endif
 		if (external_interrupt_lock)
 		{
 			wait_pause();
@@ -1285,6 +1364,21 @@ namespace rsx
 		// Raise priority above other threads
 		thread_ctrl::scoped_priority high_prio(+1);
 
+#ifdef RPCS3_UWP
+		g_uwp_on_rsx_thread = true;
+		g_uwp_rsx_where.release(u32{uwp_phase_fifo} << 16);
+
+		struct uwp_sampler
+		{
+			atomic_t<bool> stop = false;
+			std::thread thread;
+			~uwp_sampler() { stop.release(true); if (thread.joinable()) thread.join(); }
+		} uwp_sampler_obj;
+
+		if (const thread_base* self = thread_ctrl::get_current())
+			uwp_sampler_obj.thread = std::thread(uwp_rsx_sampler, self, &uwp_sampler_obj.stop);
+#endif
+
 		if (g_cfg.core.thread_scheduler != thread_scheduler_mode::os)
 		{
 			thread_ctrl::set_thread_affinity_mask(thread_ctrl::get_affinity_mask(thread_class::rsx));
@@ -1322,10 +1416,20 @@ namespace rsx
 			if ((m_cycles_counter++ & 63) == 0 || m_eng_interrupt_mask)
 			{
 				// Execute backend-local tasks first
-				do_local_task(performance_counters.state);
+				{
+#ifdef RPCS3_UWP
+					uwp_rsx_scope uwp_scope(uwp_phase_local_task);
+#endif
+					do_local_task(performance_counters.state);
+				}
 
 				// Update other sub-units
-				zcull_ctrl->update(this);
+				{
+#ifdef RPCS3_UWP
+					uwp_rsx_scope uwp_scope(uwp_phase_zcull);
+#endif
+					zcull_ctrl->update(this);
+				}
 
 				if (m_host_dma_ctrl)
 				{
@@ -3374,6 +3478,9 @@ namespace rsx
 	{
 		AUDIT(!m_mtx_task.is_free());
 		m_eng_interrupt_mask.clear(rsx::memory_config_interrupt);
+#ifdef RPCS3_UWP
+		uwp_rsx_scope uwp_scope(uwp_phase_invalidate);
+#endif
 
 		if (!m_invalidated_memory_range.valid())
 		{
@@ -3424,6 +3531,9 @@ namespace rsx
 
 	void thread::wait_pause()
 	{
+#ifdef RPCS3_UWP
+		uwp_rsx_scope uwp_scope(uwp_phase_ext_pause);
+#endif
 		do
 		{
 			if (g_cfg.video.multithreaded_rsx)
@@ -3533,20 +3643,59 @@ namespace rsx
 		}
 
 #ifdef RPCS3_UWP
+		// Hitches: frames that took 1.4x the running average or more, with how long before each one
+		// the app polled its memory and the stats overlay updated (to find periodic stutter).
+		bool uwp_hitch = false;
+		{
+			static u64 s_prev = 0, s_avg = 0;
+			const u64 now = get_system_time();
+			if (s_prev && now > s_prev)
+			{
+				const u64 dt = now - s_prev;
+				if (s_avg && dt >= s_avg * 14 / 10 && dt >= 20'000)
+				{
+					g_uwp_hitches++;
+					uwp_hitch = g_uwp_hitches <= 10;
+					if (g_uwp_hitches <= 10)
+					{
+						const auto ago = [&](u64 t) { return t && now >= t ? (now - t) / 1000. : -1.; };
+						fmt::append(g_uwp_hitch_text, " %.0fms@%.2fs(mem %.0f, ovl %.0f ms ago)", dt / 1000., now / 1e6,
+							ago(g_uwp_mem_poll_at_us.load()), ago(g_uwp_overlay_update_at_us.load()));
+					}
+				}
+				s_avg = s_avg ? (s_avg * 15 + std::min(dt, s_avg * 2)) / 16 : dt;
+			}
+			s_prev = now;
+			g_uwp_rsx_frame++;
+		}
+
 		// Where the time of slow frames goes (Xbox: no profiler). RSX idle = waiting for the game (FIFO
 		// empty or semaphores), GPU wait = RSX waiting for the GPU to finish work.
 		{
 			static u64 s_last_flip = 0, s_last_idle = 0, s_last_gpu_wait = 0, s_last_gpu_waits = 0;
 			const u64 now = get_system_time(), idle = performance_counters.idle_time;
 			const u64 gpu_wait = vk::g_uwp_fence_wait_us, gpu_waits = vk::g_uwp_fence_waits;
-			if (s_last_flip && now - s_last_flip >= 250'000)
+			static u64 s_last_pipelines = 0, s_last_submit = 0, s_last_pwait = 0, s_last_pcopy = 0;
+			const u64 pipelines = vk::g_uwp_pipelines_created;
+			const u64 submit_us = vk::g_uwp_submit_us, pwait_us = vk::g_uwp_present_wait_us, pcopy_us = vk::g_uwp_present_copy_us;
+			static uwp_fifo_counters s_last_fifo;
+			const uwp_fifo_counters& fc = g_uwp_fifo;
+			if (s_last_flip && (now - s_last_flip >= 250'000 || uwp_hitch))
+			{
+				rsx_log.notice("UWP FIFO this frame: %llu commands, %llu refills (%llu KB), %llu line retries, %llu spins, %llu forced copies, %llu jumps, %llu calls, %llu empty polls",
+					fc.commands - s_last_fifo.commands, fc.refills - s_last_fifo.refills, (fc.refill_bytes - s_last_fifo.refill_bytes) >> 10,
+					fc.retries - s_last_fifo.retries, fc.spins - s_last_fifo.spins, fc.forced - s_last_fifo.forced, fc.jumps - s_last_fifo.jumps, fc.calls - s_last_fifo.calls, fc.empty - s_last_fifo.empty);
+			}
+			s_last_fifo = fc;
+			if (s_last_flip && (now - s_last_flip >= 250'000 || uwp_hitch))
 			{
 				const auto& st = m_frame_stats;
-				rsx_log.notice("UWP slow frame: %.0f ms, RSX idle %.0f ms, GPU wait %.0f ms (%llu waits) | %u draws, %u submits | setup %.1f, vertex upload %.1f, texture upload %.1f, draw %.1f ms | %u/%u program lookups skipped",
-					(now - s_last_flip) / 1000., (idle >= s_last_idle ? idle - s_last_idle : idle) / 1000., (gpu_wait - s_last_gpu_wait) / 1000., gpu_waits - s_last_gpu_waits,
+				rsx_log.notice("UWP %s: %.0f ms, %llu new pipelines, submit %.1f ms, present wait %.1f ms, present copy %.1f ms, RSX idle %.0f ms, GPU wait %.0f ms (%llu waits) | %u draws, %u submits | setup %.1f, vertex upload %.1f, texture upload %.1f, draw %.1f ms | %u/%u program lookups skipped",
+					now - s_last_flip >= 250'000 ? "slow frame" : "hitch frame", (now - s_last_flip) / 1000., pipelines - s_last_pipelines, (submit_us - s_last_submit) / 1000., (pwait_us - s_last_pwait) / 1000., (pcopy_us - s_last_pcopy) / 1000., (idle >= s_last_idle ? idle - s_last_idle : idle) / 1000., (gpu_wait - s_last_gpu_wait) / 1000., gpu_waits - s_last_gpu_waits,
 					st.draw_calls, st.submit_count, st.setup_time / 1000., st.vertex_upload_time / 1000., st.textures_upload_time / 1000., st.draw_exec_time / 1000.,
 					st.program_cache_lookups_ellided, st.program_cache_lookups_total);
 			}
+			s_last_pipelines = pipelines, s_last_submit = submit_us, s_last_pwait = pwait_us, s_last_pcopy = pcopy_us;
 			s_last_flip = now, s_last_idle = idle, s_last_gpu_wait = gpu_wait, s_last_gpu_waits = gpu_waits;
 		}
 
@@ -3599,6 +3748,18 @@ namespace rsx
 					s_win_draws / frames, s_win_submits / frames,
 					s_win_setup / frames / 1000., s_win_vertex / frames / 1000., s_win_tex / frames / 1000., s_win_draw / frames / 1000.,
 					ppu_text, spu_text);
+				{
+					static uwp_fifo_counters s_win_fifo;
+					const uwp_fifo_counters& fc = g_uwp_fifo;
+					rsx_log.notice("UWP FIFO per frame: %.0f commands, %.1f refills (%.1f KB), %.1f line retries, %.1f spins, %.2f forced copies, %.1f jumps, %.1f calls, %.1f empty polls",
+						(fc.commands - s_win_fifo.commands) / frames, (fc.refills - s_win_fifo.refills) / frames, (fc.refill_bytes - s_win_fifo.refill_bytes) / 1024. / frames,
+						(fc.retries - s_win_fifo.retries) / frames, (fc.spins - s_win_fifo.spins) / frames, (fc.forced - s_win_fifo.forced) / frames, (fc.jumps - s_win_fifo.jumps) / frames,
+						(fc.calls - s_win_fifo.calls) / frames, (fc.empty - s_win_fifo.empty) / frames);
+					s_win_fifo = fc;
+				}
+				rsx_log.notice("UWP hitches: %u in 10 s%s | memory poll max %.1f ms, stats overlay update max %.1f ms",
+					g_uwp_hitches, g_uwp_hitch_text, g_uwp_mem_poll_max_us.exchange(0) / 1000., g_uwp_overlay_update_max_us.exchange(0) / 1000.);
+				g_uwp_hitches = 0, g_uwp_hitch_text.clear();
 
 				s_win_start = now, s_win_idle = 0, s_win_rsx_cycles = rsx_cycles;
 				s_win_frames = s_win_draws = s_win_submits = s_win_setup = s_win_vertex = s_win_tex = s_win_draw = 0;
@@ -3772,6 +3933,9 @@ namespace rsx
 				if (target_rsx_flip_time > time + 1000)
 				{
 					const auto delay_us = target_rsx_flip_time - time;
+#ifdef RPCS3_UWP
+					uwp_rsx_scope uwp_scope(uwp_phase_frame_limit);
+#endif
 					lv2_obj::wait_timeout(delay_us, nullptr, false);
 					performance_counters.idle_time += delay_us;
 				}

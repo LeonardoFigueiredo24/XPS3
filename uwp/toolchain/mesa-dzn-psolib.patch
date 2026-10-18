@@ -1,0 +1,421 @@
+diff --git a/src/microsoft/vulkan/dzn_device.c b/src/microsoft/vulkan/dzn_device.c
+index 7f42f31..c08a046 100644
+--- a/src/microsoft/vulkan/dzn_device.c
++++ b/src/microsoft/vulkan/dzn_device.c
+@@ -2235,6 +2235,7 @@ dzn_device_destroy(struct dzn_device *device, const VkAllocationCallbacks *pAllo
+    dzn_device_query_finish(device);
+    dzn_meta_finish(device);
+    dzn_device_internal_buf_pool_finish(device);
++   dzn_pso_lib_finish(device);
+ 
+    dzn_foreach_pool_type(type) {
+       dzn_descriptor_heap_finish(&device->device_heaps[type].heap);
+@@ -2471,6 +2472,7 @@ dzn_device_create(struct dzn_physical_device *pdev,
+    for (uint32_t b = 0; b < ARRAY_SIZE(device->internal_buf_pool.bufs); b++)
+       list_inithead(&device->internal_buf_pool.bufs[b]);
+    device->internal_buf_pool.disabled = os_get_option("DZN_NO_BUFPOOL") != NULL;
++   dzn_pso_lib_init(device);
+ 
+    assert(queue_count == qindex);
+    *out = dzn_device_to_handle(device);
+@@ -2523,6 +2525,11 @@ dzn_device_create_root_sig(struct dzn_device *device,
+                                      ID3D10Blob_GetBufferSize(sig),
+                                      &IID_ID3D12RootSignature,
+                                      (void **)&root_sig);
++   if (root_sig) {
++      uint8_t hash[BLAKE3_KEY_LEN];
++      _mesa_blake3_compute(ID3D10Blob_GetBufferPointer(sig), ID3D10Blob_GetBufferSize(sig), hash);
++      ID3D12RootSignature_SetPrivateData(root_sig, &dzn_root_sig_hash_guid, sizeof(hash), hash);
++   }
+    if (root_sig) {
+       /* Keep a copy of each serialized root signature so a failing PSO can dump its own. */
+       static simple_mtx_t lock = SIMPLE_MTX_INITIALIZER;
+diff --git a/src/microsoft/vulkan/dzn_pipeline.c b/src/microsoft/vulkan/dzn_pipeline.c
+index 52f0b4b..156816c 100644
+--- a/src/microsoft/vulkan/dzn_pipeline.c
++++ b/src/microsoft/vulkan/dzn_pipeline.c
+@@ -39,6 +39,9 @@
+ #include "vk_pipeline_cache.h"
+ 
+ #include "util/u_debug.h"
++#include "util/os_time.h"
++#include "util/u_atomic.h"
++#include "vk_common_entrypoints.h"
+ 
+ #define d3d12_pipeline_state_stream_new_desc(__stream, __maxstreamsz, __id, __type, __desc) \
+    __type *__desc; \
+@@ -2099,9 +2102,7 @@ dzn_graphics_pipeline_create(struct dzn_device *device,
+    }
+ 
+    if (!pipeline->variants) {
+-      hres = ID3D12Device4_CreatePipelineState(device->dev, stream_desc,
+-                                               &IID_ID3D12PipelineState,
+-                                               (void **)&pipeline->base.state);
++      hres = dzn_create_pso(device, stream_desc, &pipeline->base.state, false);
+       if (FAILED(hres)) {
+          mesa_loge("dzn: CreatePipelineState for a graphics pipeline failed: 0x%08x", (unsigned)hres);
+          dzn_pso_failure_probe(device, pdev, pipeline, pipeline->templates.stream_buf, stream_desc->SizeInBytes);
+@@ -2265,6 +2266,304 @@ dzn_pso_subobject_size(D3D12_PIPELINE_STATE_SUBOBJECT_TYPE type, size_t *off)
+    }
+ }
+ 
++/* UWP port: PSO library (see struct dzn_device::pso_lib). */
++static const GUID dzn_IID_ID3D12PipelineLibrary1 =
++   { 0x80eabf42, 0x2568, 0x4e5e, { 0xbd, 0x82, 0xc3, 0x7f, 0x86, 0x96, 0x1d, 0xc3 } };
++
++#define DZN_PSO_LIB_MAX_SIZE (384ull << 20)
++
++/* Content hash of a PSO stream: shader bytecode, input layout strings and root signature content
++ * instead of their pointers. False when the stream holds something not handled here. A name clash
++ * can't produce a wrong PSO: LoadPipeline checks the description against the stored one.
++ */
++static bool
++dzn_pso_stream_hash(const D3D12_PIPELINE_STATE_STREAM_DESC *desc, uint8_t out[BLAKE3_KEY_LEN])
++{
++   struct mesa_blake3 ctx;
++   _mesa_blake3_init(&ctx);
++   const uint8_t *p = (const uint8_t *)desc->pPipelineStateSubobjectStream, *end = p + desc->SizeInBytes;
++   while (p < end) {
++      D3D12_PIPELINE_STATE_SUBOBJECT_TYPE t = *(const D3D12_PIPELINE_STATE_SUBOBJECT_TYPE *)p;
++      size_t off = 0, sz = dzn_pso_subobject_size(t, &off);
++      if (!sz)
++         return false;
++      const uint8_t *d = p + off;
++      p += ALIGN_POT(sz, sizeof(void *));
++      _mesa_blake3_update(&ctx, &t, sizeof(t));
++      switch (t) {
++      case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE: {
++         ID3D12RootSignature *rs = *(ID3D12RootSignature *const *)d;
++         uint8_t h[BLAKE3_KEY_LEN];
++         UINT hs = sizeof(h);
++         if (!rs || FAILED(ID3D12RootSignature_GetPrivateData(rs, &dzn_root_sig_hash_guid, &hs, h)) || hs != sizeof(h))
++            return false;
++         _mesa_blake3_update(&ctx, h, sizeof(h));
++         break;
++      }
++      case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VS:
++      case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS:
++      case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DS:
++      case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_HS:
++      case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_GS:
++      case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CS: {
++         const D3D12_SHADER_BYTECODE *bc = (const D3D12_SHADER_BYTECODE *)d;
++         uint64_t len = bc->pShaderBytecode ? bc->BytecodeLength : 0;
++         _mesa_blake3_update(&ctx, &len, sizeof(len));
++         if (len)
++            _mesa_blake3_update(&ctx, bc->pShaderBytecode, len);
++         break;
++      }
++      case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_INPUT_LAYOUT: {
++         const D3D12_INPUT_LAYOUT_DESC *il = (const D3D12_INPUT_LAYOUT_DESC *)d;
++         _mesa_blake3_update(&ctx, &il->NumElements, sizeof(il->NumElements));
++         for (UINT i = 0; i < il->NumElements; i++) {
++            const D3D12_INPUT_ELEMENT_DESC *e = &il->pInputElementDescs[i];
++            const char *sem = e->SemanticName ? e->SemanticName : "";
++            _mesa_blake3_update(&ctx, sem, strlen(sem) + 1);
++            _mesa_blake3_update(&ctx, &e->SemanticIndex, sizeof(*e) - offsetof(D3D12_INPUT_ELEMENT_DESC, SemanticIndex));
++         }
++         break;
++      }
++      case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VIEW_INSTANCING: {
++         const D3D12_VIEW_INSTANCING_DESC *vi = (const D3D12_VIEW_INSTANCING_DESC *)d;
++         _mesa_blake3_update(&ctx, &vi->ViewInstanceCount, sizeof(vi->ViewInstanceCount));
++         _mesa_blake3_update(&ctx, &vi->Flags, sizeof(vi->Flags));
++         if (vi->pViewInstanceLocations && vi->ViewInstanceCount)
++            _mesa_blake3_update(&ctx, vi->pViewInstanceLocations, vi->ViewInstanceCount * sizeof(*vi->pViewInstanceLocations));
++         break;
++      }
++      case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_STREAM_OUTPUT: {
++         const D3D12_STREAM_OUTPUT_DESC *so = (const D3D12_STREAM_OUTPUT_DESC *)d;
++         if (so->NumEntries || so->NumStrides)
++            return false;
++         _mesa_blake3_update(&ctx, &so->RasterizedStream, sizeof(so->RasterizedStream));
++         break;
++      }
++      case D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_CACHED_PSO: {
++         const D3D12_CACHED_PIPELINE_STATE *c = (const D3D12_CACHED_PIPELINE_STATE *)d;
++         if (c->pCachedBlob && c->CachedBlobSizeInBytes)
++            return false;
++         break;
++      }
++      default:
++         _mesa_blake3_update(&ctx, d, sz - off);
++         break;
++      }
++   }
++   _mesa_blake3_final(&ctx, out);
++   return true;
++}
++
++static void
++dzn_pso_lib_stats(struct dzn_device *device, uint64_t ns, bool from_lib, bool at_draw)
++{
++   uint32_t n;
++   if (from_lib) {
++      p_atomic_add(&device->pso_lib.load_ns, ns);
++      n = p_atomic_inc_return(&device->pso_lib.loaded);
++   } else {
++      p_atomic_add(&device->pso_lib.compile_ns, ns);
++      n = p_atomic_inc_return(&device->pso_lib.compiled);
++   }
++
++   static uint32_t at_draw_logged;
++   if (at_draw && p_atomic_inc_return(&at_draw_logged) <= 200)
++      mesa_logw("dzn: PSO variant made at draw time: %.1f ms (%s)", ns / 1e6,
++                from_lib ? "from the PSO library" : device->pso_lib.lib ? "compiled, not in the PSO library" : "compiled");
++
++   uint32_t total = p_atomic_read(&device->pso_lib.loaded) + p_atomic_read(&device->pso_lib.compiled);
++   if (total && (total & 63) == 0 && n)
++      mesa_logw("dzn: PSOs: %u from the library (avg %.2f ms), %u compiled (avg %.1f ms)",
++                p_atomic_read(&device->pso_lib.loaded),
++                p_atomic_read(&device->pso_lib.loaded) ? p_atomic_read(&device->pso_lib.load_ns) / 1e6 / p_atomic_read(&device->pso_lib.loaded) : 0.,
++                p_atomic_read(&device->pso_lib.compiled),
++                p_atomic_read(&device->pso_lib.compiled) ? p_atomic_read(&device->pso_lib.compile_ns) / 1e6 / p_atomic_read(&device->pso_lib.compiled) : 0.);
++}
++
++HRESULT
++dzn_create_pso(struct dzn_device *device, const D3D12_PIPELINE_STATE_STREAM_DESC *desc,
++               ID3D12PipelineState **out, bool at_draw)
++{
++   const int64_t start = os_time_get_nano();
++   WCHAR name[2 * BLAKE3_KEY_LEN + 1];
++   bool named = false;
++   HRESULT hr;
++
++   if (device->pso_lib.lib) {
++      uint8_t hash[BLAKE3_KEY_LEN];
++      if (dzn_pso_stream_hash(desc, hash)) {
++         static const char hex[] = "0123456789abcdef";
++         for (unsigned i = 0; i < BLAKE3_KEY_LEN; i++) {
++            name[2 * i] = hex[hash[i] >> 4];
++            name[2 * i + 1] = hex[hash[i] & 15];
++         }
++         name[2 * BLAKE3_KEY_LEN] = 0;
++         named = true;
++
++         simple_mtx_lock(&device->pso_lib.lock);
++         hr = ID3D12PipelineLibrary1_LoadPipeline(device->pso_lib.lib, name, desc,
++                                                  &IID_ID3D12PipelineState, (void **)out);
++         simple_mtx_unlock(&device->pso_lib.lock);
++         if (SUCCEEDED(hr)) {
++            dzn_pso_lib_stats(device, os_time_get_nano() - start, true, at_draw);
++            return hr;
++         }
++         *out = NULL;
++      }
++   }
++
++   hr = ID3D12Device4_CreatePipelineState(device->dev, desc, &IID_ID3D12PipelineState, (void **)out);
++
++   if (SUCCEEDED(hr) && named) {
++      simple_mtx_lock(&device->pso_lib.lock);
++      if (!device->pso_lib.full &&
++          SUCCEEDED(ID3D12PipelineLibrary1_StorePipeline(device->pso_lib.lib, name, *out)))
++         device->pso_lib.dirty = true;
++      simple_mtx_unlock(&device->pso_lib.lock);
++   }
++
++   dzn_pso_lib_stats(device, os_time_get_nano() - start, false, at_draw);
++   return hr;
++}
++
++static void
++dzn_pso_lib_save(struct dzn_device *device)
++{
++   if (!device->pso_lib.lib || !device->pso_lib.dirty)
++      return;
++
++   const int64_t start = os_time_get_nano();
++   simple_mtx_lock(&device->pso_lib.lock);
++   SIZE_T size = ID3D12PipelineLibrary1_GetSerializedSize(device->pso_lib.lib);
++   if (size > DZN_PSO_LIB_MAX_SIZE) {
++      device->pso_lib.full = true;
++      mesa_logw("dzn: PSO library is %u MB, no longer adding to it", (unsigned)(size >> 20));
++   }
++   void *buf = size ? malloc(size) : NULL;
++   HRESULT hr = buf ? ID3D12PipelineLibrary1_Serialize(device->pso_lib.lib, buf, size) : E_OUTOFMEMORY;
++   if (SUCCEEDED(hr))
++      device->pso_lib.dirty = false;
++   simple_mtx_unlock(&device->pso_lib.lock);
++
++   if (FAILED(hr)) {
++      mesa_loge("dzn: could not serialize the PSO library (0x%08x)", (unsigned)hr);
++      free(buf);
++      return;
++   }
++
++   char tmp[MAX_PATH * 2];
++   snprintf(tmp, sizeof(tmp), "%s.tmp", device->pso_lib.path);
++   FILE *f = fopen(tmp, "wb");
++   bool ok = f && fwrite(buf, 1, size, f) == size;
++   if (f)
++      ok = fclose(f) == 0 && ok;
++   free(buf);
++
++   WCHAR wtmp[MAX_PATH * 2], wpath[MAX_PATH * 2];
++   ok = ok && MultiByteToWideChar(CP_UTF8, 0, tmp, -1, wtmp, ARRAY_SIZE(wtmp)) &&
++        MultiByteToWideChar(CP_UTF8, 0, device->pso_lib.path, -1, wpath, ARRAY_SIZE(wpath)) &&
++        MoveFileExW(wtmp, wpath, MOVEFILE_REPLACE_EXISTING);
++
++   if (ok) {
++      device->pso_lib.saved_kb = (uint32_t)(size >> 10);
++      mesa_logw("dzn: saved the PSO library (%u KB, %u PSOs loaded from it and %u compiled this run) in %.0f ms",
++                (unsigned)(size >> 10), p_atomic_read(&device->pso_lib.loaded), p_atomic_read(&device->pso_lib.compiled),
++                (os_time_get_nano() - start) / 1e6);
++   } else {
++      mesa_loge("dzn: could not write the PSO library to %s", device->pso_lib.path);
++   }
++}
++
++void
++dzn_pso_lib_init(struct dzn_device *device)
++{
++   simple_mtx_init(&device->pso_lib.lock, mtx_plain);
++
++   char path[MAX_PATH * 2];
++   DWORD n = GetEnvironmentVariableA("DZN_PSO_LIBRARY", path, sizeof(path));
++   if (!n || n >= sizeof(path))
++      return;
++
++   /* On the Xbox, CreatePipelineLibrary removed the device when the driver doesn't report
++    * library support: only call it when D3D12 says it has it. */
++   D3D12_FEATURE_DATA_SHADER_CACHE cache_caps = { 0 };
++   HRESULT caps_hr = ID3D12Device1_CheckFeatureSupport(device->dev, D3D12_FEATURE_SHADER_CACHE, &cache_caps, sizeof(cache_caps));
++   mesa_logw("dzn: D3D12 shader cache support 0x%x (0x%08x): single PSO %d, library %d, in-process %d, disk %d, driver-managed %d",
++             (unsigned)cache_caps.SupportFlags, (unsigned)caps_hr,
++             !!(cache_caps.SupportFlags & D3D12_SHADER_CACHE_SUPPORT_SINGLE_PSO),
++             !!(cache_caps.SupportFlags & D3D12_SHADER_CACHE_SUPPORT_LIBRARY),
++             !!(cache_caps.SupportFlags & D3D12_SHADER_CACHE_SUPPORT_AUTOMATIC_INPROC_CACHE),
++             !!(cache_caps.SupportFlags & D3D12_SHADER_CACHE_SUPPORT_AUTOMATIC_DISK_CACHE),
++             !!(cache_caps.SupportFlags & D3D12_SHADER_CACHE_SUPPORT_DRIVER_MANAGED_CACHE));
++   if (FAILED(caps_hr) || !(cache_caps.SupportFlags & D3D12_SHADER_CACHE_SUPPORT_LIBRARY)) {
++      mesa_logw("dzn: no D3D12 pipeline library support, not keeping PSOs");
++      return;
++   }
++
++   size_t size = 0;
++   void *blob = NULL;
++   FILE *f = fopen(path, "rb");
++   if (f) {
++      if (fseek(f, 0, SEEK_END) == 0) {
++         long len = ftell(f);
++         if (len > 0 && (uint64_t)len <= DZN_PSO_LIB_MAX_SIZE + (64ull << 20) && fseek(f, 0, SEEK_SET) == 0) {
++            blob = malloc(len);
++            if (blob && fread(blob, 1, len, f) == (size_t)len)
++               size = len;
++         }
++      }
++      fclose(f);
++   }
++
++   ID3D12PipelineLibrary1 *lib = NULL;
++   HRESULT hr = E_FAIL;
++   if (size)
++      hr = ID3D12Device1_CreatePipelineLibrary(device->dev, blob, size, &dzn_IID_ID3D12PipelineLibrary1, (void **)&lib);
++   if (FAILED(hr)) {
++      if (size)
++         mesa_logw("dzn: the PSO library in %s can't be used (0x%08x), starting a new one", path, (unsigned)hr);
++      free(blob);
++      blob = NULL;
++      size = 0;
++      static const char empty = 0;
++      lib = NULL;
++      hr = ID3D12Device1_CreatePipelineLibrary(device->dev, &empty, 0, &dzn_IID_ID3D12PipelineLibrary1, (void **)&lib);
++   }
++   if (FAILED(hr) || !lib) {
++      mesa_logw("dzn: PSO libraries are not available (0x%08x)", (unsigned)hr);
++      free(blob);
++      return;
++   }
++
++   device->pso_lib.lib = lib;
++   device->pso_lib.blob = blob;
++   device->pso_lib.path = strdup(path);
++   mesa_logw("dzn: PSO library %s: %u KB loaded", path, (unsigned)(size >> 10));
++}
++
++void
++dzn_pso_lib_finish(struct dzn_device *device)
++{
++   if (device->pso_lib.lib) {
++      dzn_pso_lib_save(device);
++      ID3D12PipelineLibrary1_Release(device->pso_lib.lib);
++   }
++   free(device->pso_lib.blob);
++   free(device->pso_lib.path);
++   simple_mtx_destroy(&device->pso_lib.lock);
++}
++
++/* The app reads its pipeline cache to save it: save the PSO library along with it. */
++VKAPI_ATTR VkResult VKAPI_CALL
++dzn_GetPipelineCacheData(VkDevice _device, VkPipelineCache pipelineCache, size_t *pDataSize, void *pData)
++{
++   VK_FROM_HANDLE(dzn_device, device, _device);
++   VkResult result = vk_common_GetPipelineCacheData(_device, pipelineCache, pDataSize, pData);
++   if (pData)
++      dzn_pso_lib_save(device);
++   return result;
++}
++
+ 
+ /* Rebuild a PSO stream with some subobjects dropped or converted, to find which one a driver rejects. */
+ #define DZN_REBUILD_DS1_TO_DS (1u << 31)
+@@ -2638,9 +2937,7 @@ dzn_graphics_pipeline_get_state(struct dzn_graphics_pipeline *pipeline,
+ 
+       update_stencil_state(pdev, pipeline, stream_buf, &masked_key);
+ 
+-      HRESULT hres = ID3D12Device4_CreatePipelineState(device->dev, &stream_desc,
+-                                                       &IID_ID3D12PipelineState,
+-                                                       (void**)(&variant->state));
++      HRESULT hres = dzn_create_pso(device, &stream_desc, &variant->state, true);
+       if (FAILED(hres)) {
+          mesa_loge("dzn: CreatePipelineState for a pipeline variant failed: 0x%08x (strip cut %d)",
+                    (unsigned)hres, (int)masked_key.ib_strip_cut);
+@@ -3019,9 +3316,7 @@ dzn_compute_pipeline_create(struct dzn_device *device,
+    if (ret != VK_SUCCESS)
+       goto out;
+ 
+-   if (FAILED(ID3D12Device4_CreatePipelineState(device->dev, &stream_desc,
+-                                                &IID_ID3D12PipelineState,
+-                                                (void **)&pipeline->base.state)))
++   if (FAILED(dzn_create_pso(device, &stream_desc, &pipeline->base.state, false)))
+       ret = vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+ 
+ out:
+diff --git a/src/microsoft/vulkan/dzn_private.h b/src/microsoft/vulkan/dzn_private.h
+index 97a4af5..eb90bba 100644
+--- a/src/microsoft/vulkan/dzn_private.h
++++ b/src/microsoft/vulkan/dzn_private.h
+@@ -323,8 +323,32 @@ struct dzn_device {
+       uint64_t size;
+       bool disabled;
+    } internal_buf_pool;
++
++   /* UWP port: D3D12 compiles each PSO from DXIL again in every run (~0.75 s each on the Xbox,
++    * ~900 in a Portal 2 session). With DZN_PSO_LIBRARY set to a file path, PSOs are kept in an
++    * ID3D12PipelineLibrary loaded from that file and written back when the app reads its
++    * VkPipelineCache data (dzn_GetPipelineCacheData).
++    */
++   struct {
++      simple_mtx_t lock;
++      ID3D12PipelineLibrary1 *lib;
++      void *blob; /* the loaded file; must outlive lib */
++      char *path;
++      bool dirty, full;
++      uint32_t loaded, compiled, saved_kb;
++      uint64_t load_ns, compile_ns;
++   } pso_lib;
+ };
+ 
++/* Root signatures carry a hash of their serialized form, so a PSO can be named by its content. */
++static const GUID dzn_root_sig_hash_guid =
++   { 0x5a1c0f3e, 0x8d2b, 0x4c61, { 0x9e, 0x47, 0x31, 0xd0, 0x6b, 0x2a, 0x7c, 0x55 } };
++
++void dzn_pso_lib_init(struct dzn_device *device);
++void dzn_pso_lib_finish(struct dzn_device *device);
++HRESULT dzn_create_pso(struct dzn_device *device, const D3D12_PIPELINE_STATE_STREAM_DESC *desc,
++                       ID3D12PipelineState **out, bool at_draw);
++
+ void dzn_meta_finish(struct dzn_device *device);
+ 
+ VkResult dzn_meta_init(struct dzn_device *device);

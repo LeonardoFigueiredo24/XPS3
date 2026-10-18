@@ -12,6 +12,10 @@
 
 #include "util/cpu_stats.hpp"
 
+#ifdef RPCS3_UWP
+namespace rsx { extern atomic_t<u64> g_uwp_overlay_update_at_us, g_uwp_overlay_update_max_us; } // RSXThread.cpp
+#endif
+
 namespace rsx
 {
 	namespace overlays
@@ -516,6 +520,10 @@ namespace rsx
 				if (!m_is_initialised || !m_force_update)
 				{
 					m_update_timer.Start();
+#ifdef RPCS3_UWP
+					const u64 uwp_start = get_system_time();
+					const auto uwp_done = [&]() { const u64 t = get_system_time(); rsx::g_uwp_overlay_update_at_us = t; rsx::g_uwp_overlay_update_max_us.fetch_op([&](u64& v) { v = std::max(v, t - uwp_start); }); };
+#endif
 
 					auto& rsx_thread = g_fxo->get<rsx::thread>();
 
@@ -576,6 +584,9 @@ namespace rsx
 						break;
 					}
 					}
+#ifdef RPCS3_UWP
+					uwp_done();
+#endif
 				}
 
 				// 2. Format output string

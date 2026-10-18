@@ -7,6 +7,10 @@
 
 #include "util/sysinfo.hpp"
 
+#include "Emu/Cell/timers.hpp"
+
+#include <functional>
+
 #ifdef RPCS3_UWP
 // Stencil masks and depth bias are baked into the pipelines instead of being dynamic state
 // (LocalState/dynamic_stencil_bias turns it off, uwp_main.cpp). Dozen on the Xbox's D3D12
@@ -15,6 +19,13 @@
 // stalled Portal 2 for 0.1-4 s at a time. Baked in, the PSO is made when the pipeline is
 // created, which is on the async pipeline compiler threads.
 bool g_uwp_static_pipeline_state = true;
+
+// Dozen keeps the SPIR-V -> DXIL translation of every pipeline in the VkPipelineCache, which RPCS3
+// creates empty at each boot: on the Xbox that is 0.4-1.5 s of CPU per pipeline, ~750 pipelines
+// (8 minutes of compile) in a Portal 2 session with warm caches. Kept per game in this file
+// (VKGSRender.cpp sets it), loaded at start and saved in the background after new pipelines.
+std::string g_uwp_pipeline_cache_path;
+bool g_uwp_pso_library = false;
 #endif
 
 namespace vk
@@ -24,6 +35,51 @@ namespace vk
 	int g_num_pipe_compilers = 0;
 	atomic_t<int> g_compiler_index{};
 	VkPipelineCache g_pipeline_cache = VK_NULL_HANDLE;
+
+#ifdef RPCS3_UWP
+	atomic_t<u64> g_uwp_pipelines_created = 0; // VKProgramPipeline.cpp
+	static std::unique_ptr<named_thread<std::function<void()>>> g_uwp_cache_saver;
+
+	static void uwp_save_pipeline_cache()
+	{
+		const auto start = get_system_time();
+		std::vector<u8> data;
+
+		for (int attempt = 0; attempt < 3; attempt++)
+		{
+			usz size = 0;
+			if (vkGetPipelineCacheData(*g_render_device, g_pipeline_cache, &size, nullptr) != VK_SUCCESS || !size)
+				return;
+
+			if (size > 512ull << 20)
+			{
+				rsx_log.error("UWP: pipeline cache is %u MB, not saving it", size >> 20);
+				return;
+			}
+
+			// Room for pipelines that finish between the two calls
+			data.resize(size + (size >> 4));
+			size = data.size();
+
+			if (const VkResult r = vkGetPipelineCacheData(*g_render_device, g_pipeline_cache, &size, data.data()); r == VK_SUCCESS)
+			{
+				data.resize(size);
+				break;
+			}
+
+			data.clear();
+		}
+
+		if (data.empty())
+			return;
+
+		const std::string tmp = g_uwp_pipeline_cache_path + ".tmp";
+		if (fs::write_file(tmp, fs::rewrite, data) && fs::rename(tmp, g_uwp_pipeline_cache_path, true))
+			rsx_log.notice("UWP: saved the pipeline cache (%u KB, %u pipelines made this session) in %.0f ms", data.size() >> 10, g_uwp_pipelines_created.load(), (get_system_time() - start) / 1000.);
+		else
+			rsx_log.error("UWP: could not save the pipeline cache to %s (%s)", g_uwp_pipeline_cache_path, fs::g_tls_error);
+	}
+#endif
 
 	pipe_compiler::pipe_compiler()
 	{
@@ -360,7 +416,53 @@ namespace vk
 		if (!pipe_cache)
 		{
 			VkPipelineCacheCreateInfo drv_cache_info{ VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO };
+#ifdef RPCS3_UWP
+			std::vector<u8> initial;
+			if (fs::file f{g_uwp_pipeline_cache_path}; !g_uwp_pipeline_cache_path.empty() && f)
+				initial = f.to_vector<u8>();
+			drv_cache_info.initialDataSize = initial.size();
+			drv_cache_info.pInitialData = initial.data();
+
+			if (vkCreatePipelineCache(*g_render_device, &drv_cache_info, nullptr, &g_pipeline_cache) != VK_SUCCESS && !initial.empty())
+			{
+				rsx_log.error("UWP: the driver refused the saved pipeline cache, starting empty");
+				drv_cache_info.initialDataSize = 0;
+				drv_cache_info.pInitialData = nullptr;
+				vkCreatePipelineCache(*g_render_device, &drv_cache_info, nullptr, &g_pipeline_cache);
+			}
+
+			rsx_log.notice("UWP: pipeline cache: loaded %u KB from %s", initial.size() >> 10, g_uwp_pipeline_cache_path.empty() ? "(no game)" : g_uwp_pipeline_cache_path);
+
+			if (g_pipeline_cache && !g_uwp_pipeline_cache_path.empty())
+			{
+				// Save 10 s after the last new pipeline, or every minute while they keep coming
+				g_uwp_cache_saver = std::make_unique<named_thread<std::function<void()>>>("VK Pipeline Cache Saver", []()
+				{
+					u64 saved = g_uwp_pipelines_created, seen = saved, last_save = get_system_time();
+
+					while (thread_ctrl::state() != thread_state::aborting)
+					{
+						thread_ctrl::wait_for(10'000'000);
+
+						if (thread_ctrl::state() == thread_state::aborting)
+							break;
+
+						const u64 now_count = g_uwp_pipelines_created;
+						const bool quiet = now_count == seen;
+						seen = now_count;
+
+						if (now_count != saved && (quiet || get_system_time() - last_save >= 60'000'000))
+						{
+							uwp_save_pipeline_cache();
+							saved = now_count;
+							last_save = get_system_time();
+						}
+					}
+				});
+			}
+#else
 			vkCreatePipelineCache(*g_render_device, &drv_cache_info, nullptr, &g_pipeline_cache);
+#endif
 		}
 		else
 		{
@@ -398,6 +500,16 @@ namespace vk
 	void destroy_pipe_compiler()
 	{
 		g_pipe_compilers.reset();
+
+#ifdef RPCS3_UWP
+		if (g_uwp_cache_saver)
+		{
+			g_uwp_cache_saver.reset();
+
+			if (g_pipeline_cache)
+				uwp_save_pipeline_cache();
+		}
+#endif
 
 		if (g_pipeline_cache)
 		{

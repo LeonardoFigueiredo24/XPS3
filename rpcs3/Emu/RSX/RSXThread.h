@@ -24,6 +24,7 @@
 
 #include "Core/RSXDisplay.h"
 #include "Core/RSXDrawCommands.h"
+#include "uwp_rsx_sampler.h"
 #include "Core/RSXDriverState.h"
 #include "Core/RSXFrameBuffer.h"
 #include "Core/RSXContext.h"
@@ -46,6 +47,7 @@ namespace rsx
 	{
 		class display_manager;
 	}
+
 
 	enum framebuffer_creation_context : u8
 	{

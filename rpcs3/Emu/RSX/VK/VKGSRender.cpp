@@ -24,6 +24,7 @@
 #include "../Program/SPIRVCommon.h"
 
 #include "util/asm.hpp"
+#include "Emu/cache_utils.hpp"
 #include <vulkan/vulkan_core.h>
 
 namespace vk
@@ -435,6 +436,26 @@ u64 VKGSRender::get_cycles()
 
 VKGSRender::VKGSRender(utils::serial* ar) noexcept : GSRender(ar)
 {
+#ifdef RPCS3_UWP
+	// Per game: the VkPipelineCache file (VKPipelineCompiler.cpp) and Dozen's D3D12 PSO library,
+	// which Dozen opens when the device is created (DZN_PSO_LIBRARY) and saves along with the
+	// pipeline cache. Opt-in with LocalState/pso_library (uwp_main.cpp).
+	if (std::string cache_path = rpcs3::cache::get_ppu_cache(); !cache_path.empty())
+	{
+		fs::create_path(cache_path + "shaders_cache/");
+		g_uwp_pipeline_cache_path = cache_path + "shaders_cache/dzn_pipeline_cache.bin";
+	}
+	else
+	{
+		g_uwp_pipeline_cache_path.clear();
+	}
+
+	const std::string pso_library = g_uwp_pipeline_cache_path.empty() || !g_uwp_pso_library ? std::string() : g_uwp_pipeline_cache_path.substr(0, g_uwp_pipeline_cache_path.size() - 22) + "dzn_pso_library.bin";
+#ifdef _WIN32
+	_putenv_s("DZN_PSO_LIBRARY", pso_library.c_str()); // empty removes it (also from the process environment)
+#endif
+	rsx_log.notice("UWP: D3D12 PSO library: %s", pso_library.empty() ? "off" : pso_library);
+#endif
 	// Initialize dependencies
 	g_fxo->need<rsx::dma_manager>();
 	g_fxo->need<vk::driver_manager_thread>();
@@ -1586,6 +1607,9 @@ void VKGSRender::clear_surface(u32 mask)
 
 void VKGSRender::flush_command_queue(bool hard_sync, bool do_not_switch)
 {
+#ifdef RPCS3_UWP
+	rsx::uwp_rsx_scope uwp_scope(rsx::uwp_phase_submit);
+#endif
 	close_and_submit_command_buffer();
 
 	if (hard_sync)
@@ -2873,6 +2897,9 @@ bool VKGSRender::check_occlusion_query_status(rsx::reports::occlusion_query_info
 
 void VKGSRender::get_occlusion_query_result(rsx::reports::occlusion_query_info* query)
 {
+#ifdef RPCS3_UWP
+	rsx::uwp_rsx_scope uwp_scope(rsx::uwp_phase_query);
+#endif
 	auto &data = m_occlusion_map[query->driver_handle];
 	if (data.indices.empty())
 		return;

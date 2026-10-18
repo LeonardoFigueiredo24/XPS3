@@ -10,6 +10,8 @@ git -C "$1" apply --check "$tc/mesa-dzn-uwp.patch" 2>/dev/null && git -C "$1" ap
 git -C "$1" apply --check "$tc/mesa-dzn-depth-typeless.patch" 2>/dev/null && git -C "$1" apply "$tc/mesa-dzn-depth-typeless.patch"
 # Reuse command buffers' internal D3D12 buffers through a device pool (DZN_NO_BUFPOOL turns it off).
 git -C "$1" apply --check "$tc/mesa-dzn-bufpool.patch" 2>/dev/null && git -C "$1" apply "$tc/mesa-dzn-bufpool.patch"
+# Keep D3D12 PSOs across runs in an ID3D12PipelineLibrary file named by DZN_PSO_LIBRARY (RPCS3 sets it per game).
+git -C "$1" apply --check "$tc/mesa-dzn-psolib.patch" 2>/dev/null && git -C "$1" apply "$tc/mesa-dzn-psolib.patch"
 # D3D12 command-list call tracer (logs the last calls when a command list fails to close).
 cp "$tc/mesa-dzn_trace.c" "$1/src/microsoft/vulkan/dzn_trace.c"
 cp "$tc/mesa-dzn_trace_macros.h" "$1/src/microsoft/vulkan/dzn_trace_macros.h"
