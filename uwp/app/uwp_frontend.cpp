@@ -12,6 +12,7 @@
 #include "uwp_frontend.h"
 #include "uwp_firmware.h"
 #include "uwp_rpcn.h"
+#include "uwp_textinput.h"
 
 #include "Emu/System.h"
 #include "Emu/system_config.h"
@@ -515,7 +516,8 @@ namespace uwp_frontend
 			std::function<void()> on_accept;
 		};
 
-		// On-screen keyboard for the controller (RPCN account details).
+		// A text field (RPCN account details): typed on the system (Xbox) keyboard, or on the
+		// menu's own keys when the system keyboard can't be shown.
 		struct text_entry
 		{
 			enum class kind
@@ -535,6 +537,7 @@ namespace uwp_frontend
 			int row = 1, col = 0;
 			int layer = 0; // 0 lower case, 1 upper case, 2 symbols
 			bool reveal = false;
+			bool system_keyboard = false; // the Xbox keyboard types into it; else the menu's own keys
 		};
 
 		// A list of actions with a status text above it (the RPCN account screen).
@@ -1037,11 +1040,14 @@ namespace uwp_frontend
 			g_ui->dirty = true;
 		}
 
+		void osk_open_system_keyboard(text_entry& e);
+
 		void ask_text(text_entry::kind type, std::string title, std::string prompt, std::string initial, std::function<void(std::string)> on_done, bool allow_empty = false)
 		{
 			const usz max_len = type == text_entry::kind::username || type == text_entry::kind::token ? 16 : type == text_entry::kind::host ? 128 : 64;
 			auto osk = std::make_unique<text_entry>(text_entry{type, std::move(title), std::move(prompt), std::move(initial), max_len, allow_empty, std::move(on_done)});
 			osk->layer = type == text_entry::kind::token ? 1 : 0;
+			osk_open_system_keyboard(*osk);
 			g_ui->osk = std::move(osk);
 			g_ui->dirty = true;
 		}
@@ -1523,9 +1529,9 @@ namespace uwp_frontend
 		};
 		constexpr std::string_view osk_actions[5] = {"Shift", "Symbols", "Space", "Delete", "Done"};
 
-		bool osk_accepts(const text_entry& e, char c)
+		bool osk_accepts_type(text_entry::kind type, char c)
 		{
-			switch (e.type)
+			switch (type)
 			{
 			case text_entry::kind::username: return utils::isalnum(c) || c == '-' || c == '_';
 			case text_entry::kind::token: return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z');
@@ -1536,12 +1542,43 @@ namespace uwp_frontend
 			return true;
 		}
 
+		bool osk_accepts(const text_entry& e, char c)
+		{
+			return osk_accepts_type(e.type, c);
+		}
+
 		void osk_type(text_entry& e, char c)
 		{
 			if (e.type == text_entry::kind::token && c >= 'a' && c <= 'z')
 				c = static_cast<char>(c - 'a' + 'A');
 			if (e.value.size() < e.max_len && osk_accepts(e, c))
 				e.value += c;
+			uwp_textinput::set_text(e.value);
+		}
+
+		void osk_open_system_keyboard(text_entry& e)
+		{
+			uwp_textinput::scope sc = uwp_textinput::scope::username;
+			switch (e.type)
+			{
+			case text_entry::kind::username: sc = uwp_textinput::scope::username; break;
+			case text_entry::kind::password: sc = uwp_textinput::scope::password; break;
+			case text_entry::kind::email: sc = uwp_textinput::scope::email; break;
+			case text_entry::kind::token: sc = uwp_textinput::scope::code; break;
+			case text_entry::kind::host: sc = uwp_textinput::scope::url; break;
+			}
+			const text_entry::kind type = e.type;
+			// Passwords may use any character (desktop RPCS3 takes the UTF-8 bytes); the other fields are ASCII.
+			e.system_keyboard = uwp_textinput::show(sc, e.value, e.max_len, [type](char16_t c)
+			{
+				if (type == text_entry::kind::password)
+					return c >= 0x20;
+				return c >= 0x20 && c < 0x7f && osk_accepts_type(type, static_cast<char>(c));
+			}, [type](char16_t c)
+			{
+				return type == text_entry::kind::token && c >= u'a' && c <= u'z' ? static_cast<char16_t>(c - u'a' + u'A') : c;
+			});
+			ui_log.notice("UI: text field '%s' uses the %s keyboard", e.title, e.system_keyboard ? "system" : "menu's own");
 		}
 
 		void osk_finish()
@@ -1549,10 +1586,27 @@ namespace uwp_frontend
 			ui_state& ui = *g_ui;
 			if (ui.osk->value.empty() && !ui.osk->allow_empty)
 				return;
+			uwp_textinput::hide();
 			// The callback may open the next entry (or a dialog), so take this one off first.
 			auto e = std::move(ui.osk);
 			if (e->on_done)
 				e->on_done(std::move(e->value));
+		}
+
+		// Typed on the system keyboard (or a USB keyboard) since the last frame.
+		void osk_poll_system_keyboard()
+		{
+			ui_state& ui = *g_ui;
+			if (!ui.osk)
+				return;
+			std::string text;
+			bool submitted = false;
+			if (!uwp_textinput::poll(text, submitted))
+				return;
+			ui.osk->value = std::move(text);
+			ui.dirty = true;
+			if (submitted)
+				osk_finish();
 		}
 
 		void osk_input(u32 pressed)
@@ -1569,22 +1623,40 @@ namespace uwp_frontend
 
 			if (pressed & act_x) e.layer = e.layer == 1 ? 0 : 1;
 			if (pressed & act_refresh) e.layer = e.layer == 2 ? 0 : 2;
-			if (pressed & act_view) e.reveal = !e.reveal;
 
-			if (pressed & act_back)
-			{
-				if (e.value.empty())
-				{
-					ui.osk.reset();
-					return;
-				}
-				e.value.pop_back();
-			}
+			if (pressed & act_view) e.reveal = !e.reveal;
 
 			if (pressed & act_start)
 			{
 				osk_finish();
 				return;
+			}
+
+			// System keyboard: A opens it again, B cancels.
+			if (e.system_keyboard)
+			{
+				if (pressed & act_back)
+				{
+					uwp_textinput::hide();
+					ui.osk.reset();
+				}
+				else if (pressed & act_accept)
+				{
+					osk_open_system_keyboard(e);
+				}
+				return;
+			}
+
+			if (pressed & act_back)
+			{
+				if (e.value.empty())
+				{
+					uwp_textinput::hide();
+					ui.osk.reset();
+					return;
+				}
+				e.value.pop_back();
+				uwp_textinput::set_text(e.value);
 			}
 
 			if (pressed & act_accept)
@@ -1599,7 +1671,11 @@ namespace uwp_frontend
 				case 0: e.layer = e.layer == 1 ? 0 : 1; break;
 				case 1: e.layer = e.layer == 2 ? 0 : 2; break;
 				case 2: osk_type(e, ' '); break;
-				case 3: if (!e.value.empty()) e.value.pop_back(); break;
+				case 3:
+					if (!e.value.empty())
+						e.value.pop_back();
+					uwp_textinput::set_text(e.value);
+					break;
 				case 4: osk_finish(); break;
 				}
 			}
@@ -1649,7 +1725,9 @@ namespace uwp_frontend
 
 			if (ui.osk)
 			{
-				osk_input(pressed);
+				// The system keyboard has the gamepad while it is up.
+				if (!uwp_textinput::keyboard_visible())
+					osk_input(pressed);
 				return;
 			}
 
@@ -1899,7 +1977,8 @@ namespace uwp_frontend
 			constexpr int key_w = 104, key_h = 76, gap = 10;
 			const int w = osk_cols * (key_w + gap) - gap + 100, x = (canvas_width - w) / 2;
 			const int prompt_h = cv.paragraph(0, canvas_height, e.prompt, 28, col_dim, w - 100); // measure only (drawn off canvas)
-			const int h = 40 + 60 + prompt_h + 20 + 80 + 30 + (osk_char_rows + 1) * (key_h + gap) + 90;
+			const int keys_h = e.system_keyboard ? 0 : (osk_char_rows + 1) * (key_h + gap);
+			const int h = 40 + 60 + prompt_h + 20 + 80 + 30 + keys_h + 90;
 			const int y = std::max(20, static_cast<int>(canvas_height - h) / 2);
 			cv.fill(x, y, w, h, col_panel);
 			cv.fill(x, y, w, 4, col_accent);
@@ -1920,7 +1999,7 @@ namespace uwp_frontend
 			cv.text(x + w - 50 - cv.text_width(count, 22), cy + 76, count, 22, col_dim);
 			cy += 110;
 
-			for (int r = 0; r <= osk_char_rows; r++)
+			for (int r = 0; r <= osk_char_rows && !e.system_keyboard; r++)
 			{
 				const int ky = cy + r * (key_h + gap);
 				const int keys = r < osk_char_rows ? osk_cols : osk_cols / 2;
@@ -1955,7 +2034,7 @@ namespace uwp_frontend
 				}
 			}
 
-			std::string hints = "A  Type      B  Delete (empty: cancel)      X  Shift      Y  Symbols      Menu  Done";
+			std::string hints = e.system_keyboard ? "A  Keyboard      Menu  Done      B  Cancel" : "A  Type      B  Delete (empty: cancel)      X  Shift      Y  Symbols      Menu  Done";
 			if (e.type == text_entry::kind::password)
 				hints += "      View  Show";
 			cv.text(x + 50, y + h - 66, hints, 24, col_accent, w - 100);
@@ -2314,6 +2393,8 @@ namespace uwp_frontend
 			fn();
 		if (!pending_ui.empty())
 			ui.dirty = true;
+
+		osk_poll_system_keyboard();
 
 		handle_input(pressed);
 

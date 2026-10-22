@@ -5,6 +5,7 @@ add_executable(rpcs3_uwp WIN32
     uwp_frontend.cpp
     uwp_firmware.cpp
     uwp_rpcn.cpp
+    uwp_textinput.cpp
     uwp_stubs.cpp
     uwp_sysstubs.c
     uwp_lazyimports.c

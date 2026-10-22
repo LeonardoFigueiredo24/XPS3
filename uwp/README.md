@@ -112,8 +112,10 @@ MAKEMSIX=/path/to/makemsix uwp/package/package.sh build-uwp RPCS3Xbox.appx cert.
   and more, saved to `config.yml` right away.
 - **Settings > RPCN account**: RPCN, RPCS3's PSN replacement for online play. Create an account
   (username, password, email for the activation token) or log in with one made in desktop RPCS3,
-  enter the token, check the login, reset the password, or pick another server. Text is typed on
-  an on-screen keyboard (A type, B delete, X shift, Y symbols, Menu done, View shows a password).
+  enter the token, check the login, reset the password, or pick another server. Text fields open
+  the Xbox system keyboard (Enter or Menu confirms, A reopens it, B cancels; a USB keyboard works
+  too). If the system keyboard can't be shown, the menu draws its own (A type, B delete, X shift,
+  Y symbols, Menu done, View shows a password).
   A successful login sets PSN to RPCN. The login is saved in `LocalState/rpcs3/rpcn.yml` (the
   same file as desktop RPCS3's, so one can be copied over), with the password stored hashed.
 
