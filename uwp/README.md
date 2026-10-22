@@ -48,6 +48,8 @@ Cold first start of the XMB compiles its PPU code with LLVM (~8.5 min); later st
   tab switching are XAML's own. The WinRT ABI (vtables, IIDs) comes from the Windows SDK metadata:
   `uwp/toolchain/gen_winrt_abi.py` generates `uwp/app/winrt_xaml_abi.h` (checked in; the script's header
   says how to regenerate it). The game picture is a `SwapChainPanel`, behind the menu.
+  Settings > RPCN account opens the account screen of `uwp_frontend.cpp` as a XAML page; its fields
+  are XAML text boxes, so A on a field opens the Xbox keyboard.
   `LocalState/legacy_ui` (an empty file) starts the earlier software-drawn menu (`uwp_frontend.cpp`
   still has it) instead, as a way back while the XAML shell is new.
 - Graphics: RPCS3's Vulkan renderer on Mesa **Dozen** (Vulkan over D3D12, `vulkan_dzn.dll`) with

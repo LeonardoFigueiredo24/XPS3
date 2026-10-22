@@ -97,6 +97,7 @@ namespace uwp_frontend
 		bool active = false;
 		std::string title;
 		u32 done = 0, total = 0;
+		bool server = false; // an RPCN server call, not an install
 	};
 
 	struct dialog_view
@@ -114,6 +115,8 @@ namespace uwp_frontend
 		int current = 0;
 		bool toggle = false;  // exactly false / true: shown as a switch
 		bool in_game = false; // takes effect while a game runs (shown in the pause menu)
+		bool action = false;  // no value list: a screen that open_setting() opens (RPCN account); `note` stays, `value` is shown
+		std::string value;
 	};
 
 	// True once init() has run on the emulator thread (the settings need the emulator's configuration).
@@ -133,6 +136,43 @@ namespace uwp_frontend
 
 	std::vector<setting_view> get_settings();
 	void set_setting(u32 index, u32 value_index);
+	// An action row (setting_view::action): opens its screen, which get_screen() then shows.
+	void open_setting(u32 index);
+
+	// ---- Screens the menu logic opens itself (the RPCN account screen and its text fields) ----
+	// All UI thread.
+
+	// Runs work that worker threads (RPCN server calls) handed to the UI thread. Every tick.
+	void pump();
+
+	// A list of actions with a status text above it.
+	struct screen_view
+	{
+		std::string title, header;
+		struct item
+		{
+			std::string label, detail;
+		};
+		std::vector<item> items;
+	};
+
+	// A text field that the menu logic asks for (one at a time, over the screen).
+	struct text_view
+	{
+		u64 serial = 0; // changes for each new field
+		std::string title, prompt, value;
+		bool password = false;
+		const char* input_scope = "Default"; // XAML InputScopeNameValue
+		u32 max_len = 0;
+	};
+
+	std::optional<screen_view> get_screen();
+	void screen_select(u32 index);
+	void screen_close();
+	std::optional<text_view> get_text_field();
+	// The typed text: an error to show (and the field stays), or empty when it was taken.
+	std::string text_field_done(const std::string& value);
+	void text_field_cancel();
 
 	bool in_game();
 	// Render thread: true once when View + Menu has been held for a second while a game runs.

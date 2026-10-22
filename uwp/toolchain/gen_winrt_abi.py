@@ -36,6 +36,7 @@ INTERFACES = [
     XC + "IItemsControl", XC + "ISelectionChangedEventArgs", XC + "SelectionChangedEventHandler",
     XC + "IItemClickEventArgs", XC + "ItemClickEventHandler", XC + "IPivot", XC + "IToggleSwitch", XC + "IScrollViewer",
     XCP + "IRangeBase", XCP + "ISelector", XC + "IListViewBase", XCP + "IButtonBase", XCP + "IToggleButton",
+    XC + "ITextBox", XC + "IPasswordBox",
     "Windows.Foundation.IPropertyValueStatics",
     # Pictures
     X + "Media.IBrush", X + "Media.IImageSource", X + "Media.Imaging.IWriteableBitmap", X + "Media.Imaging.IWriteableBitmapFactory",

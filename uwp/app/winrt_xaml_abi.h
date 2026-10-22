@@ -61,6 +61,8 @@ struct ISelector;
 struct IListViewBase;
 struct IButtonBase;
 struct IToggleButton;
+struct ITextBox;
+struct IPasswordBox;
 struct IPropertyValueStatics;
 struct IBrush;
 struct IImageSource;
@@ -1223,6 +1225,60 @@ struct IToggleButton : IInspectable
 	virtual HRESULT STDMETHODCALLTYPE remove_Indeterminate(int64_t token) = 0;
 };
 
+struct ITextBox : IInspectable
+{
+	virtual HRESULT STDMETHODCALLTYPE get_Text(HSTRING* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE put_Text(HSTRING value) = 0;
+	virtual HRESULT STDMETHODCALLTYPE get_SelectedText(HSTRING* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE put_SelectedText(HSTRING value) = 0;
+	virtual HRESULT STDMETHODCALLTYPE get_SelectionLength(int32_t* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE put_SelectionLength(int32_t value) = 0;
+	virtual HRESULT STDMETHODCALLTYPE get_SelectionStart(int32_t* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE put_SelectionStart(int32_t value) = 0;
+	virtual HRESULT STDMETHODCALLTYPE get_MaxLength(int32_t* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE put_MaxLength(int32_t value) = 0;
+	virtual HRESULT STDMETHODCALLTYPE get_IsReadOnly(boolean* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE put_IsReadOnly(boolean value) = 0;
+	virtual HRESULT STDMETHODCALLTYPE get_AcceptsReturn(boolean* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE put_AcceptsReturn(boolean value) = 0;
+	virtual HRESULT STDMETHODCALLTYPE get_TextAlignment(TextAlignment* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE put_TextAlignment(TextAlignment value) = 0;
+	virtual HRESULT STDMETHODCALLTYPE get_TextWrapping(TextWrapping* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE put_TextWrapping(TextWrapping value) = 0;
+	virtual HRESULT STDMETHODCALLTYPE get_IsSpellCheckEnabled(boolean* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE put_IsSpellCheckEnabled(boolean value) = 0;
+	virtual HRESULT STDMETHODCALLTYPE get_IsTextPredictionEnabled(boolean* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE put_IsTextPredictionEnabled(boolean value) = 0;
+	virtual HRESULT STDMETHODCALLTYPE get_InputScope(IInspectable** result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE put_InputScope(IInspectable* value) = 0;
+	virtual HRESULT STDMETHODCALLTYPE add_TextChanged(void* handler, int64_t* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE remove_TextChanged(int64_t token) = 0;
+	virtual HRESULT STDMETHODCALLTYPE add_SelectionChanged(RoutedEventHandler* handler, int64_t* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE remove_SelectionChanged(int64_t token) = 0;
+	virtual HRESULT STDMETHODCALLTYPE add_ContextMenuOpening(void* handler, int64_t* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE remove_ContextMenuOpening(int64_t token) = 0;
+	virtual HRESULT STDMETHODCALLTYPE Select(int32_t start, int32_t length) = 0;
+	virtual HRESULT STDMETHODCALLTYPE SelectAll() = 0;
+	virtual HRESULT STDMETHODCALLTYPE GetRectFromCharacterIndex(int32_t charIndex, boolean trailingEdge, Rect* result) = 0;
+};
+
+struct IPasswordBox : IInspectable
+{
+	virtual HRESULT STDMETHODCALLTYPE get_Password(HSTRING* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE put_Password(HSTRING value) = 0;
+	virtual HRESULT STDMETHODCALLTYPE get_PasswordChar(HSTRING* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE put_PasswordChar(HSTRING value) = 0;
+	virtual HRESULT STDMETHODCALLTYPE get_IsPasswordRevealButtonEnabled(boolean* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE put_IsPasswordRevealButtonEnabled(boolean value) = 0;
+	virtual HRESULT STDMETHODCALLTYPE get_MaxLength(int32_t* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE put_MaxLength(int32_t value) = 0;
+	virtual HRESULT STDMETHODCALLTYPE add_PasswordChanged(RoutedEventHandler* handler, int64_t* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE remove_PasswordChanged(int64_t token) = 0;
+	virtual HRESULT STDMETHODCALLTYPE add_ContextMenuOpening(void* handler, int64_t* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE remove_ContextMenuOpening(int64_t token) = 0;
+	virtual HRESULT STDMETHODCALLTYPE SelectAll() = 0;
+};
+
 struct IPropertyValueStatics : IInspectable
 {
 	virtual HRESULT STDMETHODCALLTYPE CreateEmpty(IInspectable** result) = 0;
@@ -1356,6 +1412,8 @@ template <> struct iid_traits<ISelector> { static constexpr GUID value = {0xe30e
 template <> struct iid_traits<IListViewBase> { static constexpr GUID value = {0x3d0813ba, 0x6890, 0x4537, {0xbf, 0xe5, 0x79, 0x6d, 0x94, 0x58, 0xed, 0xd6}}; };
 template <> struct iid_traits<IButtonBase> { static constexpr GUID value = {0xfa002c1a, 0x494e, 0x46cf, {0x91, 0xd4, 0xe1, 0x4a, 0x8d, 0x79, 0x86, 0x74}}; };
 template <> struct iid_traits<IToggleButton> { static constexpr GUID value = {0x589877fb, 0x0fc7, 0x4036, {0x9d, 0x8b, 0x12, 0x7d, 0xfa, 0x75, 0xc1, 0x6d}}; };
+template <> struct iid_traits<ITextBox> { static constexpr GUID value = {0xe48f5a8b, 0x1dff, 0x4352, {0xa1, 0xf4, 0xe5, 0x16, 0x51, 0x4e, 0xc8, 0x82}}; };
+template <> struct iid_traits<IPasswordBox> { static constexpr GUID value = {0x02b9aa11, 0x0b47, 0x4e7d, {0xad, 0x91, 0x3a, 0x41, 0x68, 0xed, 0x23, 0x0d}}; };
 template <> struct iid_traits<IPropertyValueStatics> { static constexpr GUID value = {0x629bdbc8, 0xd932, 0x4ff4, {0x96, 0xb9, 0x8d, 0x96, 0xc5, 0xc1, 0xe8, 0x58}}; };
 template <> struct iid_traits<IBrush> { static constexpr GUID value = {0x8806a321, 0x1e06, 0x422c, {0xa1, 0xcc, 0x01, 0x69, 0x65, 0x59, 0xe0, 0x21}}; };
 template <> struct iid_traits<IImageSource> { static constexpr GUID value = {0x737ef309, 0xea41, 0x4d96, {0xa7, 0x1c, 0x98, 0xe9, 0x8e, 0xfc, 0xab, 0x07}}; };

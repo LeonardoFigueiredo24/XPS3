@@ -534,6 +534,7 @@ namespace uwp_frontend
 			int layer = 0; // 0 lower case, 1 upper case, 2 symbols
 			bool reveal = false;
 			bool system_keyboard = false; // the Xbox keyboard types into it; else the menu's own keys
+			u64 serial = 0; // tells the XAML shell that a new field replaced the previous one
 		};
 
 		// A list of actions with a status text above it (the RPCN account screen).
@@ -611,6 +612,7 @@ namespace uwp_frontend
 		};
 
 		ui_state* g_ui = nullptr;
+		bool g_xaml_ui = false; // the XAML shell drives the menu logic (pump() has run); UI thread
 
 		void set_status(std::string text, u32 color)
 		{
@@ -1044,7 +1046,11 @@ namespace uwp_frontend
 			const usz max_len = type == text_entry::kind::username || type == text_entry::kind::token ? 16 : type == text_entry::kind::host ? 128 : 64;
 			auto osk = std::make_unique<text_entry>(text_entry{type, std::move(title), std::move(prompt), std::move(initial), max_len, allow_empty, std::move(on_done)});
 			osk->layer = type == text_entry::kind::token ? 1 : 0;
-			osk_open_system_keyboard(*osk);
+			static u64 s_text_serial = 0;
+			osk->serial = ++s_text_serial;
+			// The XAML shell shows the field as its own text box (get_text_field()).
+			if (!g_xaml_ui)
+				osk_open_system_keyboard(*osk);
 			g_ui->osk = std::move(osk);
 			g_ui->dirty = true;
 		}
@@ -2451,8 +2457,11 @@ namespace uwp_frontend
 			return items;
 		}
 
+		// Empty for an action row (no node).
 		std::vector<std::string> setting_values(const setting_item& item)
 		{
+			if (!item.node)
+				return {};
 			return item.values.empty() ? item.node->to_list() : item.values;
 		}
 	}
@@ -2497,7 +2506,13 @@ namespace uwp_frontend
 	job_view get_job()
 	{
 		job_view v;
-		if (g_installing && g_job)
+		if (g_rpcn_busy)
+		{
+			v.active = true;
+			v.server = true;
+			v.title = g_rpcn_busy_text;
+		}
+		else if (g_installing && g_job)
 		{
 			v.active = true;
 			v.title = g_job_title;
@@ -2509,6 +2524,13 @@ namespace uwp_frontend
 
 	std::optional<dialog_view> take_pending_dialog()
 	{
+		// Messages of the menu logic itself (the RPCN account screen), UI thread.
+		if (g_ui && g_ui->dialog)
+		{
+			std::optional<dialog_view> out = to_dialog_view(*g_ui->dialog);
+			g_ui->dialog.reset();
+			return out;
+		}
 		std::lock_guard lock(g_data_mutex);
 		if (!g_pending_modal)
 			return std::nullopt;
@@ -2559,6 +2581,13 @@ namespace uwp_frontend
 			setting_view v;
 			v.label = item.label;
 			v.note = item.note;
+			if (!item.node)
+			{
+				v.action = true;
+				v.value = item.value ? item.value() : std::string("Open");
+				out.push_back(std::move(v));
+				continue;
+			}
 			v.values = setting_values(item);
 			v.toggle = v.values.size() == 2 && v.values[0] == "false" && v.values[1] == "true";
 			for (const std::string& value : v.values)
@@ -2580,13 +2609,127 @@ namespace uwp_frontend
 			return;
 		setting_item& item = items[index];
 		const std::vector<std::string> values = setting_values(item);
-		if (value_index >= values.size() || item.node->to_string() == values[value_index])
+		if (!item.node || value_index >= values.size() || item.node->to_string() == values[value_index])
 			return;
 		if (item.node->from_string(values[value_index]))
 		{
 			ui_log.notice("UI: setting '%s' = %s", item.label, values[value_index]);
 			save_settings();
 		}
+	}
+
+	void open_setting(u32 index)
+	{
+		auto& items = xaml_settings();
+		if (index < items.size() && !items[index].node && items[index].on_open && !g_in_game)
+			items[index].on_open();
+	}
+
+	void pump()
+	{
+		g_xaml_ui = true;
+		std::vector<std::function<void()>> pending;
+		{
+			std::lock_guard lock(g_data_mutex);
+			pending.swap(g_pending_ui);
+		}
+		for (auto& fn : pending)
+			fn();
+	}
+
+	std::optional<screen_view> get_screen()
+	{
+		if (!g_ui || !g_ui->menu)
+			return std::nullopt;
+		const list_menu& m = *g_ui->menu;
+		screen_view v;
+		v.title = m.title;
+		if (m.header)
+			v.header = m.header();
+		for (const menu_item& item : m.build())
+			v.items.push_back({item.label, item.detail});
+		return v;
+	}
+
+	void screen_select(u32 index)
+	{
+		if (!g_ui || !g_ui->menu || g_rpcn_busy)
+			return;
+		const std::vector<menu_item> items = g_ui->menu->build();
+		if (index < items.size() && items[index].on_select)
+			items[index].on_select();
+	}
+
+	void screen_close()
+	{
+		if (g_ui && !g_rpcn_busy)
+			g_ui->menu.reset();
+	}
+
+	std::optional<text_view> get_text_field()
+	{
+		if (!g_ui || !g_ui->osk)
+			return std::nullopt;
+		const text_entry& e = *g_ui->osk;
+		text_view v;
+		v.serial = e.serial;
+		v.title = e.title;
+		v.prompt = e.prompt;
+		v.value = e.value;
+		v.password = e.type == text_entry::kind::password;
+		v.max_len = static_cast<u32>(e.max_len);
+		switch (e.type)
+		{
+		case text_entry::kind::username: v.input_scope = "Default"; break;
+		case text_entry::kind::password: v.input_scope = "Password"; break;
+		case text_entry::kind::email: v.input_scope = "EmailSmtpAddress"; break;
+		case text_entry::kind::token: v.input_scope = "Default"; break;
+		case text_entry::kind::host: v.input_scope = "Url"; break;
+		}
+		return v;
+	}
+
+	std::string text_field_done(const std::string& typed)
+	{
+		if (!g_ui || !g_ui->osk)
+			return {};
+		text_entry& e = *g_ui->osk;
+		std::string value = typed;
+		if (e.type != text_entry::kind::password)
+		{
+			// The text box takes any character; the fields take what the menu's own keys offer.
+			while (!value.empty() && value.back() == ' ')
+				value.pop_back();
+			while (!value.empty() && value.front() == ' ')
+				value.erase(value.begin());
+			for (char& c : value)
+			{
+				if (e.type == text_entry::kind::token && c >= 'a' && c <= 'z')
+					c = static_cast<char>(c - 'a' + 'A');
+				if (static_cast<u8>(c) < 0x20 || static_cast<u8>(c) >= 0x7f || !osk_accepts_type(e.type, c))
+				{
+					switch (e.type)
+					{
+					case text_entry::kind::username: return "Use only letters, digits, - and _.";
+					case text_entry::kind::token: return "The token has only letters and digits.";
+					default: return "Remove the spaces and special characters.";
+					}
+				}
+			}
+		}
+		if (value.size() > e.max_len)
+			return fmt::format("At most %u characters.", e.max_len);
+		if (value.empty() && !e.allow_empty)
+			return "Type something first.";
+		e.value = std::move(value);
+		osk_finish();
+		return {};
+	}
+
+	void text_field_cancel()
+	{
+		if (g_ui)
+			g_ui->osk.reset();
 	}
 
 	bool in_game()

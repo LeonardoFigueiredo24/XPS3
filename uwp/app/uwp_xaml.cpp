@@ -316,6 +316,16 @@ namespace uwp_xaml
 			return out;
 		}
 
+		// Takes the HSTRING (a WinRT out parameter) and returns it as UTF-8.
+		std::string take_string(HSTRING h)
+		{
+			UINT32 n = 0;
+			const wchar_t* p = WindowsGetStringRawBuffer(h, &n);
+			std::string out = p ? narrow(std::wstring_view(p, n)) : std::string();
+			WindowsDeleteString(h);
+			return out;
+		}
+
 		void set_text(const com<ITextBlock>& tb, std::string_view utf8)
 		{
 			if (tb)
@@ -449,6 +459,10 @@ namespace uwp_xaml
 			com<IRangeBase> loading_bar_range, job_bar_range;
 			com<IProgressBar> loading_bar, job_bar;
 			com<IContentControl> dialog_accept, dialog_cancel;
+			com<IUIElement> screen_layer, text_layer, text_error_el;
+			com<IControl> screen_scroll_ctl, text_ok_ctl, text_cancel_ctl;
+			com<IPanel> screen_items_panel, text_field_host;
+			com<ITextBlock> t_screen_title, t_screen_header, t_text_title, t_text_prompt, t_text_error;
 			com<IBrush> brush[4];
 
 			// Model mirror.
@@ -474,6 +488,16 @@ namespace uwp_xaml
 			int focus_tries = 0;
 			bool loading_shown = false, error_shown = false;
 			std::string loading_title_shown, loading_detail_shown, error_shown_text;
+			// The menu logic's own screen (RPCN account) and text field.
+			bool screen_open = false;
+			std::string screen_sig;
+			std::vector<com<IInspectable>> screen_buttons;
+			u32 screen_last = 0; // the entry chosen last: it gets the focus back
+			u64 text_serial = 0;
+			bool text_taken = false; // submitted; the next tick replaces or closes the field
+			com<ITextBox> text_box;
+			com<IPasswordBox> pass_box;
+			com<IControl> text_field_ctl;
 			com<IDispatcherTimer> timer;
 			bool launched = false;
 
@@ -538,6 +562,20 @@ namespace uwp_xaml
 				dialog_cancel = find_el<IContentControl>(root, L"DialogCancel");
 				t_error = find_el<ITextBlock>(root, L"ErrorText");
 
+				screen_layer = find_el<IUIElement>(root, L"ScreenLayer");
+				screen_scroll_ctl = find_el<IControl>(root, L"ScreenScroll");
+				screen_items_panel = find_el<IPanel>(root, L"ScreenItems");
+				t_screen_title = find_el<ITextBlock>(root, L"ScreenTitle");
+				t_screen_header = find_el<ITextBlock>(root, L"ScreenHeader");
+				text_layer = find_el<IUIElement>(root, L"TextLayer");
+				text_field_host = find_el<IPanel>(root, L"TextFieldHost");
+				t_text_title = find_el<ITextBlock>(root, L"TextTitle");
+				t_text_prompt = find_el<ITextBlock>(root, L"TextPrompt");
+				t_text_error = find_el<ITextBlock>(root, L"TextError");
+				text_error_el = find_el<IUIElement>(root, L"TextError");
+				text_ok_ctl = find_el<IControl>(root, L"TextOk");
+				text_cancel_ctl = find_el<IControl>(root, L"TextCancel");
+
 				if (!menu_layer || !games_sel || !games_items || !install_sel || !install_items || !settings_panel || !pivot || !game_panel)
 				{
 					xaml_log.error("The shell page is missing elements");
@@ -572,6 +610,10 @@ namespace uwp_xaml
 					accept->add_Click(make_handler<routed_handler>([this](IInspectable*, IRoutedEventArgs*) { close_dialog(true); }).get(), &token);
 				if (const auto cancel = dialog_cancel.as<IButtonBase>())
 					cancel->add_Click(make_handler<routed_handler>([this](IInspectable*, IRoutedEventArgs*) { close_dialog(false); }).get(), &token);
+				if (const auto ok = find_el<IButtonBase>(root, L"TextOk"))
+					ok->add_Click(make_handler<routed_handler>([this](IInspectable*, IRoutedEventArgs*) { submit_text(); }).get(), &token);
+				if (const auto cancel = find_el<IButtonBase>(root, L"TextCancel"))
+					cancel->add_Click(make_handler<routed_handler>([this](IInspectable*, IRoutedEventArgs*) { cancel_text(); }).get(), &token);
 				if (const auto resume = find_el<IButtonBase>(root, L"PauseResume"))
 					resume->add_Click(make_handler<routed_handler>([this](IInspectable*, IRoutedEventArgs*) { close_pause(); }).get(), &token);
 				if (const auto stop = find_el<IButtonBase>(root, L"PauseStop"))
@@ -653,13 +695,31 @@ namespace uwp_xaml
 				request_focus(target);
 			}
 
-			bool modal_open() const { return dialog.has_value() || job_visible || pause_open || loading_shown || error_shown; }
+			bool text_open() const { return text_serial != 0; }
+
+			bool modal_open() const { return dialog.has_value() || job_visible || pause_open || loading_shown || error_shown || screen_open || text_open(); }
 
 			void update_gating()
 			{
 				// Controls behind an overlay must not take the focus: disabled controls can't have it.
-				set_enabled(pivot_ctl, menu_visible && !dialog && !job_visible && !pause_open && !loading_shown && !error_shown);
+				set_enabled(pivot_ctl, menu_visible && !dialog && !job_visible && !pause_open && !loading_shown && !error_shown && !screen_open && !text_open());
 				set_enabled(pause_scroll_ctl, !dialog);
+				set_enabled(screen_scroll_ctl, !dialog && !job_visible && !text_open());
+				const bool text_enabled = !dialog && !job_visible;
+				set_enabled(text_field_ctl, text_enabled);
+				set_enabled(text_ok_ctl, text_enabled);
+				set_enabled(text_cancel_ctl, text_enabled);
+			}
+
+			// Focus for the top layer once an overlay over it has gone: the text field, the screen, or the menu.
+			void focus_top()
+			{
+				if (text_open())
+					request_focus(text_field_ctl.as<IInspectable>());
+				else if (screen_open && !screen_buttons.empty())
+					request_focus(screen_buttons[std::min<usz>(screen_last, screen_buttons.size() - 1)]);
+				else if (menu_visible)
+					focus_menu();
 			}
 
 			// ---- Lists ----
@@ -942,7 +1002,12 @@ namespace uwp_xaml
 						continue;
 
 					std::wstring control;
-					if (s.toggle)
+					if (s.action)
+					{
+						control = k_xaml_setting_button;
+						replace_all(control, L"$VALUE$", xml_text(s.value));
+					}
+					else if (s.toggle)
 					{
 						control = k_xaml_setting_toggle;
 						replace_all(control, L"$ON$", s.current == 1 ? L"True" : L"False");
@@ -968,7 +1033,21 @@ namespace uwp_xaml
 						continue;
 
 					int64_t token = 0;
-					if (s.toggle)
+					if (s.action)
+					{
+						if (const auto button = find_el<IButtonBase>(row_fe, L"Control"))
+						{
+							button->add_Click(make_handler<routed_handler>([this, i](IInspectable*, IRoutedEventArgs*)
+							{
+								// The next tick shows the screen (not from inside this handler: it rebuilds the page).
+								screen_last = 0;
+								uwp_frontend::open_setting(i);
+							}).get(), &token);
+							if (first && !*first)
+								*first = button.as<IControl>();
+						}
+					}
+					else if (s.toggle)
 					{
 						if (const auto toggle = find_el<IToggleSwitch>(row_fe, L"Control"))
 						{
@@ -1042,11 +1121,163 @@ namespace uwp_xaml
 				}
 				if (pause_open)
 					request_focus(find_el<IInspectable>(root, L"PauseResume"));
+				else if (dialog_return_focus && (screen_open || text_open()))
+					focus_top(); // the screen may have been rebuilt meanwhile
 				else if (dialog_return_focus)
 					request_focus(dialog_return_focus);
-				else if (menu_visible)
-					focus_menu();
+				else
+					focus_top();
 				dialog_return_focus.reset();
+			}
+
+			// ---- The menu logic's screen (RPCN account) ----
+			void sync_screen()
+			{
+				std::optional<uwp_frontend::screen_view> sv = menu_visible ? uwp_frontend::get_screen() : std::nullopt;
+				const bool open = sv.has_value();
+				if (open != screen_open)
+				{
+					screen_open = open;
+					set_visible(screen_layer, open);
+					if (!open)
+					{
+						screen_sig.clear();
+						screen_buttons.clear();
+						if (const auto children = children_of(screen_items_panel))
+							children->Clear();
+						// The screen changes what its settings row shows (the account name).
+						if (settings_built)
+							build_settings(settings_panel, false, &first_setting);
+						update_gating();
+						if (!dialog && !job_visible && !text_open())
+							focus_top();
+						return;
+					}
+					update_gating();
+				}
+				if (!open)
+					return;
+
+				std::string sig = sv->title + '\x1f' + sv->header;
+				for (const auto& item : sv->items)
+					sig += '\x1f' + item.label + '\x1e' + item.detail;
+				if (sig == screen_sig)
+					return;
+				screen_sig = std::move(sig);
+
+				set_text(t_screen_title, sv->title);
+				set_text(t_screen_header, sv->header);
+				const auto children = children_of(screen_items_panel);
+				if (!children)
+					return;
+				children->Clear();
+				screen_buttons.clear();
+				for (u32 i = 0; i < sv->items.size(); i++)
+				{
+					std::wstring markup = k_xaml_screen_item;
+					replace_all(markup, L"$LABEL$", xml_text(sv->items[i].label));
+					replace_all(markup, L"$DETAIL$", xml_text(sv->items[i].detail));
+					const com<IInspectable> item = load_xaml(markup, "screen item");
+					const auto el = item.as<IUIElement>();
+					const auto button = item.as<IButtonBase>();
+					if (!el || !button)
+						continue;
+					int64_t token = 0;
+					button->add_Click(make_handler<routed_handler>([this, i](IInspectable*, IRoutedEventArgs*)
+					{
+						// The next tick shows what the entry opened (the list may be rebuilt, this button with it).
+						screen_last = i;
+						uwp_frontend::screen_select(i);
+					}).get(), &token);
+					children->Append(el.get());
+					screen_buttons.push_back(item);
+				}
+				if (!dialog && !job_visible && !text_open())
+					focus_top();
+			}
+
+			// ---- Text field ----
+			void sync_text()
+			{
+				const std::optional<uwp_frontend::text_view> tv = menu_visible ? uwp_frontend::get_text_field() : std::nullopt;
+				const u64 serial = tv ? tv->serial : 0;
+				if (serial == text_serial)
+					return;
+				text_serial = serial;
+				text_taken = false;
+				text_box.reset();
+				pass_box.reset();
+				text_field_ctl.reset();
+				if (const auto children = children_of(text_field_host))
+					children->Clear();
+				set_visible(text_error_el, false);
+
+				if (tv)
+				{
+					std::wstring markup = tv->password ? k_xaml_password_field : k_xaml_text_field;
+					replace_all(markup, L"$MAX$", std::to_wstring(tv->max_len));
+					replace_all(markup, L"$SCOPE$", widen(tv->input_scope));
+					const com<IInspectable> field = load_xaml(markup, "text field");
+					text_box = field.as<ITextBox>();
+					pass_box = field.as<IPasswordBox>();
+					text_field_ctl = field.as<IControl>();
+					if (text_box && !tv->value.empty())
+					{
+						const hstr v(tv->value);
+						text_box->put_Text(v.get());
+					}
+					// Enter on the keyboard submits the field.
+					if (const auto el = field.as<IUIElement>())
+					{
+						int64_t token = 0;
+						el->add_KeyDown(make_handler<key_handler>([this](IInspectable*, IKeyRoutedEventArgs* e)
+						{
+							VirtualKey key{};
+							if (e && SUCCEEDED(e->get_Key(&key)) && key == VirtualKey::Enter)
+							{
+								e->put_Handled(true);
+								submit_text();
+							}
+						}).get(), &token);
+						if (const auto children = children_of(text_field_host))
+							children->Append(el.get());
+					}
+					set_text(t_text_title, tv->title);
+					set_text(t_text_prompt, tv->prompt);
+				}
+				set_visible(text_layer, tv.has_value());
+				update_gating();
+				if (!dialog && !job_visible)
+					focus_top();
+			}
+
+			void submit_text()
+			{
+				if (!text_open() || text_taken || dialog || job_visible)
+					return;
+				HSTRING h = nullptr;
+				if (text_box)
+					text_box->get_Text(&h);
+				else if (pass_box)
+					pass_box->get_Password(&h);
+				const std::string error = uwp_frontend::text_field_done(take_string(h));
+				if (!error.empty())
+				{
+					set_text(t_text_error, error);
+					set_visible(text_error_el, true);
+					return;
+				}
+				// The field is taken; the next tick shows what follows (another field, a message, a server call).
+				// Not from here: this may run in the field's own key handler, and that would remove the field.
+				text_taken = true;
+			}
+
+			void cancel_text()
+			{
+				if (!text_open() || text_taken)
+					return;
+				uwp_frontend::text_field_cancel();
+				text_taken = true;
 			}
 
 			// ---- Pause menu ----
@@ -1089,6 +1320,12 @@ namespace uwp_xaml
 			{
 				if (dialog)
 					close_dialog(false);
+				else if (job_visible)
+					return;
+				else if (text_open())
+					cancel_text();
+				else if (screen_open)
+					uwp_frontend::screen_close();
 				else if (pause_open)
 					close_pause();
 			}
@@ -1104,8 +1341,8 @@ namespace uwp_xaml
 					update_gating();
 					// The install is over: the controls behind the progress card get the focus back
 					// (a result dialog may follow and takes it).
-					if (!job.active && menu_visible && !modal_open())
-						focus_menu();
+					if (!job.active && !dialog && !pause_open && !loading_shown && !error_shown)
+						focus_top();
 				}
 				if (!job.active)
 					return;
@@ -1115,7 +1352,7 @@ namespace uwp_xaml
 					job_bar->put_IsIndeterminate(job.total == 0);
 					job_bar_range->put_Value(job.total ? 100.0 * std::min(job.done, job.total) / job.total : 0.0);
 				}
-				set_text(t_job_detail, job.total ? fmt::format("%u%%", static_cast<u32>(u64{std::min(job.done, job.total)} * 100 / job.total)) : std::string("Checking the file (this takes a moment)..."));
+				set_text(t_job_detail, job.server ? std::string("Waiting for the server...") : job.total ? fmt::format("%u%%", static_cast<u32>(u64{std::min(job.done, job.total)} * 100 / job.total)) : std::string("Checking the file (this takes a moment)..."));
 			}
 
 			void sync_overlay()
@@ -1193,6 +1430,8 @@ namespace uwp_xaml
 						sync_header();
 					}
 
+					// Results of RPCN server calls arrive here; they may open a field or a message.
+					uwp_frontend::pump();
 					sync_job();
 
 					if (!dialog)
@@ -1223,6 +1462,12 @@ namespace uwp_xaml
 				}
 				if (!game && pause_open)
 					close_pause();
+
+				if (uwp_frontend::model_ready())
+				{
+					sync_screen();
+					sync_text();
+				}
 
 				sync_overlay();
 
