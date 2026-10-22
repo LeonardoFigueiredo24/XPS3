@@ -3,8 +3,8 @@
 Unofficial port of the RPCS3 PlayStation 3 emulator to a UWP app for Xbox Series X in Developer
 Mode. Not supported by the RPCS3 team; don't ask them for help with it. This repository is private.
 
-The port is one app package (`RPCS3Xbox`): a controller menu (games, installs, settings) plus the
-full emulator. It is built on Linux with a zig/clang cross toolchain, needs no Qt and no Windows
+The port is one app package (`RPCS3Xbox`): a XAML controller menu (games, installs, settings) plus
+the full emulator. It is built on Linux with a zig/clang cross toolchain, needs no Qt and no Windows
 PC, and is installed through the Xbox Device Portal.
 
 ## Current state (2026-10-16)
@@ -35,13 +35,24 @@ Cold first start of the XMB compiles its PPU code with LLVM (~8.5 min); later st
 
 ## How it works
 
-- `uwp/app`: CoreWindow shell. `uwp_main.cpp` sets Xbox defaults and test switches,
-  `uwp_frontend.cpp` is the menu (drawn on the CPU), `uwp_input.cpp` the controllers,
+- `uwp/app`: XAML shell (UWP XAML, `Windows.UI.Xaml`; WinUI 3 doesn't run in UWP/Xbox apps). `uwp_main.cpp`
+  sets Xbox defaults and test switches, `uwp_xaml.cpp` is the UI (menu, progress and error screens, pause
+  menu), `uwp_frontend.cpp` is the menu logic behind it (game scan, installs, settings, boot),
+  `uwp_input.cpp` the controllers,
   `uwp_firmware.cpp` firmware/package installs, `uwp_sysstubs.c` and `uwp_lazyimports.c` stand in for
   Win32 DLLs the Xbox doesn't have.
+- UI: the pages are real XAML in `uwp/app/xaml/*.xaml`, embedded into the exe at build time and parsed
+  at run time with `XamlReader` (there is no XAML compiler on Linux). `uwp_xaml.cpp` finds the named
+  elements, fills the lists from the menu model and handles events; focus and the D-pad, A and LB/RB
+  tab switching are XAML's own. The WinRT ABI (vtables, IIDs) comes from the Windows SDK metadata:
+  `uwp/toolchain/gen_winrt_abi.py` generates `uwp/app/winrt_xaml_abi.h` (checked in; the script's header
+  says how to regenerate it). The game picture is a `SwapChainPanel`, behind the menu.
+  `LocalState/legacy_ui` (an empty file) starts the earlier software-drawn menu (`uwp_frontend.cpp`
+  still has it) instead, as a way back while the XAML shell is new.
 - Graphics: RPCS3's Vulkan renderer on Mesa **Dozen** (Vulkan over D3D12, `vulkan_dzn.dll`) with
   Microsoft's `dxil.dll`. There is no Vulkan loader: `uwp/vkshim` forwards `vk*` calls to Dozen.
-  Frames are read back and shown through the shell's D3D11 swapchain (~1 ms).
+  Frames are read back and presented (~1 ms) by the shell's render thread into a D3D11 composition
+  swapchain that the XAML `SwapChainPanel` shows.
 - CPU: PPU LLVM recompiler, SPU LLVM recompiler (LocalState/spu_asmjit for ASMJIT), 6 LLVM threads. Precompilation and background PRX
   compilation are off by default (they starved the XMB).
 - Memory: UWP can't map executable or sparse-file views, so shared memory uses pagefile sections;
@@ -117,10 +128,10 @@ MAKEMSIX=/path/to/makemsix uwp/package/package.sh build-uwp RPCS3Xbox.appx cert.
 | A / B / X / Y | Cross / Circle / Square / Triangle |
 | Menu / View | Start / Select |
 | Tap View + Menu | PS button |
-| Hold View + Menu ~1 s | Stop the game, back to the app menu |
+| Hold View + Menu ~1 s | Pause menu: resume, stop the game (back to the app menu), live settings |
 
 Menu: D-pad or left stick to move, A select, B back, LB/RB tabs, Y rescan. The Xbox button stays
-with the system.
+with the system. In the pause menu the game is paused; B resumes it.
 
 ### LocalState switches (for testing)
 
@@ -129,6 +140,7 @@ Empty files in the app's `LocalState` folder (via Device Portal file explorer):
 - `autoboot`: skip the menu; contents `xmb`, a title ID, or a full path (ISO). Delete it afterwards.
 - `autopress`: scripted button presses for remote test runs.
 - `storage`: `local` or a folder path for the cache location.
+- `legacy_ui`: use the earlier software-drawn menu instead of the XAML one (no pause menu; hold View + Menu stops the game).
 - `precompile`, `background_compile`: turn LLVM precompilation / background PRX compile back on.
 - `no_network`, `null_audio`, `null_renderer`, `heap_guard`, `ext_host_mem`: debugging switches.
 - `compile_headroom`, `compile_job_mb`: a new PPU/SPU compile job starts only while

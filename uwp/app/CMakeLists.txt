@@ -1,8 +1,13 @@
-# UWP shell executable for the Xbox port: CoreWindow app with a controller menu.
+# UWP shell executable for the Xbox port: a XAML app (Windows.UI.Xaml) with a controller menu.
+# LocalState/legacy_ui selects the earlier software-drawn menu (uwp_frontend.cpp) at run time.
+file(GLOB UWP_XAML_PAGES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/xaml/*.xaml)
+
 add_executable(rpcs3_uwp WIN32
     uwp_main.cpp
     uwp_input.cpp
     uwp_frontend.cpp
+    uwp_xaml.cpp
+    ${CMAKE_BINARY_DIR}/uwp_xaml/uwp_xaml_pages.inc
     uwp_firmware.cpp
     uwp_stubs.cpp
     uwp_sysstubs.c
@@ -34,7 +39,8 @@ add_executable(rpcs3_uwp WIN32
 target_include_directories(rpcs3_uwp PRIVATE
     ${CMAKE_SOURCE_DIR}/rpcs3
     ${CMAKE_SOURCE_DIR}
-    ${CMAKE_BINARY_DIR}/uwp_localized)
+    ${CMAKE_BINARY_DIR}/uwp_localized
+    ${CMAKE_BINARY_DIR}/uwp_xaml)
 
 target_compile_definitions(rpcs3_uwp PRIVATE UNICODE _UNICODE)
 target_link_libraries(rpcs3_uwp PRIVATE
@@ -48,6 +54,13 @@ target_link_options(rpcs3_uwp PRIVATE -municode -Wl,--subsystem,windows -Wl,--st
 set_target_properties(rpcs3_uwp PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/uwp)
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+# The XAML pages and item templates (xaml/*.xaml), embedded as strings for XamlReader.
+add_custom_command(
+    OUTPUT ${CMAKE_BINARY_DIR}/uwp_xaml/uwp_xaml_pages.inc
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/uwp_xaml
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/gen_xaml_pages.py ${CMAKE_CURRENT_SOURCE_DIR}/xaml ${CMAKE_BINARY_DIR}/uwp_xaml/uwp_xaml_pages.inc
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/gen_xaml_pages.py ${UWP_XAML_PAGES})
 
 # English overlay strings (home menu, dialogs), taken from the Qt UI's localized_emu.h.
 add_custom_command(
