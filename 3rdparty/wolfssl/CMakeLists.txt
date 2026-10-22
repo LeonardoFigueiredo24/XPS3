@@ -23,4 +23,11 @@ else()
 
 	target_compile_definitions(wolfssl PUBLIC WOLFSSL_DES_ECB HAVE_WRITE_DUP FP_MAX_BITS=8192)
 	target_compile_definitions(wolfssl INTERFACE WOLFSSL_USE_OPTIONS_H)
+
+	if(RPCS3_UWP)
+		# RPCN's TLS: seed wolfCrypt's RNG from BCryptGenRandom instead of the desktop CryptoAPI.
+		target_sources(wolfssl PRIVATE ${CMAKE_SOURCE_DIR}/uwp/wolfssl/uwp_wolfssl_seed.c)
+		target_compile_options(wolfssl PRIVATE "SHELL:-include ${CMAKE_SOURCE_DIR}/uwp/wolfssl/uwp_wolfssl_seed.h")
+		target_link_libraries(wolfssl PRIVATE bcrypt)
+	endif()
 endif()

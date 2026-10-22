@@ -4,23 +4,28 @@
 // uploads it to its D3D11 swapchain the same way it shows the emulator's frames. Input comes
 // from Windows.Gaming.Input (gamepad) and CoreWindow key states (keyboard, for PC testing).
 //
-// Tabs: Games (boot folders, ISOs, programs), Install (firmware PUP, PKG, RAP), Settings.
+// Tabs: Games (boot folders, ISOs, programs), Install (firmware PUP, PKG, RAP), Settings
+// (with the RPCN account screen and its on-screen keyboard).
 // While a game runs, holding View + Menu for a second stops it and returns here.
 
 #include "stdafx.h"
 #include "uwp_frontend.h"
 #include "uwp_firmware.h"
+#include "uwp_rpcn.h"
+#include "uwp_textinput.h"
 
 #include "Emu/System.h"
 #include "Emu/system_config.h"
 #include "Emu/system_utils.hpp"
 #include "Emu/vfs_config.h"
+#include "Emu/NP/rpcn_config.h"
 #include "Loader/ISO.h"
 #include "Loader/PSF.h"
 #include "Crypto/unpkg.h"
 #include "Utilities/Thread.h"
 #include "Utilities/File.h"
 #include "util/sysinfo.hpp"
+#include "util/cctype.hpp"
 
 #include <roapi.h>
 #include <winstring.h>
@@ -139,6 +144,9 @@ namespace uwp_frontend
 			act_next_tab = 1 << 8,
 			act_page_up = 1 << 9,
 			act_page_down = 1 << 10,
+			act_x = 1 << 11,
+			act_start = 1 << 12,
+			act_view = 1 << 13,
 		};
 
 		// ---- Colors (BGRA in a u32: 0xAARRGGBB) ----
@@ -493,9 +501,11 @@ namespace uwp_frontend
 		struct setting_item
 		{
 			std::string label;
-			cfg::_base* node;
+			cfg::_base* node; // null: a screen that A opens (on_open), showing value()
 			std::vector<std::string> values; // empty: the node's own list (enums, bools)
 			std::string note;
+			std::function<void()> on_open;
+			std::function<std::string()> value;
 		};
 
 		struct modal
@@ -504,6 +514,46 @@ namespace uwp_frontend
 			std::string text;
 			std::string accept_label; // empty: OK only
 			std::function<void()> on_accept;
+		};
+
+		// A text field (RPCN account details): typed on the system (Xbox) keyboard, or on the
+		// menu's own keys when the system keyboard can't be shown.
+		struct text_entry
+		{
+			enum class kind
+			{
+				username, // RPCN username: letters, digits, - and _
+				password, // shown as stars unless View is pressed
+				email,
+				token,    // 16 characters, digits and capital letters
+				host,     // server address (host or host:port)
+			} type;
+			std::string title;
+			std::string prompt;
+			std::string value;
+			usz max_len;
+			bool allow_empty = false; // Done with nothing typed (e.g. "enter the token later")
+			std::function<void(std::string)> on_done;
+			int row = 1, col = 0;
+			int layer = 0; // 0 lower case, 1 upper case, 2 symbols
+			bool reveal = false;
+			bool system_keyboard = false; // the Xbox keyboard types into it; else the menu's own keys
+		};
+
+		// A list of actions with a status text above it (the RPCN account screen).
+		struct menu_item
+		{
+			std::string label;
+			std::string detail;
+			std::function<void()> on_select;
+		};
+
+		struct list_menu
+		{
+			std::string title;
+			std::function<std::string()> header;
+			std::function<std::vector<menu_item>()> build;
+			int sel = 0;
 		};
 
 		// ---- State ----
@@ -548,6 +598,9 @@ namespace uwp_frontend
 			int sel[3]{};
 			int scroll[3]{};
 			std::unique_ptr<modal> dialog;
+			std::unique_ptr<text_entry> osk;
+			std::unique_ptr<list_menu> menu;
+			uwp_rpcn::account rpcn_account; // rpcn.yml as last read (refresh_rpcn_account)
 			std::vector<setting_item> settings;
 			u64 drawn_serial = 0;
 			bool dirty = true;
@@ -576,6 +629,20 @@ namespace uwp_frontend
 			g_pending_modal = std::make_unique<modal>(modal{std::move(title), std::move(text), {}, {}});
 			g_data_serial++;
 		}
+
+		// Work for the UI thread from worker threads (run by frame()), guarded by g_data_mutex.
+		std::vector<std::function<void()>> g_pending_ui;
+
+		void post_ui(std::function<void()> fn)
+		{
+			std::lock_guard lock(g_data_mutex);
+			g_pending_ui.push_back(std::move(fn));
+			g_data_serial++;
+		}
+
+		// RPCN server call in progress (worker thread); the menu waits for it.
+		atomic_t<bool> g_rpcn_busy{false};
+		std::string g_rpcn_busy_text; // set on the UI thread before the job starts
 
 		// ---- Scanning ----
 		bool is_program_file(const std::string& name)
@@ -960,6 +1027,341 @@ namespace uwp_frontend
 			}).detach();
 		}
 
+		// ---- RPCN account (in place of the Qt UI's RPCN dialogs) ----
+		void refresh_rpcn_account()
+		{
+			g_ui->rpcn_account = uwp_rpcn::get_account();
+			g_ui->dirty = true;
+		}
+
+		void show_modal(std::string title, std::string text, std::string accept_label = {}, std::function<void()> on_accept = {})
+		{
+			g_ui->dialog = std::make_unique<modal>(modal{std::move(title), std::move(text), std::move(accept_label), std::move(on_accept)});
+			g_ui->dirty = true;
+		}
+
+		void osk_open_system_keyboard(text_entry& e);
+
+		void ask_text(text_entry::kind type, std::string title, std::string prompt, std::string initial, std::function<void(std::string)> on_done, bool allow_empty = false)
+		{
+			const usz max_len = type == text_entry::kind::username || type == text_entry::kind::token ? 16 : type == text_entry::kind::host ? 128 : 64;
+			auto osk = std::make_unique<text_entry>(text_entry{type, std::move(title), std::move(prompt), std::move(initial), max_len, allow_empty, std::move(on_done)});
+			osk->layer = type == text_entry::kind::token ? 1 : 0;
+			osk_open_system_keyboard(*osk);
+			g_ui->osk = std::move(osk);
+			g_ui->dirty = true;
+		}
+
+		// Runs a blocking RPCN call on a worker; `job` returns what to do next on the UI thread.
+		void run_rpcn_job(std::string text, std::function<std::function<void()>()> job)
+		{
+			if (g_rpcn_busy.exchange(true))
+				return;
+			g_rpcn_busy_text = std::move(text);
+			g_data_serial++;
+
+			std::thread([job = std::move(job)]()
+			{
+				std::function<void()> then = job();
+				g_rpcn_busy = false;
+				post_ui([then = std::move(then)]()
+				{
+					refresh_rpcn_account();
+					if (then)
+						then();
+				});
+			}).detach();
+		}
+
+		bool rpcn_enabled()
+		{
+			return g_cfg.net.psn_status == np_psn_status::psn_rpcn;
+		}
+
+		void set_rpcn_enabled(bool on)
+		{
+			g_cfg.net.psn_status.set(on ? np_psn_status::psn_rpcn : np_psn_status::disabled);
+			ui_log.notice("UI: PSN set to %s", g_cfg.net.psn_status.get());
+			save_settings();
+		}
+
+		// Logs in with the saved account and reports the result; on success games use RPCN from now on.
+		void rpcn_check_login()
+		{
+			run_rpcn_job("Logging in to RPCN...", []() -> std::function<void()>
+			{
+				const uwp_rpcn::result res = uwp_rpcn::check_login();
+				return [res]()
+				{
+					if (!res.ok)
+					{
+						show_modal("RPCN login failed", res.message);
+						return;
+					}
+					std::string text = fmt::format("Logged in as %s. Games that support online play now use RPCN.", res.message);
+					if (!rpcn_enabled())
+						set_rpcn_enabled(true);
+					if (g_cfg.net.net_active != np_internet_status::enabled)
+						text += "\n\nThe PS3 network is Disconnected in Settings (or for this game); games stay offline until it is Connected.";
+					show_modal("RPCN", text);
+				};
+			});
+		}
+
+		void rpcn_enter_token(std::string prompt)
+		{
+			ask_text(text_entry::kind::token, "RPCN token", std::move(prompt), {}, [](std::string token)
+			{
+				if (token.empty())
+					return;
+				if (!uwp_rpcn::valid_token(token))
+				{
+					show_modal("Invalid token", "The token has 16 characters: digits and capital letters.");
+					return;
+				}
+				uwp_rpcn::save_token(token);
+				refresh_rpcn_account();
+				rpcn_check_login();
+			}, true);
+		}
+
+		// Asks for a password twice (it can't be seen while typing).
+		void ask_new_password(std::string title, std::function<void(std::string)> on_done)
+		{
+			ask_text(text_entry::kind::password, title, "Choose a password.", {}, [title, on_done = std::move(on_done)](std::string password)
+			{
+				ask_text(text_entry::kind::password, title, "Enter the password a second time.", {}, [password, on_done](std::string again)
+				{
+					if (again != password)
+					{
+						show_modal("Passwords don't match", "The two passwords were different. Nothing was changed.");
+						return;
+					}
+					on_done(password);
+				});
+			});
+		}
+
+		void rpcn_create_account()
+		{
+			ask_text(text_entry::kind::username, "Create an RPCN account", "Choose a username: 3 to 16 letters, digits, - or _. It is case sensitive and others see it.", {}, [](std::string username)
+			{
+				if (!uwp_rpcn::valid_username(username))
+				{
+					show_modal("Invalid username", "A username has 3 to 16 characters: letters, digits, - and _.");
+					return;
+				}
+				ask_new_password("Create an RPCN account", [username](std::string password)
+				{
+					ask_text(text_entry::kind::email, "Create an RPCN account",
+						"Enter your email address. RPCN sends the token that activates the account there, and uses it for nothing else.", {}, [username, password](std::string email)
+					{
+						if (!uwp_rpcn::valid_email(email))
+						{
+							show_modal("Invalid email", "That doesn't look like an email address.");
+							return;
+						}
+						show_modal("Create an RPCN account", fmt::format("Create the account\n\nUsername: %s\nEmail: %s\n\non %s?", username, email, g_ui->rpcn_account.host), "Create",
+							[username, password, email]()
+						{
+							run_rpcn_job("Creating the RPCN account...", [username, password, email]() -> std::function<void()>
+							{
+								const uwp_rpcn::result res = uwp_rpcn::create_account(username, password, email);
+								return [res, email]()
+								{
+									if (!res.ok)
+									{
+										show_modal("Account not created", res.message);
+										return;
+									}
+									rpcn_enter_token(fmt::format("The account is created and saved on this console. RPCN emailed a token to %s: enter it here. "
+										"(Done with nothing typed to enter it later from the RPCN account screen.)", email));
+								};
+							});
+						});
+					});
+				});
+			});
+		}
+
+		void rpcn_log_in()
+		{
+			ask_text(text_entry::kind::username, "Log in to RPCN", "Your RPCN username (case sensitive).", g_ui->rpcn_account.npid, [](std::string username)
+			{
+				if (!uwp_rpcn::valid_username(username))
+				{
+					show_modal("Invalid username", "A username has 3 to 16 characters: letters, digits, - and _.");
+					return;
+				}
+				ask_text(text_entry::kind::password, "Log in to RPCN", fmt::format("The password of %s.", username), {}, [username](std::string password)
+				{
+					ask_text(text_entry::kind::token, "Log in to RPCN", "The token from the account email (16 characters). Done with nothing typed if the account doesn't need one.", {},
+						[username, password](std::string token)
+					{
+						if (!token.empty() && !uwp_rpcn::valid_token(token))
+						{
+							show_modal("Invalid token", "The token has 16 characters: digits and capital letters.");
+							return;
+						}
+						// Deriving the password takes a moment (200k PBKDF2 rounds): do it on the worker too.
+						run_rpcn_job("Logging in to RPCN...", [username, password, token]() -> std::function<void()>
+						{
+							uwp_rpcn::save_login(username, password, token);
+							return []() { rpcn_check_login(); };
+						});
+					}, true);
+				});
+			});
+		}
+
+		void rpcn_resend_token()
+		{
+			run_rpcn_job("Asking RPCN to send the token again...", []() -> std::function<void()>
+			{
+				const uwp_rpcn::result res = uwp_rpcn::resend_token();
+				return [res]()
+				{
+					if (res.ok)
+						show_modal("Token sent", "The token was sent again to the email of the account. Enter it with \"Enter the token\".");
+					else
+						show_modal("Token not sent", res.message);
+				};
+			});
+		}
+
+		void rpcn_change_password(std::string username)
+		{
+			ask_text(text_entry::kind::token, "Change the RPCN password", "Enter the password reset token from the email (this is not the account activation token).", {},
+				[username](std::string token)
+			{
+				if (!uwp_rpcn::valid_token(token))
+				{
+					show_modal("Invalid token", "The token has 16 characters: digits and capital letters.");
+					return;
+				}
+				ask_new_password("Change the RPCN password", [username, token](std::string password)
+				{
+					run_rpcn_job("Changing the RPCN password...", [username, token, password]() -> std::function<void()>
+					{
+						const uwp_rpcn::result res = uwp_rpcn::reset_password(username, token, password);
+						return [res]()
+						{
+							if (res.ok)
+								rpcn_check_login();
+							else
+								show_modal("Password not changed", res.message);
+						};
+					});
+				});
+			});
+		}
+
+		// `send_token`: email a reset token first; otherwise the user already has one.
+		void rpcn_forgot_password(bool send_token)
+		{
+			ask_text(text_entry::kind::username, "Change the RPCN password", "Your RPCN username (case sensitive).", g_ui->rpcn_account.npid, [send_token](std::string username)
+			{
+				if (!uwp_rpcn::valid_username(username))
+				{
+					show_modal("Invalid username", "A username has 3 to 16 characters: letters, digits, - and _.");
+					return;
+				}
+				if (!send_token)
+				{
+					rpcn_change_password(username);
+					return;
+				}
+				ask_text(text_entry::kind::email, "Change the RPCN password", "The email address of the account. RPCN emails a password reset token there.", {}, [username](std::string email)
+				{
+					if (!uwp_rpcn::valid_email(email))
+					{
+						show_modal("Invalid email", "That doesn't look like an email address.");
+						return;
+					}
+					run_rpcn_job("Asking RPCN for a password reset token...", [username, email]() -> std::function<void()>
+					{
+						const uwp_rpcn::result res = uwp_rpcn::send_reset_token(username, email);
+						return [res, username]()
+						{
+							if (res.ok)
+								rpcn_change_password(username);
+							else
+								show_modal("Token not sent", res.message);
+						};
+					});
+				});
+			});
+		}
+
+		void open_rpcn_menu()
+		{
+			refresh_rpcn_account();
+			auto menu = std::make_unique<list_menu>();
+			menu->title = "RPCN account";
+			menu->header = []()
+			{
+				const uwp_rpcn::account& acc = g_ui->rpcn_account;
+				std::string text = "RPCN is RPCS3's free replacement for the PlayStation Network: online play, rooms, scores and trophies sync between RPCS3 users.\n\n";
+				if (acc.npid.empty())
+					text += "Account: none on this console";
+				else
+					text += fmt::format("Account: %s%s", acc.npid, acc.has_token ? "" : "  (no token entered)");
+				text += fmt::format("\nServer: %s\nGames use RPCN: %s", acc.host, rpcn_enabled() ? "yes" : fmt::format("no (PSN is %s)", g_cfg.net.psn_status.get()));
+				return text;
+			};
+			menu->build = []()
+			{
+				const uwp_rpcn::account& acc = g_ui->rpcn_account;
+				std::vector<menu_item> items;
+				if (!acc.npid.empty())
+				{
+					items.push_back({"Check the login", "Connects to the server and logs in with the saved account.", rpcn_check_login});
+					items.push_back({"Enter the token", "The activation token from the account email.", []() { rpcn_enter_token("The token from the account email (16 characters)."); }});
+					items.push_back({"Send the token again", "Emails the activation token again (once per 24 hours).", rpcn_resend_token});
+				}
+				items.push_back({"Create a new account", "Username, password and an email address for the activation token.", rpcn_create_account});
+				items.push_back({acc.npid.empty() ? "Log in with an existing account" : "Log in with another account", "An account made in RPCS3 on a PC works here too.", rpcn_log_in});
+				items.push_back({"Forgot the password", "Emails a password reset token (once per 24 hours), then sets a new password.", []() { rpcn_forgot_password(true); }});
+				items.push_back({"Enter a password reset token", "When the reset token email has already arrived.", []() { rpcn_forgot_password(false); }});
+				items.push_back({rpcn_enabled() ? "Turn RPCN off for games" : "Turn RPCN on for games", "Same as Settings > PSN (RPCN or Disconnected).", []()
+				{
+					set_rpcn_enabled(!rpcn_enabled());
+					g_ui->dirty = true;
+				}});
+				items.push_back({"Server", "np.rpcs3.net is the official server; change it only for a private one.", []()
+				{
+					ask_text(text_entry::kind::host, "RPCN server", "Server address, as host or host:port. Empty: the official server.", g_ui->rpcn_account.host, [](std::string host)
+					{
+						if (host.empty())
+							host = g_cfg_rpcn.host.def;
+						if (!parse_rpcn_host(host))
+						{
+							show_modal("Invalid server", "Enter a host name or address, optionally followed by :port.");
+							return;
+						}
+						uwp_rpcn::save_host(host);
+						refresh_rpcn_account();
+					}, true);
+				}});
+				if (!acc.npid.empty())
+				{
+					items.push_back({"Remove the account from this console", "Forgets the username, password and token here. The account itself stays.", []()
+					{
+						show_modal("Remove the RPCN account", fmt::format("Remove %s from this console? You can log in again later.", g_ui->rpcn_account.npid), "Remove", []()
+						{
+							uwp_rpcn::forget_account();
+							if (rpcn_enabled())
+								set_rpcn_enabled(false);
+							refresh_rpcn_account();
+						});
+					}});
+				}
+				return items;
+			};
+			g_ui->menu = std::move(menu);
+			g_ui->dirty = true;
+		}
+
 		// ---- Settings ----
 		std::vector<setting_item> make_settings()
 		{
@@ -976,12 +1378,23 @@ namespace uwp_frontend
 #endif
 				{"Preferred SPU threads", &g_cfg.core.preferred_spu_threads, {"0", "1", "2", "3", "4", "5", "6"}, "0 = automatic."},
 				{"Network", &g_cfg.net.net_active, {"Connected", "Disconnected"}, "Internet access for the XMB and games (browser, updates, online modes)."},
+				{"PSN", &g_cfg.net.psn_status, {}, "RPCN: online play through RPCS3's server (needs an account). Simulated: signed in, offline."},
+				{"RPCN account", nullptr, {}, "Create an account or log in for online play (A to open).", open_rpcn_menu, []()
+				{
+					return g_ui->rpcn_account.npid.empty() ? std::string("Not set up") : g_ui->rpcn_account.npid;
+				}},
 				{"System language", &g_cfg.sys.language, {}, {}},
 			};
 		}
 
 		void change_setting(setting_item& item, int dir)
 		{
+			if (!item.node)
+			{
+				if (dir > 0 && item.on_open)
+					item.on_open();
+				return;
+			}
 			std::vector<std::string> values = item.values.empty() ? item.node->to_list() : item.values;
 			if (values.empty())
 				return;
@@ -1054,6 +1467,9 @@ namespace uwp_frontend
 			if (raw_buttons & gp_y) held |= act_refresh;
 			if (raw_buttons & gp_lb) held |= act_prev_tab;
 			if (raw_buttons & gp_rb) held |= act_next_tab;
+			if (raw_buttons & gp_x) held |= act_x;
+			if (raw_buttons & gp_menu) held |= act_start;
+			if (raw_buttons & gp_view) held |= act_view;
 
 			// Keyboard (PC testing): arrows, Enter, Escape/Backspace, F5, Q/E or Tab, PageUp/PageDown.
 			if (window)
@@ -1102,6 +1518,186 @@ namespace uwp_frontend
 			sel = std::clamp(sel + delta, 0, count - 1);
 		}
 
+		// ---- On-screen keyboard ----
+		// Four rows of ten characters per layer, then the action row (two columns per key).
+		constexpr int osk_cols = 10;
+		constexpr int osk_char_rows = 4;
+		constexpr std::string_view osk_layers[3][osk_char_rows] = {
+			{"1234567890", "qwertyuiop", "asdfghjkl@", "zxcvbnm-_."},
+			{"1234567890", "QWERTYUIOP", "ASDFGHJKL@", "ZXCVBNM-_."},
+			{"1234567890", "!#$%&'*+/=", "?^`{|}~()[", "]<>;:,\"\\@."},
+		};
+		constexpr std::string_view osk_actions[5] = {"Shift", "Symbols", "Space", "Delete", "Done"};
+
+		bool osk_accepts_type(text_entry::kind type, char c)
+		{
+			switch (type)
+			{
+			case text_entry::kind::username: return utils::isalnum(c) || c == '-' || c == '_';
+			case text_entry::kind::token: return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z');
+			case text_entry::kind::email:
+			case text_entry::kind::host: return c != ' ';
+			case text_entry::kind::password: return true;
+			}
+			return true;
+		}
+
+		bool osk_accepts(const text_entry& e, char c)
+		{
+			return osk_accepts_type(e.type, c);
+		}
+
+		void osk_type(text_entry& e, char c)
+		{
+			if (e.type == text_entry::kind::token && c >= 'a' && c <= 'z')
+				c = static_cast<char>(c - 'a' + 'A');
+			if (e.value.size() < e.max_len && osk_accepts(e, c))
+				e.value += c;
+			uwp_textinput::set_text(e.value);
+		}
+
+		void osk_open_system_keyboard(text_entry& e)
+		{
+			uwp_textinput::scope sc = uwp_textinput::scope::username;
+			switch (e.type)
+			{
+			case text_entry::kind::username: sc = uwp_textinput::scope::username; break;
+			case text_entry::kind::password: sc = uwp_textinput::scope::password; break;
+			case text_entry::kind::email: sc = uwp_textinput::scope::email; break;
+			case text_entry::kind::token: sc = uwp_textinput::scope::code; break;
+			case text_entry::kind::host: sc = uwp_textinput::scope::url; break;
+			}
+			const text_entry::kind type = e.type;
+			// Passwords may use any character (desktop RPCS3 takes the UTF-8 bytes); the other fields are ASCII.
+			e.system_keyboard = uwp_textinput::show(sc, e.value, e.max_len, [type](char16_t c)
+			{
+				if (type == text_entry::kind::password)
+					return c >= 0x20;
+				return c >= 0x20 && c < 0x7f && osk_accepts_type(type, static_cast<char>(c));
+			}, [type](char16_t c)
+			{
+				return type == text_entry::kind::token && c >= u'a' && c <= u'z' ? static_cast<char16_t>(c - u'a' + u'A') : c;
+			});
+			ui_log.notice("UI: text field '%s' uses the %s keyboard", e.title, e.system_keyboard ? "system" : "menu's own");
+		}
+
+		void osk_finish()
+		{
+			ui_state& ui = *g_ui;
+			if (ui.osk->value.empty() && !ui.osk->allow_empty)
+				return;
+			uwp_textinput::hide();
+			// The callback may open the next entry (or a dialog), so take this one off first.
+			auto e = std::move(ui.osk);
+			if (e->on_done)
+				e->on_done(std::move(e->value));
+		}
+
+		// Typed on the system keyboard (or a USB keyboard) since the last frame.
+		void osk_poll_system_keyboard()
+		{
+			ui_state& ui = *g_ui;
+			if (!ui.osk)
+				return;
+			std::string text;
+			bool submitted = false;
+			if (!uwp_textinput::poll(text, submitted))
+				return;
+			ui.osk->value = std::move(text);
+			ui.dirty = true;
+			if (submitted)
+				osk_finish();
+		}
+
+		void osk_input(u32 pressed)
+		{
+			ui_state& ui = *g_ui;
+			text_entry& e = *ui.osk;
+
+			if (pressed & act_up) e.row = (e.row + osk_char_rows) % (osk_char_rows + 1);
+			if (pressed & act_down) e.row = (e.row + 1) % (osk_char_rows + 1);
+			if (pressed & act_left) e.col = (e.col + osk_cols - (e.row == osk_char_rows ? 2 : 1)) % osk_cols;
+			if (pressed & act_right) e.col = (e.col + (e.row == osk_char_rows ? 2 : 1)) % osk_cols;
+			if (e.row == osk_char_rows)
+				e.col &= ~1;
+
+			if (pressed & act_x) e.layer = e.layer == 1 ? 0 : 1;
+			if (pressed & act_refresh) e.layer = e.layer == 2 ? 0 : 2;
+
+			if (pressed & act_view) e.reveal = !e.reveal;
+
+			if (pressed & act_start)
+			{
+				osk_finish();
+				return;
+			}
+
+			// System keyboard: A opens it again, B cancels.
+			if (e.system_keyboard)
+			{
+				if (pressed & act_back)
+				{
+					uwp_textinput::hide();
+					ui.osk.reset();
+				}
+				else if (pressed & act_accept)
+				{
+					osk_open_system_keyboard(e);
+				}
+				return;
+			}
+
+			if (pressed & act_back)
+			{
+				if (e.value.empty())
+				{
+					uwp_textinput::hide();
+					ui.osk.reset();
+					return;
+				}
+				e.value.pop_back();
+				uwp_textinput::set_text(e.value);
+			}
+
+			if (pressed & act_accept)
+			{
+				if (e.row < osk_char_rows)
+				{
+					osk_type(e, osk_layers[e.layer][e.row][e.col]);
+					return;
+				}
+				switch (e.col / 2)
+				{
+				case 0: e.layer = e.layer == 1 ? 0 : 1; break;
+				case 1: e.layer = e.layer == 2 ? 0 : 2; break;
+				case 2: osk_type(e, ' '); break;
+				case 3:
+					if (!e.value.empty())
+						e.value.pop_back();
+					uwp_textinput::set_text(e.value);
+					break;
+				case 4: osk_finish(); break;
+				}
+			}
+		}
+
+		void menu_input(u32 pressed)
+		{
+			ui_state& ui = *g_ui;
+			list_menu& m = *ui.menu;
+			const std::vector<menu_item> items = m.build();
+			if (pressed & act_back)
+			{
+				ui.menu.reset();
+				return;
+			}
+			if (pressed & act_up) move_selection(m.sel, ::size32(items), -1);
+			if (pressed & act_down) move_selection(m.sel, ::size32(items), 1);
+			m.sel = std::clamp(m.sel, 0, std::max(static_cast<int>(items.size()) - 1, 0));
+			if ((pressed & act_accept) && m.sel < ::size32(items) && items[m.sel].on_select)
+				items[m.sel].on_select();
+		}
+
 		void handle_input(u32 pressed)
 		{
 			ui_state& ui = *g_ui;
@@ -1124,8 +1720,22 @@ namespace uwp_frontend
 				return;
 			}
 
-			if (g_installing)
+			if (g_installing || g_rpcn_busy)
 				return;
+
+			if (ui.osk)
+			{
+				// The system keyboard has the gamepad while it is up.
+				if (!uwp_textinput::keyboard_visible())
+					osk_input(pressed);
+				return;
+			}
+
+			if (ui.menu)
+			{
+				menu_input(pressed);
+				return;
+			}
 
 			if (pressed & act_prev_tab)
 				ui.current = static_cast<tab>((static_cast<u32>(ui.current) + 2) % 3);
@@ -1330,6 +1940,106 @@ namespace uwp_frontend
 			cv.text(px + 30, top + ph - 60, "A  Start", 30, col_accent);
 		}
 
+		void draw_menu(canvas& cv, list_menu& m)
+		{
+			cv.fill(0, 0, canvas_width, canvas_height, col_shade);
+			const int w = 1500, x = (canvas_width - w) / 2;
+			const int y = margin_y + 20, h = canvas_height - y * 2;
+			cv.fill(x, y, w, h, col_panel);
+			cv.fill(x, y, w, 4, col_accent);
+			cv.text(x + 50, y + 36, m.title, 40, col_text, w - 100);
+			int iy = y + 104;
+			iy += cv.paragraph(x + 50, iy, m.header(), 28, col_dim, w - 100) + 30;
+
+			const std::vector<menu_item> items = m.build();
+			m.sel = std::clamp(m.sel, 0, std::max(static_cast<int>(items.size()) - 1, 0));
+			constexpr int row_h = 84;
+			const int list_bottom = y + h - 90;
+			const int visible = std::max(1, (list_bottom - iy) / row_h);
+			const int first = std::clamp(m.sel - visible + 1, 0, std::max(static_cast<int>(items.size()) - visible, 0));
+			for (int i = first; i < std::min<int>(::size32(items), first + visible); i++)
+			{
+				const int ry = iy + (i - first) * row_h;
+				if (i == m.sel)
+				{
+					cv.fill(x + 30, ry, w - 60, row_h - 8, col_sel);
+					cv.fill(x + 30, ry, 6, row_h - 8, col_accent);
+				}
+				cv.text(x + 60, ry + 6, items[i].label, 30, col_text, w - 120);
+				cv.text(x + 60, ry + 46, items[i].detail, 22, i == m.sel ? 0xffc8d6ee : col_dim, w - 120);
+			}
+			cv.text(x + 50, y + h - 70, "A  Select      B  Back", 30, col_accent);
+		}
+
+		void draw_osk(canvas& cv, const text_entry& e)
+		{
+			cv.fill(0, 0, canvas_width, canvas_height, col_shade);
+			constexpr int key_w = 104, key_h = 76, gap = 10;
+			const int w = osk_cols * (key_w + gap) - gap + 100, x = (canvas_width - w) / 2;
+			const int prompt_h = cv.paragraph(0, canvas_height, e.prompt, 28, col_dim, w - 100); // measure only (drawn off canvas)
+			const int keys_h = e.system_keyboard ? 0 : (osk_char_rows + 1) * (key_h + gap);
+			const int h = 40 + 60 + prompt_h + 20 + 80 + 30 + keys_h + 90;
+			const int y = std::max(20, static_cast<int>(canvas_height - h) / 2);
+			cv.fill(x, y, w, h, col_panel);
+			cv.fill(x, y, w, 4, col_accent);
+			cv.text(x + 50, y + 36, e.title, 40, col_text, w - 100);
+			int cy = y + 100;
+			cv.paragraph(x + 50, cy, e.prompt, 28, col_dim, w - 100);
+			cy += prompt_h + 20;
+
+			// The text so far.
+			cv.fill(x + 50, cy, w - 100, 70, 0xff101116);
+			std::string shown = e.type == text_entry::kind::password && !e.reveal ? std::string(e.value.size(), '*') : e.value;
+			shown += '_';
+			// Keep the end in view.
+			while (shown.size() > 1 && cv.text_width(shown, 34) > w - 140)
+				shown.erase(0, 1);
+			cv.text(x + 70, cy + 14, shown, 34, col_text);
+			const std::string count = fmt::format("%u/%u", e.value.size(), e.max_len);
+			cv.text(x + w - 50 - cv.text_width(count, 22), cy + 76, count, 22, col_dim);
+			cy += 110;
+
+			for (int r = 0; r <= osk_char_rows && !e.system_keyboard; r++)
+			{
+				const int ky = cy + r * (key_h + gap);
+				const int keys = r < osk_char_rows ? osk_cols : osk_cols / 2;
+				for (int k = 0; k < keys; k++)
+				{
+					const int span = r < osk_char_rows ? 1 : 2;
+					const int kx = x + 50 + k * span * (key_w + gap);
+					const int kw = span * (key_w + gap) - gap;
+					const bool selected = e.row == r && e.col / span == k;
+					std::string label;
+					bool usable = true;
+					if (r < osk_char_rows)
+					{
+						char c = osk_layers[e.layer][r][k];
+						if (e.type == text_entry::kind::token && c >= 'a' && c <= 'z')
+							c = static_cast<char>(c - 'a' + 'A');
+						label = std::string(1, c);
+						usable = osk_accepts(e, c);
+					}
+					else
+					{
+						label = std::string(osk_actions[k]);
+						usable = !(k == 2 && !osk_accepts(e, ' '));
+						if ((k == 0 && e.layer == 1) || (k == 1 && e.layer == 2))
+							label = "[" + label + "]";
+					}
+					cv.fill(kx, ky, kw, key_h, selected ? col_sel : 0xff262a35);
+					if (selected)
+						cv.fill(kx, ky + key_h - 5, kw, 5, col_accent);
+					const int size = r < osk_char_rows ? 36 : 28;
+					cv.text(kx + (kw - cv.text_width(label, size)) / 2, ky + (key_h - size * 5 / 4) / 2, label, size, usable ? col_text : 0xff4c5260);
+				}
+			}
+
+			std::string hints = e.system_keyboard ? "A  Keyboard      Menu  Done      B  Cancel" : "A  Type      B  Delete (empty: cancel)      X  Shift      Y  Symbols      Menu  Done";
+			if (e.type == text_entry::kind::password)
+				hints += "      View  Show";
+			cv.text(x + 50, y + h - 66, hints, 24, col_accent, w - 100);
+		}
+
 		void draw(canvas& cv)
 		{
 			ui_state& ui = *g_ui;
@@ -1425,10 +2135,10 @@ namespace uwp_frontend
 					const setting_item& s = ui.settings[i];
 					const int y = top + (i - scroll) * row_h;
 					draw_list_row(cv, y, row_h - 8, i == sel, s.label, s.note);
-					std::string value = s.node->to_string();
+					std::string value = s.node ? s.node->to_string() : s.value ? s.value() : std::string();
 					if (value == "true" || value == "false")
 						value = value == "true" ? "On" : "Off";
-					value = "<  " + value + "  >";
+					value = s.node ? "<  " + value + "  >" : value + "  >";
 					const int vw = cv.text_width(value, 34);
 					cv.text(canvas_width - margin_x - 30 - vw, y + 10, value, 34, i == sel ? col_text : col_accent);
 				}
@@ -1439,6 +2149,22 @@ namespace uwp_frontend
 			if (!g_status_text.empty())
 				cv.text(margin_x, canvas_height - margin_y - 50 - 60, g_status_text, 28, g_status_color, canvas_width - margin_x * 2);
 			lock.unlock();
+
+			if (ui.menu)
+				draw_menu(cv, *ui.menu);
+			if (ui.osk)
+				draw_osk(cv, *ui.osk);
+
+			// RPCN server call in progress.
+			if (g_rpcn_busy)
+			{
+				cv.fill(0, 0, canvas_width, canvas_height, col_shade);
+				const int w = 1000, h = 200, x = (canvas_width - w) / 2, y = (canvas_height - h) / 2;
+				cv.fill(x, y, w, h, col_panel);
+				cv.fill(x, y, w, 4, col_accent);
+				cv.text(x + 40, y + 50, g_rpcn_busy_text, 36, col_text, w - 80);
+				cv.text(x + 40, y + 120, "This takes a few seconds.", 28, col_dim, w - 80);
+			}
 
 			// Firmware install progress.
 			if (g_installing && g_job)
@@ -1496,6 +2222,7 @@ namespace uwp_frontend
 		g_host = host;
 		g_ui = new ui_state();
 		g_ui->settings = make_settings();
+		refresh_rpcn_account();
 		{
 			std::lock_guard lock(g_data_mutex);
 			if (fs::file f{last_game_file()})
@@ -1602,6 +2329,7 @@ namespace uwp_frontend
 		ui_state& ui = *g_ui;
 		u32 raw = 0;
 		const u32 pressed = poll_actions(core_window, raw);
+		std::vector<std::function<void()>> pending_ui;
 
 		if (g_in_game)
 		{
@@ -1643,6 +2371,7 @@ namespace uwp_frontend
 				ui.dialog = std::move(g_pending_modal);
 				ui.dirty = true;
 			}
+			pending_ui.swap(g_pending_ui);
 
 			// Start on the last played game once the list has it, else on the top entry.
 			if (g_select_pending)
@@ -1659,6 +2388,13 @@ namespace uwp_frontend
 				}
 			}
 		}
+
+		for (auto& fn : pending_ui)
+			fn();
+		if (!pending_ui.empty())
+			ui.dirty = true;
+
+		osk_poll_system_keyboard();
 
 		handle_input(pressed);
 
