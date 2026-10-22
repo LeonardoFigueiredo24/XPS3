@@ -911,7 +911,7 @@ namespace
 			sys_log.always()("UWP: pipeline limit: %u", g_uwp_pipeline_limit);
 			// PS3 networking: RPCS3 ships with the network "Disconnected"; turn it on once so the XMB
 			// and games see an internet connection (the menu's Network setting can switch it off again,
-			// which then sticks). PSN stays off; RPCN needs an account.
+			// which then sticks). PSN stays off until an RPCN login succeeds (Settings > RPCN account).
 			if (!fs::is_file(g_local_dir + "net_default_set"))
 			{
 				g_cfg.net.net_active.set(np_internet_status::enabled);

@@ -31,7 +31,8 @@ Cold first start of the XMB compiles its PPU code with LLVM (~8.5 min); later st
   go to the drive with the most free space (normally a USB drive, `E:/RPCS3/cache/`). A new or wiped
   USB drive means the caches are recompiled on the next start.
 - If the app data is reset, re-check that the renderer is Vulkan (since b92d610 it is forced).
-- PSN/RPCN is out of scope. The Xbox GPU only exposes D3D12 feature level 11_0 / SM 6.4 to apps.
+- RPCN (online play) is set up from Settings > RPCN account; not yet tested on the console.
+- The Xbox GPU only exposes D3D12 feature level 11_0 / SM 6.4 to apps.
 
 ## How it works
 
@@ -107,8 +108,14 @@ MAKEMSIX=/path/to/makemsix uwp/package/package.sh build-uwp RPCS3Xbox.appx cert.
 - **Install**: firmware (`PS3UPDAT.PUP`), packages (`.pkg`) and licenses (`.rap`) from `LocalState/`,
   `LocalState/firmware/`, `LocalState/packages/` or a USB drive (root, `PS3/UPDATE/`, `PKG/`,
   `packages/`, `exdata/`). Installing a package also installs the `.rap` files next to it.
-- **Settings**: resolution scale, frame limit, VSync, shader mode, network, stats overlay and more,
-  saved to `config.yml` right away.
+- **Settings**: resolution scale, frame limit, VSync, shader mode, network, PSN mode, stats overlay
+  and more, saved to `config.yml` right away.
+- **Settings > RPCN account**: RPCN, RPCS3's PSN replacement for online play. Create an account
+  (username, password, email for the activation token) or log in with one made in desktop RPCS3,
+  enter the token, check the login, reset the password, or pick another server. Text is typed on
+  an on-screen keyboard (A type, B delete, X shift, Y symbols, Menu done, View shows a password).
+  A successful login sets PSN to RPCN. The login is saved in `LocalState/rpcs3/rpcn.yml` (the
+  same file as desktop RPCS3's, so one can be copied over), with the password stored hashed.
 
 ### Controls
 
