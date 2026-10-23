@@ -1,0 +1,7 @@
+<ListViewItem xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+              HorizontalContentAlignment="Stretch" Padding="8,6,8,6">
+  <StackPanel>
+    <TextBlock FontSize="17" TextTrimming="CharacterEllipsis" MaxLines="1">$TITLE$</TextBlock>
+    <TextBlock FontSize="12" Opacity="0.65" TextTrimming="CharacterEllipsis" MaxLines="1">$SUBTITLE$</TextBlock>
+  </StackPanel>
+</ListViewItem>

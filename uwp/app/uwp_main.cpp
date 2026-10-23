@@ -14,6 +14,7 @@
 #include "winrt_min.h"
 #include "uwp_frontend.h"
 #include "uwp_localized.h"
+#include "uwp_xaml.h"
 
 #include "Emu/System.h"
 #include "Emu/system_config.h"
@@ -1319,6 +1320,62 @@ namespace
 		sys_log.always()("%s", out);
 	}
 
+	// The newest frame from the emulator, uploaded into a texture of the shell's device; shared by the
+	// XAML shell's render thread and the software-drawn menu's loop.
+	struct game_frame
+	{
+		bool have_frame = false;
+		bool frame_live = false; // a frame counts as live until it has gone a second without changing
+		ID3D11Texture2D* texture = nullptr;
+	};
+
+	game_frame update_game_frame(ID3D11Device* dev, ID3D11DeviceContext* ctx, shell_state st, bool new_game = false)
+	{
+		static u64 shown_serial = 0;
+		static ID3D11Texture2D* frame_tex = nullptr;
+		static std::vector<u8> shown_pixels;
+		bool have_frame = false, upload = false;
+		if (st == shell_state::running || st == shell_state::booting)
+		{
+			std::lock_guard lock(g_frame_mutex);
+			if (new_game)
+			{
+				// A new game: the last picture of the previous one must not show.
+				g_frame_serial = 0;
+				shown_serial = 0;
+			}
+			if (g_frame_serial && g_frame_width == c_display_width && g_frame_height == c_display_height)
+			{
+				if (!frame_tex)
+				{
+					D3D11_TEXTURE2D_DESC td{};
+					td.Width = c_display_width;
+					td.Height = c_display_height;
+					td.MipLevels = 1;
+					td.ArraySize = 1;
+					td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+					td.SampleDesc.Count = 1;
+					td.Usage = D3D11_USAGE_DEFAULT;
+					dev->CreateTexture2D(&td, nullptr, &frame_tex);
+				}
+				if (frame_tex && shown_serial != g_frame_serial)
+				{
+					g_frame_pixels.swap(shown_pixels);
+					shown_serial = g_frame_serial;
+					upload = true;
+				}
+				have_frame = frame_tex != nullptr;
+			}
+		}
+		if (upload)
+			ctx->UpdateSubresource(frame_tex, 0, nullptr, shown_pixels.data(), c_display_width * 4, 0);
+
+		static auto last_new_frame = std::chrono::steady_clock::now();
+		if (upload)
+			last_new_frame = std::chrono::steady_clock::now();
+		return {have_frame, have_frame && std::chrono::steady_clock::now() - last_new_frame < std::chrono::seconds(1), frame_tex};
+	}
+
 	// While a game boots without a frame (first boots compile PPU code for minutes), or while
 	// PPU/SPU code compiles and the last frame has stopped changing, show a loading screen with
 	// the compile progress instead of a plain color or a frozen picture.
@@ -1604,44 +1661,9 @@ namespace
 				const shell_state st = g_state;
 
 				// Show the emulator's latest frame while it runs; otherwise the status color.
-				static u64 shown_serial = 0;
-				static ID3D11Texture2D* frame_tex = nullptr;
-				static std::vector<u8> shown_pixels;
-				bool have_frame = false, upload = false;
-				if (st == shell_state::running || st == shell_state::booting)
-				{
-					std::lock_guard lock(g_frame_mutex);
-					if (g_frame_serial && g_frame_width == c_display_width && g_frame_height == c_display_height)
-					{
-						if (!frame_tex)
-						{
-							D3D11_TEXTURE2D_DESC td{};
-							td.Width = c_display_width;
-							td.Height = c_display_height;
-							td.MipLevels = 1;
-							td.ArraySize = 1;
-							td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-							td.SampleDesc.Count = 1;
-							td.Usage = D3D11_USAGE_DEFAULT;
-							dev->CreateTexture2D(&td, nullptr, &frame_tex);
-						}
-						if (frame_tex && shown_serial != g_frame_serial)
-						{
-							g_frame_pixels.swap(shown_pixels);
-							shown_serial = g_frame_serial;
-							upload = true;
-						}
-						have_frame = frame_tex != nullptr;
-					}
-				}
-				if (upload)
-					ctx->UpdateSubresource(frame_tex, 0, nullptr, shown_pixels.data(), c_display_width * 4, 0);
-
-				// A frame counts as live until it has gone a second without changing.
-				static auto last_new_frame = std::chrono::steady_clock::now();
-				if (upload)
-					last_new_frame = std::chrono::steady_clock::now();
-				const bool frame_live = have_frame && std::chrono::steady_clock::now() - last_new_frame < std::chrono::seconds(1);
+				const game_frame game = update_game_frame(dev, ctx, st);
+				ID3D11Texture2D* frame_tex = game.texture;
+				const bool have_frame = game.have_frame, frame_live = game.frame_live;
 
 				if (show_loading_screen(dev, ctx, rtv, st, have_frame, frame_live))
 				{
@@ -1682,6 +1704,213 @@ namespace
 			return S_OK;
 		}
 	};
+
+	// ---- XAML shell ----
+	// The menu, the boot / error screens and the pause menu are XAML (uwp_xaml.cpp). This is the part that
+	// stays here: the D3D11 device and composition swap chain behind the XAML game panel, the render thread
+	// that presents the emulator's frames into it, and the state the XAML shell shows its overlays for.
+
+	struct xaml_gfx
+	{
+		ID3D11Device* dev = nullptr;
+		ID3D11DeviceContext* ctx = nullptr;
+		IDXGISwapChain1* sc = nullptr;
+		ID3D11RenderTargetView* rtv = nullptr;
+	} g_xaml_gfx;
+
+	// Written by the render thread, read by the XAML shell's tick.
+	atomic_t<bool> g_xaml_have_frame{false}, g_xaml_frame_live{false};
+
+	// A game that was started from the menu counts as booting until the emulator reports that it runs.
+	shell_state effective_state()
+	{
+		const shell_state st = g_state;
+		return st == shell_state::finished && uwp_frontend::in_game() ? shell_state::booting : st;
+	}
+
+	// UI thread: the swap chain the XAML game panel shows. The caller releases its reference.
+	IDXGISwapChain1* create_xaml_swap_chain()
+	{
+		xaml_gfx& g = g_xaml_gfx;
+		const D3D_FEATURE_LEVEL fls[] = {D3D_FEATURE_LEVEL_12_1, D3D_FEATURE_LEVEL_12_0, D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
+		D3D_FEATURE_LEVEL got_fl{};
+		const HRESULT hr_dev = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, fls, 4, D3D11_SDK_VERSION, &g.dev, &got_fl, &g.ctx);
+		sys_log.notice("UWP: D3D11CreateDevice: 0x%08x, feature level 0x%x", static_cast<u32>(hr_dev), static_cast<u32>(got_fl));
+		if (FAILED(hr_dev))
+			return nullptr;
+
+		IDXGIDevice* dxdev = nullptr;
+		IDXGIAdapter* adapter = nullptr;
+		IDXGIFactory2* factory = nullptr;
+		g.dev->QueryInterface(__uuidof(IDXGIDevice), reinterpret_cast<void**>(&dxdev));
+		dxdev->GetAdapter(&adapter);
+		adapter->GetParent(__uuidof(IDXGIFactory2), reinterpret_cast<void**>(&factory));
+		DXGI_SWAP_CHAIN_DESC1 desc{};
+		desc.Width = c_display_width;
+		desc.Height = c_display_height;
+		desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+		desc.SampleDesc.Count = 1;
+		desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+		desc.BufferCount = 2;
+		desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+		desc.Scaling = DXGI_SCALING_STRETCH;
+		desc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
+		const HRESULT hr_sc = factory->CreateSwapChainForComposition(g.dev, &desc, nullptr, &g.sc);
+		sys_log.notice("UWP: CreateSwapChainForComposition: 0x%08x", static_cast<u32>(hr_sc));
+		if (SUCCEEDED(hr_sc))
+		{
+			ID3D11Texture2D* backbuffer = nullptr;
+			g.sc->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&backbuffer));
+			g.dev->CreateRenderTargetView(backbuffer, nullptr, &g.rtv);
+			backbuffer->Release();
+			g.sc->AddRef();
+		}
+		factory->Release();
+		adapter->Release();
+		dxdev->Release();
+		return SUCCEEDED(hr_sc) ? g.sc : nullptr;
+	}
+
+	// Presents the emulator's frames into the XAML game panel while a game boots or runs.
+	DWORD WINAPI xaml_render_thread(void*)
+	{
+		const xaml_gfx& g = g_xaml_gfx;
+		static const float dark[4] = {0.08f, 0.085f, 0.105f, 1};
+		bool was_in_game = false;
+		u32 frames = 0;
+
+		for (;;)
+		{
+			// Holding View + Menu opens the pause menu (checked here, between frames).
+			if (uwp_frontend::poll_pause_combo())
+				uwp_xaml::request_pause_menu();
+
+			const bool in_game = uwp_frontend::in_game();
+			const shell_state st = effective_state();
+			if (!g.sc || !g.rtv || (!in_game && st != shell_state::running))
+			{
+				// The menu covers the panel: nothing to present.
+				g_xaml_have_frame = false;
+				g_xaml_frame_live = false;
+				was_in_game = false;
+				Sleep(33);
+				continue;
+			}
+
+			const game_frame game = update_game_frame(g.dev, g.ctx, st, in_game && !was_in_game);
+			was_in_game = in_game;
+			g_xaml_have_frame = game.have_frame;
+			g_xaml_frame_live = game.frame_live;
+
+			if (game.have_frame)
+			{
+				ID3D11Resource* target = nullptr;
+				g.rtv->GetResource(&target);
+				g.ctx->CopyResource(target, game.texture);
+				target->Release();
+			}
+			else
+			{
+				g.ctx->ClearRenderTargetView(g.rtv, dark);
+			}
+			const HRESULT hr_present = g.sc->Present(1, 0);
+			if (++frames == 1 || FAILED(hr_present))
+				sys_log.notice("UWP: XAML frame %u, state %u, Present: 0x%08x", frames, static_cast<u32>(st), static_cast<u32>(hr_present));
+		}
+		return 0;
+	}
+
+	// What the XAML shell shows over the menu: the error screen, or the boot / compile progress (the same
+	// rules as show_loading_screen() of the software-drawn menu). UI thread, every tick.
+	void fill_overlay_state(uwp_xaml::overlay_state& ov)
+	{
+		const shell_state st = effective_state();
+		if (st == shell_state::failed)
+		{
+			std::string text;
+			{
+				std::lock_guard lock(g_frame_mutex);
+				text = g_fatal_text;
+			}
+			ov.error = true;
+			ov.error_text = text.empty() ? std::string("The emulator stopped after a fatal error.") : text;
+			return;
+		}
+		static bool showing = false;
+		if (!uwp_frontend::in_game() || (st != shell_state::booting && st != shell_state::running))
+		{
+			showing = false;
+			return;
+		}
+
+		static auto since = std::chrono::steady_clock::now();
+		static auto last_shown = std::chrono::steady_clock::now();
+		static bool was_compiling = false;
+		static auto compile_since = std::chrono::steady_clock::now();
+
+		const bool have_frame = g_xaml_have_frame, frame_live = g_xaml_frame_live;
+		const u32 total = g_progr_ptotal, done = g_progr_pdone;
+		const u32 ftotal = g_progr_ftotal, fdone = g_progr_fdone;
+		const bool compiling = (total && done < total) || (ftotal && fdone < ftotal);
+		const std::string text = compiling ? std::string() : std::string(g_progr_text);
+
+		const auto now = std::chrono::steady_clock::now();
+		if (compiling && !was_compiling)
+			compile_since = now;
+		was_compiling = compiling;
+		// Over a picture, only when a compile has run 1.5 s (short on-demand compiles don't flash it).
+		const bool long_compile = compiling && now - compile_since >= std::chrono::milliseconds(1500);
+
+		if (frame_live || (have_frame && !long_compile) || (!compiling && (text.empty() || st == shell_state::running)))
+		{
+			showing = false;
+			return;
+		}
+		// The elapsed time covers the whole compile (file by file, stage by stage, with short gaps between):
+		// only restart it after 10 s without a screen.
+		if (!showing)
+		{
+			showing = true;
+			if (now - last_shown > std::chrono::seconds(10))
+				since = now;
+		}
+		last_shown = now;
+
+		const u64 secs = std::chrono::duration_cast<std::chrono::seconds>(now - since).count();
+		std::string title = text, detail;
+		if (compiling)
+		{
+			title = "Compiling PPU code";
+			if (ftotal)
+				fmt::append(detail, "File %u of %u", fdone, ftotal);
+			if (total)
+				fmt::append(detail, "%sModule %u of %u", ftotal ? ", " : "", done, total);
+			detail += ". ";
+		}
+		fmt::append(detail, "%u:%02u elapsed.\n\nThe first start of a game or the system menu compiles its code for this console. "
+			"Later starts reuse it.", secs / 60, secs % 60);
+
+		ov.loading = true;
+		ov.loading_over_game = have_frame;
+		ov.loading_title = std::move(title);
+		ov.loading_detail = std::move(detail);
+		ov.loading_done = done;
+		ov.loading_total = total;
+	}
+
+	int run_xaml_app()
+	{
+		uwp_xaml::host h;
+		h.create_swap_chain = []() { return create_xaml_swap_chain(); };
+		h.launched = []()
+		{
+			// RPCS3 threads need large stacks; give the emulator its own thread.
+			CloseHandle(CreateThread(nullptr, 16 * 1024 * 1024, emulator_thread, nullptr, 0, nullptr));
+			CloseHandle(CreateThread(nullptr, 1024 * 1024, xaml_render_thread, nullptr, 0, nullptr));
+		};
+		h.poll_overlay = [](uwp_xaml::overlay_state& ov) { fill_overlay_state(ov); };
+		return uwp_xaml::run(h);
+	}
 }
 
 // Used by the Vulkan renderer's UWP swapchain (Emu/RSX/VK/vkutils/swapchain_uwp.hpp).
@@ -1716,6 +1945,17 @@ void uwp_present_frame(const void* bgra_pixels, u32 width, u32 height)
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
 	RoInitialize(RO_INIT_MULTITHREADED);
+
+	// The menu is XAML. An empty LocalState/legacy_ui file selects the software-drawn menu of the
+	// earlier builds instead (a way back while the XAML shell is new on the console).
+	if (!fs::is_file(get_local_state_dir() + "legacy_ui"))
+	{
+		if (run_xaml_app() == 0)
+			return 0;
+		// Application.Start failed before any window: fall through to the software-drawn menu.
+		sys_log.error("UWP: the XAML shell didn't start, using the software-drawn menu");
+	}
+
 	winrt_min::ICoreApplication* app = nullptr;
 	if (FAILED(winrt_min::get_factory(L"Windows.ApplicationModel.Core.CoreApplication", winrt_min::IID_ICoreApplication, &app)))
 		return 1;

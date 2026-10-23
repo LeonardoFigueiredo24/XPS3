@@ -6,7 +6,10 @@
 #include "util/types.hpp"
 
 #include <functional>
+#include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 struct IInspectable;
 
@@ -42,4 +45,139 @@ namespace uwp_frontend
 	// Emulator callbacks.
 	void on_emulation_started();
 	void on_emulation_stopped();
+
+	// ---- Model for the XAML shell (uwp_xaml.cpp) ----
+	// The menu logic (scanning, installs, settings) above is shared with the software-drawn menu;
+	// these functions give the XAML pages a thread-safe view of it. They never touch the canvas.
+
+	// A decoded game icon (ICON0.PNG, 320x176 on the PS3): BGRA as 0xAARRGGBB, straight alpha.
+	struct icon_data
+	{
+		u32 w = 0, h = 0;
+		std::vector<u32> px;
+	};
+
+	struct game_view
+	{
+		std::string title, title_id, kind, version, source, path;
+		std::shared_ptr<const icon_data> icon; // empty when the game has none
+	};
+
+	struct install_view
+	{
+		std::string title;
+		std::string kind; // "Firmware", "Package" or "License"
+		std::string path;
+		u64 size = 0;
+	};
+
+	enum class status_kind : u32
+	{
+		dim,
+		ok,
+		warn,
+		error,
+	};
+
+	struct snapshot
+	{
+		std::vector<game_view> games;
+		std::vector<install_view> installs;
+		std::string firmware; // installed firmware version, empty when none
+		std::string status;
+		status_kind status_color = status_kind::dim;
+		std::string select_path; // game to select first (the last played one), empty: the top entry
+		bool select_pending = false; // set until the list has been shown once; cleared by clear_select_pending()
+		bool scanning = false;
+		bool scanning_usb = false;
+	};
+
+	struct job_view
+	{
+		bool active = false;
+		std::string title;
+		u32 done = 0, total = 0;
+		bool server = false; // an RPCN server call, not an install
+	};
+
+	struct dialog_view
+	{
+		std::string title, text;
+		std::string accept_label; // empty: a single OK button
+		std::function<void()> on_accept;
+	};
+
+	struct setting_view
+	{
+		std::string label, note;
+		std::vector<std::string> values; // what the setting is set to
+		std::vector<std::string> shown;  // what the page shows for each value
+		int current = 0;
+		bool toggle = false;  // exactly false / true: shown as a switch
+		bool in_game = false; // takes effect while a game runs (shown in the pause menu)
+		bool action = false;  // no value list: a screen that open_setting() opens (RPCN account); `note` stays, `value` is shown
+		std::string value;
+	};
+
+	// True once init() has run on the emulator thread (the settings need the emulator's configuration).
+	bool model_ready();
+	// Changes whenever the lists, status or scan state changed (job progress is polled with get_job()).
+	u64 model_serial();
+	void get_snapshot(snapshot& out);
+	void clear_select_pending();
+	job_view get_job();
+	std::optional<dialog_view> take_pending_dialog();
+
+	void request_rescan();
+	// Boots a Games-tab entry (by path), remembering it as the last played game.
+	void start_game(const std::string& path);
+	// The confirmation dialog for an Install-tab entry (by path); licenses install at once and answer with a result.
+	std::optional<dialog_view> install_prompt(const std::string& path);
+
+	std::vector<setting_view> get_settings();
+	void set_setting(u32 index, u32 value_index);
+	// An action row (setting_view::action): opens its screen, which get_screen() then shows.
+	void open_setting(u32 index);
+
+	// ---- Screens the menu logic opens itself (the RPCN account screen and its text fields) ----
+	// All UI thread.
+
+	// Runs work that worker threads (RPCN server calls) handed to the UI thread. Every tick.
+	void pump();
+
+	// A list of actions with a status text above it.
+	struct screen_view
+	{
+		std::string title, header;
+		struct item
+		{
+			std::string label, detail;
+		};
+		std::vector<item> items;
+	};
+
+	// A text field that the menu logic asks for (one at a time, over the screen).
+	struct text_view
+	{
+		u64 serial = 0; // changes for each new field
+		std::string title, prompt, value;
+		bool password = false;
+		const char* input_scope = "Default"; // XAML InputScopeNameValue
+		u32 max_len = 0;
+	};
+
+	std::optional<screen_view> get_screen();
+	void screen_select(u32 index);
+	void screen_close();
+	std::optional<text_view> get_text_field();
+	// The typed text: an error to show (and the field stays), or empty when it was taken.
+	std::string text_field_done(const std::string& value);
+	void text_field_cancel();
+
+	bool in_game();
+	// Render thread: true once when View + Menu has been held for a second while a game runs.
+	bool poll_pause_combo();
+	// Pauses or resumes the running game for the pause menu.
+	void set_paused(bool paused);
+	void stop_game();
 }

@@ -272,11 +272,7 @@ namespace uwp_frontend
 
 		// ---- Canvas ----
 		// A decoded game icon (ICON0.PNG, 320x176 on the PS3), BGRA with straight alpha.
-		struct icon_image
-		{
-			u32 w = 0, h = 0;
-			std::vector<u32> px;
-		};
+		using icon_image = icon_data;
 
 		std::shared_ptr<icon_image> decode_icon(const std::vector<u8>& png)
 		{
@@ -538,6 +534,7 @@ namespace uwp_frontend
 			int layer = 0; // 0 lower case, 1 upper case, 2 symbols
 			bool reveal = false;
 			bool system_keyboard = false; // the Xbox keyboard types into it; else the menu's own keys
+			u64 serial = 0; // tells the XAML shell that a new field replaced the previous one
 		};
 
 		// A list of actions with a status text above it (the RPCN account screen).
@@ -560,6 +557,7 @@ namespace uwp_frontend
 		host_info g_host;
 		atomic_t<bool> g_ready{false};
 		atomic_t<bool> g_in_game{false};
+		atomic_t<bool> g_paused_by_menu{false}; // the pause menu paused the emulator
 
 		std::mutex g_data_mutex; // games, pups, messages written by worker threads
 		std::vector<game_entry> g_games;
@@ -614,6 +612,7 @@ namespace uwp_frontend
 		};
 
 		ui_state* g_ui = nullptr;
+		bool g_xaml_ui = false; // the XAML shell drives the menu logic (pump() has run); UI thread
 
 		void set_status(std::string text, u32 color)
 		{
@@ -1047,7 +1046,11 @@ namespace uwp_frontend
 			const usz max_len = type == text_entry::kind::username || type == text_entry::kind::token ? 16 : type == text_entry::kind::host ? 128 : 64;
 			auto osk = std::make_unique<text_entry>(text_entry{type, std::move(title), std::move(prompt), std::move(initial), max_len, allow_empty, std::move(on_done)});
 			osk->layer = type == text_entry::kind::token ? 1 : 0;
-			osk_open_system_keyboard(*osk);
+			static u64 s_text_serial = 0;
+			osk->serial = ++s_text_serial;
+			// The XAML shell shows the field as its own text box (get_text_field()).
+			if (!g_xaml_ui)
+				osk_open_system_keyboard(*osk);
 			g_ui->osk = std::move(osk);
 			g_ui->dirty = true;
 		}
@@ -1409,6 +1412,52 @@ namespace uwp_frontend
 			}
 		}
 
+		// Boots a Games-tab entry the way the menu does and remembers it as the last played game.
+		void start_game_entry(const game_entry& game)
+		{
+			{
+				std::lock_guard lock(g_data_mutex);
+				g_select_path = game.path;
+			}
+			ui_log.notice("UI: boot '%s' (%s)", game.title, game.path);
+			// Remembered so the next start of the app selects it again.
+			fs::write_file(last_game_file(), fs::rewrite, game.path);
+
+			set_status(fmt::format("Starting %s...", game.title), col_dim);
+			g_in_game = true;
+			g_host.run_on_main([game]()
+			{
+				if (!boot(game.path))
+				{
+					g_in_game = false;
+				}
+			});
+		}
+
+		// The confirmation for an Install-tab entry. Licenses install at once and answer with a result.
+		std::unique_ptr<modal> make_install_prompt(const install_entry& item)
+		{
+			const std::string size = fmt::format("%.1f MB", item.size / 1048576.0);
+			if (item.type == install_entry::kind::firmware)
+			{
+				const std::string installed = utils::get_firmware_version();
+				std::string text = fmt::format("Install the PS3 firmware from\n%s (%s)?", item.path, size);
+				if (!installed.empty())
+					text += fmt::format("\n\nFirmware %s is installed now and will be replaced.", installed);
+				return std::make_unique<modal>(modal{"Install firmware", text, "Install", [path = item.path]() { start_firmware_install(path); }});
+			}
+			if (item.type == install_entry::kind::package)
+			{
+				return std::make_unique<modal>(modal{"Install package", fmt::format("Install %s\nfrom %s (%s)?\n\nLicense (.rap) files in the same folder are installed too.", item.title, item.path, size),
+					"Install", [path = item.path, title = item.title]() { start_package_install(path, title); }});
+			}
+
+			const std::string error = install_license(item.path);
+			if (error.empty())
+				return std::make_unique<modal>(modal{"License installed", fmt::format("%s is installed. The game it belongs to can now start.", item.path), {}, {}});
+			return std::make_unique<modal>(modal{"License not installed", error, {}, {}});
+		}
+
 		// ---- Input ----
 		u32 poll_actions(IInspectable* window, u32& raw_buttons)
 		{
@@ -1767,48 +1816,14 @@ namespace uwp_frontend
 			if (ui.current == tab::games)
 			{
 				const game_entry game = g_games[sel];
-				g_select_path = game.path;
 				lock.unlock();
-				ui_log.notice("UI: boot '%s' (%s)", game.title, game.path);
-				// Remembered so the next start of the app selects it again.
-				fs::write_file(last_game_file(), fs::rewrite, game.path);
-
-				set_status(fmt::format("Starting %s...", game.title), col_dim);
-				g_in_game = true;
-				g_host.run_on_main([game]()
-				{
-					if (!boot(game.path))
-					{
-						g_in_game = false;
-					}
-				});
+				start_game_entry(game);
 			}
 			else if (ui.current == tab::install)
 			{
 				const install_entry item = g_installs[sel];
 				lock.unlock();
-				const std::string size = fmt::format("%.1f MB", item.size / 1048576.0);
-				if (item.type == install_entry::kind::firmware)
-				{
-					const std::string installed = utils::get_firmware_version();
-					std::string text = fmt::format("Install the PS3 firmware from\n%s (%s)?", item.path, size);
-					if (!installed.empty())
-						text += fmt::format("\n\nFirmware %s is installed now and will be replaced.", installed);
-					ui.dialog = std::make_unique<modal>(modal{"Install firmware", text, "Install", [path = item.path]() { start_firmware_install(path); }});
-				}
-				else if (item.type == install_entry::kind::package)
-				{
-					ui.dialog = std::make_unique<modal>(modal{"Install package", fmt::format("Install %s\nfrom %s (%s)?\n\nLicense (.rap) files in the same folder are installed too.", item.title, item.path, size),
-						"Install", [path = item.path, title = item.title]() { start_package_install(path, title); }});
-				}
-				else
-				{
-					const std::string error = install_license(item.path);
-					if (error.empty())
-						ui.dialog = std::make_unique<modal>(modal{"License installed", fmt::format("%s is installed. The game it belongs to can now start.", item.path), {}, {}});
-					else
-						ui.dialog = std::make_unique<modal>(modal{"License not installed", error, {}, {}});
-				}
+				ui.dialog = make_install_prompt(item);
 			}
 		}
 
@@ -2282,6 +2297,7 @@ namespace uwp_frontend
 
 	void on_emulation_stopped()
 	{
+		g_paused_by_menu = false;
 		if (g_in_game.exchange(false))
 		{
 			ui_log.notice("UI: emulation stopped, back to the menu");
@@ -2419,5 +2435,395 @@ namespace uwp_frontend
 
 		pixels = ui.cv.px.data();
 		return true;
+	}
+
+	// ---- Model for the XAML shell ----
+	namespace
+	{
+		status_kind to_status_kind(u32 color)
+		{
+			return color == col_ok ? status_kind::ok : color == col_warn ? status_kind::warn : color == col_err ? status_kind::error : status_kind::dim;
+		}
+
+		dialog_view to_dialog_view(const modal& m)
+		{
+			return {m.title, m.text, m.accept_label, m.on_accept};
+		}
+
+		// The settings list of the XAML pages; index-stable for the lifetime of the app.
+		std::vector<setting_item>& xaml_settings()
+		{
+			static std::vector<setting_item> items = make_settings();
+			return items;
+		}
+
+		// Empty for an action row (no node).
+		std::vector<std::string> setting_values(const setting_item& item)
+		{
+			if (!item.node)
+				return {};
+			return item.values.empty() ? item.node->to_list() : item.values;
+		}
+	}
+
+	bool model_ready()
+	{
+		return g_ready;
+	}
+
+	u64 model_serial()
+	{
+		return g_data_serial;
+	}
+
+	void get_snapshot(snapshot& out)
+	{
+		std::lock_guard lock(g_data_mutex);
+		out.games.clear();
+		out.games.reserve(g_games.size());
+		for (const game_entry& g : g_games)
+			out.games.push_back({g.title, g.title_id, g.kind, g.version, g.source, g.path, g.icon});
+		out.installs.clear();
+		for (const install_entry& i : g_installs)
+		{
+			out.installs.push_back({i.title, i.type == install_entry::kind::firmware ? "Firmware" : i.type == install_entry::kind::package ? "Package" : "License", i.path, i.size});
+		}
+		out.firmware = g_fw_version;
+		out.status = g_status_text;
+		out.status_color = to_status_kind(g_status_color);
+		out.select_path = g_select_path;
+		out.select_pending = g_select_pending;
+		out.scanning = g_scanning;
+		out.scanning_usb = g_scanning_usb;
+	}
+
+	void clear_select_pending()
+	{
+		std::lock_guard lock(g_data_mutex);
+		g_select_pending = false;
+	}
+
+	job_view get_job()
+	{
+		job_view v;
+		if (g_rpcn_busy)
+		{
+			v.active = true;
+			v.server = true;
+			v.title = g_rpcn_busy_text;
+		}
+		else if (g_installing && g_job)
+		{
+			v.active = true;
+			v.title = g_job_title;
+			v.done = g_job->done;
+			v.total = g_job->total;
+		}
+		return v;
+	}
+
+	std::optional<dialog_view> take_pending_dialog()
+	{
+		// Messages of the menu logic itself (the RPCN account screen), UI thread.
+		if (g_ui && g_ui->dialog)
+		{
+			std::optional<dialog_view> out = to_dialog_view(*g_ui->dialog);
+			g_ui->dialog.reset();
+			return out;
+		}
+		std::lock_guard lock(g_data_mutex);
+		if (!g_pending_modal)
+			return std::nullopt;
+		std::optional<dialog_view> out = to_dialog_view(*g_pending_modal);
+		g_pending_modal.reset();
+		return out;
+	}
+
+	void request_rescan()
+	{
+		rescan();
+	}
+
+	void start_game(const std::string& path)
+	{
+		game_entry game;
+		{
+			std::lock_guard lock(g_data_mutex);
+			const auto it = std::find_if(g_games.begin(), g_games.end(), [&](const game_entry& g) { return g.path == path; });
+			if (it == g_games.end())
+				return;
+			game = *it;
+		}
+		start_game_entry(game);
+	}
+
+	std::optional<dialog_view> install_prompt(const std::string& path)
+	{
+		if (g_installing)
+			return std::nullopt;
+		install_entry item;
+		{
+			std::lock_guard lock(g_data_mutex);
+			const auto it = std::find_if(g_installs.begin(), g_installs.end(), [&](const install_entry& i) { return i.path == path; });
+			if (it == g_installs.end())
+				return std::nullopt;
+			item = *it;
+		}
+		const std::unique_ptr<modal> m = make_install_prompt(item);
+		return to_dialog_view(*m);
+	}
+
+	std::vector<setting_view> get_settings()
+	{
+		std::vector<setting_view> out;
+		for (const setting_item& item : xaml_settings())
+		{
+			setting_view v;
+			v.label = item.label;
+			v.note = item.note;
+			if (!item.node)
+			{
+				v.action = true;
+				v.value = item.value ? item.value() : std::string("Open");
+				out.push_back(std::move(v));
+				continue;
+			}
+			v.values = setting_values(item);
+			v.toggle = v.values.size() == 2 && v.values[0] == "false" && v.values[1] == "true";
+			for (const std::string& value : v.values)
+				v.shown.push_back(v.toggle ? (value == "true" ? "On" : "Off") : value);
+			const std::string cur = item.node->to_string();
+			const auto it = std::find(v.values.begin(), v.values.end(), cur);
+			v.current = it == v.values.end() ? 0 : static_cast<int>(it - v.values.begin());
+			// What the running game picks up without a restart.
+			v.in_game = item.label == "Stats overlay" || item.label == "Stats detail" || item.label == "Frame limit";
+			out.push_back(std::move(v));
+		}
+		return out;
+	}
+
+	void set_setting(u32 index, u32 value_index)
+	{
+		auto& items = xaml_settings();
+		if (index >= items.size())
+			return;
+		setting_item& item = items[index];
+		const std::vector<std::string> values = setting_values(item);
+		if (!item.node || value_index >= values.size() || item.node->to_string() == values[value_index])
+			return;
+		if (item.node->from_string(values[value_index]))
+		{
+			ui_log.notice("UI: setting '%s' = %s", item.label, values[value_index]);
+			save_settings();
+		}
+	}
+
+	void open_setting(u32 index)
+	{
+		auto& items = xaml_settings();
+		if (index < items.size() && !items[index].node && items[index].on_open && !g_in_game)
+			items[index].on_open();
+	}
+
+	void pump()
+	{
+		g_xaml_ui = true;
+		std::vector<std::function<void()>> pending;
+		{
+			std::lock_guard lock(g_data_mutex);
+			pending.swap(g_pending_ui);
+		}
+		for (auto& fn : pending)
+			fn();
+	}
+
+	std::optional<screen_view> get_screen()
+	{
+		if (!g_ui || !g_ui->menu)
+			return std::nullopt;
+		const list_menu& m = *g_ui->menu;
+		screen_view v;
+		v.title = m.title;
+		if (m.header)
+			v.header = m.header();
+		for (const menu_item& item : m.build())
+			v.items.push_back({item.label, item.detail});
+		return v;
+	}
+
+	void screen_select(u32 index)
+	{
+		if (!g_ui || !g_ui->menu || g_rpcn_busy)
+			return;
+		const std::vector<menu_item> items = g_ui->menu->build();
+		if (index < items.size() && items[index].on_select)
+			items[index].on_select();
+	}
+
+	void screen_close()
+	{
+		if (g_ui && !g_rpcn_busy)
+			g_ui->menu.reset();
+	}
+
+	std::optional<text_view> get_text_field()
+	{
+		if (!g_ui || !g_ui->osk)
+			return std::nullopt;
+		const text_entry& e = *g_ui->osk;
+		text_view v;
+		v.serial = e.serial;
+		v.title = e.title;
+		v.prompt = e.prompt;
+		v.value = e.value;
+		v.password = e.type == text_entry::kind::password;
+		v.max_len = static_cast<u32>(e.max_len);
+		switch (e.type)
+		{
+		case text_entry::kind::username: v.input_scope = "Default"; break;
+		case text_entry::kind::password: v.input_scope = "Password"; break;
+		case text_entry::kind::email: v.input_scope = "EmailSmtpAddress"; break;
+		case text_entry::kind::token: v.input_scope = "Default"; break;
+		case text_entry::kind::host: v.input_scope = "Url"; break;
+		}
+		return v;
+	}
+
+	std::string text_field_done(const std::string& typed)
+	{
+		if (!g_ui || !g_ui->osk)
+			return {};
+		text_entry& e = *g_ui->osk;
+		std::string value = typed;
+		if (e.type != text_entry::kind::password)
+		{
+			// The text box takes any character; the fields take what the menu's own keys offer.
+			while (!value.empty() && value.back() == ' ')
+				value.pop_back();
+			while (!value.empty() && value.front() == ' ')
+				value.erase(value.begin());
+			for (char& c : value)
+			{
+				if (e.type == text_entry::kind::token && c >= 'a' && c <= 'z')
+					c = static_cast<char>(c - 'a' + 'A');
+				if (static_cast<u8>(c) < 0x20 || static_cast<u8>(c) >= 0x7f || !osk_accepts_type(e.type, c))
+				{
+					switch (e.type)
+					{
+					case text_entry::kind::username: return "Use only letters, digits, - and _.";
+					case text_entry::kind::token: return "The token has only letters and digits.";
+					default: return "Remove the spaces and special characters.";
+					}
+				}
+			}
+		}
+		if (value.size() > e.max_len)
+			return fmt::format("At most %u characters.", e.max_len);
+		if (value.empty() && !e.allow_empty)
+			return "Type something first.";
+		e.value = std::move(value);
+		osk_finish();
+		return {};
+	}
+
+	void text_field_cancel()
+	{
+		if (g_ui)
+			g_ui->osk.reset();
+	}
+
+	bool in_game()
+	{
+		return g_in_game;
+	}
+
+	bool poll_pause_combo()
+	{
+		static IGamepadStatics* statics = nullptr;
+		static bool tried = false;
+		static std::chrono::steady_clock::time_point since{};
+		static bool fired = false;
+
+		if (!g_in_game)
+		{
+			since = {};
+			fired = false;
+			return false;
+		}
+
+		if (!tried)
+		{
+			tried = true;
+			HSTRING_HEADER header;
+			HSTRING name;
+			const wchar_t* cls = L"Windows.Gaming.Input.Gamepad";
+			HRESULT hr = WindowsCreateStringReference(cls, static_cast<UINT32>(wcslen(cls)), &header, &name);
+			if (SUCCEEDED(hr))
+				hr = RoGetActivationFactory(name, IID_IGamepadStatics, reinterpret_cast<void**>(&statics));
+			ui_log.notice("UI: Windows.Gaming.Input gamepad statics for the pause menu: 0x%08x", static_cast<u32>(hr));
+		}
+
+		u32 raw = 0;
+		IGamepadVectorView* list = nullptr;
+		if (statics && SUCCEEDED(statics->get_Gamepads(&list)) && list)
+		{
+			UINT32 n = 0;
+			list->get_Size(&n);
+			for (UINT32 i = 0; i < n; i++)
+			{
+				IGamepad* pad = nullptr;
+				if (SUCCEEDED(list->GetAt(i, &pad)) && pad)
+				{
+					gamepad_reading r{};
+					if (SUCCEEDED(pad->GetCurrentReading(&r)))
+						raw |= r.buttons;
+					pad->Release();
+				}
+			}
+			list->Release();
+		}
+
+		if ((raw & (gp_view | gp_menu)) != (gp_view | gp_menu))
+		{
+			since = {};
+			fired = false;
+			return false;
+		}
+		const auto now = std::chrono::steady_clock::now();
+		if (since == std::chrono::steady_clock::time_point{})
+			since = now;
+		if (!fired && now - since > std::chrono::milliseconds(1000))
+		{
+			fired = true;
+			ui_log.notice("UI: View + Menu held, opening the pause menu");
+			return true;
+		}
+		return false;
+	}
+
+	void set_paused(bool paused)
+	{
+		g_host.run_on_main([paused]()
+		{
+			if (paused)
+			{
+				if (Emu.IsRunning() && Emu.Pause(false, false))
+					g_paused_by_menu = true;
+			}
+			else if (g_paused_by_menu.exchange(false))
+			{
+				Emu.Resume();
+			}
+		});
+	}
+
+	void stop_game()
+	{
+		g_host.run_on_main([]()
+		{
+			g_paused_by_menu = false;
+			ui_log.notice("UI: stopping the game from the pause menu");
+			Emu.GracefulShutdown(false, true);
+		});
 	}
 }
