@@ -179,6 +179,7 @@ namespace
 		}
 	}
 	std::string g_local_dir; // LocalState, with trailing slash
+	std::string g_storage_root; // folder on the big drive chosen by choose_cache_dir ("E:/RPCS3/"), empty = LocalState
 
 	// The app's own storage on the Xbox (LocalState, drive Q:) has only a few MB free, far too
 	// little for the PPU/SPU/shader caches (hundreds of MB for the XMB alone). Put the cache on
@@ -228,6 +229,7 @@ namespace
 			return note + fmt::format("; cannot write to %s (%s), cache in LocalState", dir, fs::g_tls_error);
 		fs::remove_file(dir + "write_test");
 		g_android_cache_dir = dir;
+		g_storage_root = choice;
 
 		// The old cache in LocalState only takes the space the rest of the app needs.
 		if (fs::is_dir(local_cache))
@@ -235,6 +237,113 @@ namespace
 		return note + "; cache on " + dir;
 	}
 
+
+	// Copies every file under src to the same place under dst, keeping a file already in dst
+	// unless the one in src is newer. Returns false at the first file that cannot be copied.
+	bool copy_tree(const std::string& src, const std::string& dst, u64& files, u64& bytes)
+	{
+		if (!fs::create_path(dst))
+		{
+			sys_log.error("UWP: cannot create %s (%s)", dst, fs::g_tls_error);
+			return false;
+		}
+
+		for (const auto& entry : fs::dir(src))
+		{
+			if (entry.name == "." || entry.name == "..")
+				continue;
+
+			if (entry.is_directory)
+			{
+				if (!copy_tree(src + entry.name + "/", dst + entry.name + "/", files, bytes))
+					return false;
+				continue;
+			}
+
+			fs::stat_t have{};
+			if (fs::get_stat(dst + entry.name, have) && !have.is_directory && have.mtime >= entry.mtime)
+				continue;
+
+			if (!fs::copy_file(src + entry.name, dst + entry.name, true))
+			{
+				sys_log.error("UWP: cannot copy %s%s to %s (%s)", src, entry.name, dst, fs::g_tls_error);
+				return false;
+			}
+
+			files++;
+			if ((bytes >> 30) != ((bytes + entry.size) >> 30))
+				sys_log.always()("UWP: moving dev_hdd0: %llu MB so far", (bytes + entry.size) >> 20);
+			bytes += entry.size;
+		}
+
+		return true;
+	}
+
+	// The PS3 hard drive (dev_hdd0: installed games, game data, saves, licenses) used to live in
+	// LocalState like the rest of the config. LocalState shares a nearly full volume on the Xbox
+	// (2 MB free in the user's log), so games died with "Not enough space on the device" as soon
+	// as they wrote game data. dev_hdd0 now lives on the big drive next to the cache (moved there
+	// once from LocalState, newer files win) and LocalState/hdd_home remembers where. When that
+	// drive is missing the app runs from LocalState for that start and moves anything written
+	// there over the next time the drive is back. dev_hdd1 (a scratch cache) simply follows the
+	// cache drive. The mounts are written to vfs.yml, which Emu.Init reads on every boot.
+	std::string place_hdd()
+	{
+		const std::string local_hdd0 = g_android_config_dir + "dev_hdd0/";
+		const std::string local_hdd1 = g_android_config_dir + "dev_hdd1/";
+		const std::string home_file = g_local_dir + "hdd_home";
+
+		std::string home;
+		if (fs::file f{home_file})
+			home = fmt::trim(f.to_string(), " \t\r\n");
+		if (home.empty() && !g_storage_root.empty())
+			home = g_storage_root + "dev_hdd0/";
+
+		std::string note;
+		bool use_home = !home.empty();
+		if (use_home && !fs::is_dir(home.substr(0, 3)))
+		{
+			note = fmt::format("dev_hdd0 is on %s, which is not connected: games and saves there are missing this time, using LocalState", home);
+			use_home = false;
+		}
+
+		if (use_home && fs::is_dir(local_hdd0))
+		{
+			u64 files = 0, bytes = 0;
+			sys_log.always()("UWP: moving dev_hdd0 from LocalState to %s", home);
+			if (copy_tree(local_hdd0, home, files, bytes))
+			{
+				fs::remove_all(local_hdd0, true, true);
+				note = fmt::format("moved dev_hdd0 from LocalState to %s (%llu files, %llu MB)", home, files, bytes >> 20);
+			}
+			else
+			{
+				note = fmt::format("could not move dev_hdd0 to %s (see above), keeping it in LocalState", home);
+				use_home = false;
+			}
+		}
+
+		if (use_home && !fs::is_file(home_file))
+			fs::write_file(home_file, fs::rewrite, home);
+
+		g_cfg_vfs.load();
+		if (use_home)
+			g_cfg_vfs.dev_hdd0.from_string(home);
+		else
+			g_cfg_vfs.dev_hdd0.from_default();
+		if (!g_storage_root.empty())
+			g_cfg_vfs.dev_hdd1.from_string(g_storage_root + "dev_hdd1/");
+		else
+			g_cfg_vfs.dev_hdd1.from_default();
+		g_cfg_vfs.save();
+
+		if (!g_storage_root.empty() && fs::is_dir(local_hdd1))
+			fs::remove_all(local_hdd1, true, true);
+
+		if (!note.empty())
+			note += "; ";
+		return note + fmt::format("dev_hdd0 on %s, dev_hdd1 on %s", g_cfg_vfs.get(g_cfg_vfs.dev_hdd0), g_cfg_vfs.get(g_cfg_vfs.dev_hdd1));
+	}
 
 	std::string wide_to_utf8(const wchar_t* s)
 	{
@@ -699,6 +808,7 @@ namespace
 			// a TTY-heavy test program until the app was killed, and slowly in every game.
 			logs::set_init({});
 			sys_log.always()("UWP: %s", storage_note);
+			sys_log.always()("UWP: %s", place_hdd());
 
 			// Any fatal log line (e.g. a dying RSX thread, which doesn't stop the emulator) turns the screen red.
 			struct fatal_listener final : logs::listener
