@@ -1743,7 +1743,7 @@ namespace uwp_frontend
 			if (pressed & act_up) move_selection(m.sel, ::size32(items), -1);
 			if (pressed & act_down) move_selection(m.sel, ::size32(items), 1);
 			m.sel = std::clamp(m.sel, 0, std::max(static_cast<int>(items.size()) - 1, 0));
-			if ((pressed & act_accept) && m.sel < ::size32(items) && items[m.sel].on_select)
+			if ((pressed & act_accept) && m.sel < static_cast<int>(items.size()) && items[m.sel].on_select)
 				items[m.sel].on_select();
 		}
 
