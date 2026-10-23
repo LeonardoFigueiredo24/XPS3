@@ -14,7 +14,7 @@
 #include "uwp_frontend.h"
 #include "winrt_xaml_abi.h"
 
-#include <dxgi1_2.h>
+#include <dxgi1_3.h>
 
 #include <atomic>
 #include <deque>
@@ -454,6 +454,9 @@ namespace uwp_xaml
 
 			// Tree.
 			com<IFrameworkElement> root;
+			// The game picture's swap chain and the panel size (DIPs) its transform was set for.
+			IDXGISwapChain2* game_sc = nullptr;
+			double game_panel_w = 0, game_panel_h = 0;
 			com<IUIElement> game_panel, menu_layer, loading_layer, loading_backdrop, job_layer, dialog_layer, pause_layer, error_layer;
 			com<IControl> pivot_ctl, pause_scroll_ctl;
 			com<IPivot> pivot;
@@ -1419,9 +1422,36 @@ namespace uwp_xaml
 				}
 			}
 
+			// A swap chain in a SwapChainPanel is shown one buffer pixel per DIP, and the Xbox lays XAML out with
+			// a scale factor (200% on a 1080p screen: 960x540 DIPs), so a 1920x1080 buffer showed only its top-left quarter.
+			// Scale the buffer to the panel's size instead.
+			void fit_game_picture()
+			{
+				const auto fe = game_panel ? game_panel.as<IFrameworkElement>() : com<IFrameworkElement>{};
+				if (!game_sc || !fe)
+					return;
+				double w = 0, h = 0;
+				fe->get_ActualWidth(&w);
+				fe->get_ActualHeight(&h);
+				if (w <= 0 || h <= 0 || (w == game_panel_w && h == game_panel_h))
+					return;
+				DXGI_SWAP_CHAIN_DESC1 desc{};
+				if (FAILED(game_sc->GetDesc1(&desc)) || !desc.Width || !desc.Height)
+					return;
+				game_panel_w = w;
+				game_panel_h = h;
+				DXGI_MATRIX_3X2_F m{};
+				m._11 = static_cast<float>(w / desc.Width);
+				m._22 = static_cast<float>(h / desc.Height);
+				const HRESULT hr = game_sc->SetMatrixTransform(&m);
+				xaml_log.notice("Game panel %.0fx%.0f DIPs, swap chain %ux%u: scale %.3f x %.3f (0x%08x)", w, h, desc.Width, desc.Height, m._11, m._22, static_cast<u32>(hr));
+			}
+
 			// ---- Tick ----
 			void tick()
 			{
+				fit_game_picture();
+
 				if (uwp_frontend::model_ready())
 				{
 					if (!settings_built)
@@ -1667,6 +1697,8 @@ namespace uwp_xaml
 						{
 							const HRESULT hr = native->SetSwapChain(swap_chain);
 							xaml_log.notice("SwapChainPanel.SetSwapChain: 0x%08x", static_cast<u32>(hr));
+							if (SUCCEEDED(hr))
+								swap_chain->QueryInterface(__uuidof(IDXGISwapChain2), reinterpret_cast<void**>(&sh.game_sc));
 							native->Release();
 						}
 						else
