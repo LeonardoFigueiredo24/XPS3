@@ -6,10 +6,12 @@
       <ColumnDefinition Width="91"/>
       <ColumnDefinition Width="*"/>
     </Grid.ColumnDefinitions>
-    <Grid Width="91" Height="50" Background="#FF101116">
-      <Image x:Name="Icon" Stretch="Uniform"/>
-      <TextBlock x:Name="Placeholder" FontSize="18" Opacity="0.5" HorizontalAlignment="Center" VerticalAlignment="Center">$PLACEHOLDER$</TextBlock>
-    </Grid>
+    <Border Width="91" Height="50" Background="#FF1C1C1C" CornerRadius="4">
+      <Grid>
+        <Image x:Name="Icon" Stretch="Uniform"/>
+        <TextBlock x:Name="Placeholder" FontSize="18" Opacity="0.5" HorizontalAlignment="Center" VerticalAlignment="Center">$PLACEHOLDER$</TextBlock>
+      </Grid>
+    </Border>
     <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
       <TextBlock FontSize="17" TextTrimming="CharacterEllipsis" MaxLines="1">$TITLE$</TextBlock>
       <TextBlock FontSize="12" Opacity="0.65" TextTrimming="CharacterEllipsis" MaxLines="1">$SUBTITLE$</TextBlock>

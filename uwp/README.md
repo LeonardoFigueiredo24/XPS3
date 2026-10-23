@@ -52,6 +52,10 @@ Cold first start of the XMB compiles its PPU code with LLVM (~8.5 min); later st
   are XAML text boxes, so A on a field opens the Xbox keyboard.
   `LocalState/legacy_ui` (an empty file) starts the earlier software-drawn menu (`uwp_frontend.cpp`
   still has it) instead, as a way back while the XAML shell is new.
+  The controls have the Windows 11 look of WinUI 2: the app's Application object hands XAML the
+  WinUI 2 types (`IXamlMetadataProvider`) and uses `XamlControlsResources` as its resources, from the
+  `Microsoft.UI.Xaml.2.8` framework package the manifest depends on. The pages use the Windows 11
+  dark palette (#202020 base, #2B2B2B cards with rounded corners, content-dialog style popups).
 - Graphics: RPCS3's Vulkan renderer on Mesa **Dozen** (Vulkan over D3D12, `vulkan_dzn.dll`) with
   Microsoft's `dxil.dll`. There is no Vulkan loader: `uwp/vkshim` forwards `vk*` calls to Dozen.
   Frames are read back and presented (~1 ms) by the shell's render thread into a D3D11 composition
@@ -107,7 +111,9 @@ MAKEMSIX=/path/to/makemsix uwp/package/package.sh build-uwp RPCS3Xbox.appx cert.
 ## Installing on the Xbox
 
 1. Put the console in Developer Mode and open the Device Portal (`https://<xbox-ip>:11443/`).
-2. Home > Add, pick the `.appx` (first time: also the signing `.cer`), install.
+2. Home > Add, pick the `.appx` (first time: also the signing `.cer`, and as a dependency
+   `Microsoft.UI.Xaml.2.8.appx` (x64) from the Microsoft.UI.Xaml 2.8.7 NuGet package,
+   `tools/AppX/x64/Release`), install.
 3. In Dev Home, select RPCS3Xbox > View details and set **App type: Game** (5 GB RAM instead of 1 GB).
    A reinstall can reset this.
 4. Start the app. Install firmware from the Install tab (`PS3UPDAT.PUP` on a USB drive), then boot
@@ -151,6 +157,7 @@ Empty files in the app's `LocalState` folder (via Device Portal file explorer):
 - `autoboot`: skip the menu; contents `xmb`, a title ID, or a full path (ISO). Delete it afterwards.
 - `autopress`: scripted button presses for remote test runs.
 - `storage`: `local` or a folder path for the cache location.
+- `system_styles`: keep the standard (Windows 10) control styles instead of WinUI 2's.
 - `legacy_ui`: use the earlier software-drawn menu instead of the XAML one (no pause menu; hold View + Menu stops the game).
 - `precompile`, `background_compile`: turn LLVM precompilation / background PRX compile back on.
 - `no_network`, `null_audio`, `null_renderer`, `heap_guard`, `ext_host_mem`: debugging switches.
