@@ -36,6 +36,8 @@ namespace uwp_xaml
 		std::function<void()> launched;
 		// UI thread, every tick.
 		std::function<void(overlay_state&)> poll_overlay;
+		// WinUI 2 (Microsoft.UI.Xaml 2.8 framework package) styles for the controls: the Windows 11 look.
+		bool winui_styles = true;
 	};
 
 	// Runs the XAML application on the calling thread (Application.Start); returns when the app exits.

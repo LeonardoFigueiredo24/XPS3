@@ -55,6 +55,16 @@ namespace uwp_xaml
 		};
 		constexpr GUID IID_IBufferByteAccess{0x905a0fef, 0xbc53, 0x11df, {0x8c, 0x49, 0x00, 0x1e, 0x4f, 0xc6, 0x86, 0xda}};
 
+		// Windows.UI.Xaml.Markup.IXamlMetadataProvider with its whole signature (the generated header can't
+		// express the array that GetXmlnsDefinitions returns). XAML asks the Application for it to resolve
+		// the types that aren't Windows.UI.Xaml's own: here those of WinUI 2 (Microsoft.UI.Xaml).
+		struct xaml_metadata_provider : IInspectable
+		{
+			virtual HRESULT STDMETHODCALLTYPE GetXamlType(TypeName type, IInspectable** result) = 0;
+			virtual HRESULT STDMETHODCALLTYPE GetXamlTypeByFullName(HSTRING full_name, IInspectable** result) = 0;
+			virtual HRESULT STDMETHODCALLTYPE GetXmlnsDefinitions(UINT32* count, void** definitions) = 0;
+		};
+
 		// IVector<T> (Items, Children) up to Clear; the elements are passed as interface pointers
 		// (IInspectable for Items, IUIElement for Children).
 		struct IVectorObject : IInspectable
@@ -1482,17 +1492,25 @@ namespace uwp_xaml
 
 		// ---- Application ----
 		// The app's Application subclass: composed with Windows.UI.Xaml.Application (the inner object),
-		// overriding OnLaunched only.
-		struct app_object final : IApplicationOverrides
+		// overriding OnLaunched, and the XAML type provider that hands XAML the WinUI 2 types.
+		struct app_object final : IApplicationOverrides, xaml_metadata_provider
 		{
 			LONG refs = 1;
 			IInspectable* inner = nullptr;
+			com<xaml_metadata_provider> winui_types; // WinUI 2's own provider, created on first use
+			bool winui_types_tried = false;
 
 			HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** out) override
 			{
 				if (riid == __uuidof(IUnknown) || riid == __uuidof(IInspectable) || riid == iid_v<IApplicationOverrides>)
 				{
 					*out = static_cast<IApplicationOverrides*>(this);
+					AddRef();
+					return S_OK;
+				}
+				if (riid == iid_v<IXamlMetadataProvider>)
+				{
+					*out = static_cast<xaml_metadata_provider*>(this);
 					AddRef();
 					return S_OK;
 				}
@@ -1535,6 +1553,54 @@ namespace uwp_xaml
 			HRESULT STDMETHODCALLTYPE OnCachedFileUpdaterActivated(void*) override { return S_OK; }
 			HRESULT STDMETHODCALLTYPE OnWindowCreated(IInspectable*) override { return S_OK; }
 
+			// IXamlMetadataProvider: everything goes to WinUI 2's provider (UI thread only).
+			xaml_metadata_provider* winui()
+			{
+				if (!winui_types_tried && g_shell && g_shell->h.winui_styles)
+				{
+					winui_types_tried = true;
+					if (const com<IInspectable> p = activate(L"Microsoft.UI.Xaml.XamlTypeInfo.XamlControlsXamlMetaDataProvider"))
+						p->QueryInterface(iid_v<IXamlMetadataProvider>, reinterpret_cast<void**>(winui_types.put()));
+					xaml_log.notice("WinUI 2 type provider: %s", winui_types ? "yes" : "no");
+				}
+				return winui_types.get();
+			}
+			HRESULT STDMETHODCALLTYPE GetXamlType(TypeName type, IInspectable** result) override
+			{
+				*result = nullptr;
+				const auto p = winui();
+				return p ? p->GetXamlType(type, result) : S_OK;
+			}
+			HRESULT STDMETHODCALLTYPE GetXamlTypeByFullName(HSTRING full_name, IInspectable** result) override
+			{
+				*result = nullptr;
+				const auto p = winui();
+				return p ? p->GetXamlTypeByFullName(full_name, result) : S_OK;
+			}
+			HRESULT STDMETHODCALLTYPE GetXmlnsDefinitions(UINT32* count, void** definitions) override
+			{
+				*count = 0;
+				*definitions = nullptr;
+				const auto p = winui();
+				return p ? p->GetXmlnsDefinitions(count, definitions) : S_OK;
+			}
+
+			// The Windows 11 look: WinUI 2's XamlControlsResources as the application resources restyles the
+			// standard controls (rounded buttons, list items, toggles, combo boxes, text boxes, focus visuals).
+			// Without it (framework package missing, LocalState/system_styles) the pages keep the system styles.
+			static void apply_winui_styles(IApplication* app)
+			{
+				const com<IInspectable> resources = activate(L"Microsoft.UI.Xaml.Controls.XamlControlsResources");
+				const auto dictionary = resources.as<IResourceDictionary>();
+				if (!dictionary)
+				{
+					xaml_log.error("WinUI 2 styles unavailable: the standard control styles stay");
+					return;
+				}
+				const HRESULT hr = app->put_Resources(dictionary.get());
+				xaml_log.notice("WinUI 2 styles: 0x%08x", static_cast<u32>(hr));
+			}
+
 			static HRESULT launch()
 			{
 				shell& sh = *g_shell;
@@ -1548,8 +1614,11 @@ namespace uwp_xaml
 					IApplication* current = nullptr;
 					if (SUCCEEDED(statics->get_Current(&current)) && current)
 					{
-						if (const auto app2 = com<IApplication>(current).as<IApplication2>())
+						const com<IApplication> app(current);
+						if (const auto app2 = app.as<IApplication2>())
 							app2->put_RequiresPointerMode(ApplicationRequiresPointerMode::WhenRequested);
+						if (sh.h.winui_styles)
+							apply_winui_styles(app.get());
 					}
 				}
 

@@ -42,6 +42,8 @@ struct KeyEventHandler;
 struct IFocusManagerStatics;
 struct IDispatcherTimer;
 struct IXamlReaderStatics;
+struct IXamlMetadataProvider;
+struct IResourceDictionary;
 struct IPanel;
 struct IContentControl;
 struct IControl;
@@ -366,6 +368,19 @@ struct TimeSpan
 	int64_t Duration;
 };
 
+enum class TypeKind : int32_t
+{
+	Primitive = 0,
+	Metadata = 1,
+	Custom = 2
+};
+
+struct TypeName
+{
+	HSTRING Name;
+	TypeKind Kind;
+};
+
 struct FontWeight
 {
 	uint16_t Weight;
@@ -551,8 +566,8 @@ struct IApplicationOverrides : IInspectable
 
 struct IApplication : IInspectable
 {
-	virtual HRESULT STDMETHODCALLTYPE get_Resources(IInspectable** result) = 0;
-	virtual HRESULT STDMETHODCALLTYPE put_Resources(IInspectable* value) = 0;
+	virtual HRESULT STDMETHODCALLTYPE get_Resources(IResourceDictionary** result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE put_Resources(IResourceDictionary* value) = 0;
 	virtual HRESULT STDMETHODCALLTYPE get_DebugSettings(IInspectable** result) = 0;
 	virtual HRESULT STDMETHODCALLTYPE get_RequestedTheme(ApplicationTheme* result) = 0;
 	virtual HRESULT STDMETHODCALLTYPE put_RequestedTheme(ApplicationTheme value) = 0;
@@ -738,8 +753,8 @@ struct IUIElement : IInspectable
 struct IFrameworkElement : IInspectable
 {
 	virtual HRESULT STDMETHODCALLTYPE get_Triggers(IInspectable** result) = 0;
-	virtual HRESULT STDMETHODCALLTYPE get_Resources(IInspectable** result) = 0;
-	virtual HRESULT STDMETHODCALLTYPE put_Resources(IInspectable* value) = 0;
+	virtual HRESULT STDMETHODCALLTYPE get_Resources(IResourceDictionary** result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE put_Resources(IResourceDictionary* value) = 0;
 	virtual HRESULT STDMETHODCALLTYPE get_Tag(IInspectable** result) = 0;
 	virtual HRESULT STDMETHODCALLTYPE put_Tag(IInspectable* value) = 0;
 	virtual HRESULT STDMETHODCALLTYPE get_Language(HSTRING* result) = 0;
@@ -829,6 +844,21 @@ struct IXamlReaderStatics : IInspectable
 {
 	virtual HRESULT STDMETHODCALLTYPE Load(HSTRING xaml, IInspectable** result) = 0;
 	virtual HRESULT STDMETHODCALLTYPE LoadWithInitialTemplateValidation(HSTRING xaml, IInspectable** result) = 0;
+};
+
+struct IXamlMetadataProvider : IInspectable
+{
+	virtual HRESULT STDMETHODCALLTYPE GetXamlType(TypeName type, void** result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE GetXamlType_2(HSTRING fullName, void** result) = 0;
+	WINRT_ABI_SLOT(GetXmlnsDefinitions); // unsupported: array/byref return
+};
+
+struct IResourceDictionary : IInspectable
+{
+	virtual HRESULT STDMETHODCALLTYPE get_Source(IInspectable** result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE put_Source(IInspectable* value) = 0;
+	virtual HRESULT STDMETHODCALLTYPE get_MergedDictionaries(void** result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE get_ThemeDictionaries(void** result) = 0;
 };
 
 struct IPanel : IInspectable
@@ -1393,6 +1423,8 @@ template <> struct iid_traits<KeyEventHandler> { static constexpr GUID value = {
 template <> struct iid_traits<IFocusManagerStatics> { static constexpr GUID value = {0x1eccd326, 0x8182, 0x4482, {0x82, 0x6a, 0x09, 0x18, 0xe9, 0xed, 0x9a, 0xf7}}; };
 template <> struct iid_traits<IDispatcherTimer> { static constexpr GUID value = {0xd160ce46, 0xcd22, 0x4f5f, {0x8c, 0x97, 0x40, 0xe6, 0x1d, 0xa3, 0xe2, 0xdc}}; };
 template <> struct iid_traits<IXamlReaderStatics> { static constexpr GUID value = {0x9891c6bd, 0x534f, 0x4955, {0xb8, 0x5a, 0x8a, 0x8d, 0xc0, 0xdc, 0xa6, 0x02}}; };
+template <> struct iid_traits<IXamlMetadataProvider> { static constexpr GUID value = {0xb3765d69, 0x68a5, 0x4b32, {0x88, 0x61, 0xfd, 0xb9, 0x0c, 0x1f, 0x58, 0x36}}; };
+template <> struct iid_traits<IResourceDictionary> { static constexpr GUID value = {0xc1ea4f24, 0xd6de, 0x4191, {0x8e, 0x3a, 0xf4, 0x86, 0x01, 0xf7, 0x48, 0x9c}}; };
 template <> struct iid_traits<IPanel> { static constexpr GUID value = {0xa50a4bbd, 0x8361, 0x469c, {0x90, 0xda, 0xe9, 0xa4, 0x0c, 0x74, 0x74, 0xdf}}; };
 template <> struct iid_traits<IContentControl> { static constexpr GUID value = {0xa26dd1dc, 0xcd44, 0x435c, {0xbe, 0x94, 0x01, 0xd6, 0x24, 0x1c, 0x23, 0x1c}}; };
 template <> struct iid_traits<IControl> { static constexpr GUID value = {0xa8912263, 0x2951, 0x4f58, {0xa9, 0xc5, 0x5a, 0x13, 0x4e, 0xaa, 0x7f, 0x07}}; };

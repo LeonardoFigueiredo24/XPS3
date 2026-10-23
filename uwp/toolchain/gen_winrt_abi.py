@@ -30,7 +30,7 @@ INTERFACES = [
     # Elements, events
     X + "IUIElement", X + "IFrameworkElement", X + "IRoutedEventArgs", X + "RoutedEventHandler",
     X + "Input.IKeyRoutedEventArgs", X + "Input.KeyEventHandler", X + "Input.IFocusManagerStatics",
-    X + "IDispatcherTimer", X + "Markup.IXamlReaderStatics",
+    X + "IDispatcherTimer", X + "Markup.IXamlReaderStatics", X + "Markup.IXamlMetadataProvider", X + "IResourceDictionary",
     # Controls
     XC + "IPanel", XC + "IContentControl", XC + "IControl", XC + "ITextBlock", XC + "IProgressBar", XC + "IImage",
     XC + "IItemsControl", XC + "ISelectionChangedEventArgs", XC + "SelectionChangedEventHandler",

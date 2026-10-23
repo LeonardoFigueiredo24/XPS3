@@ -1,6 +1,7 @@
-<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-      Margin="0,0,0,10">
+<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Background="#FF2B2B2B" BorderBrush="#FF1C1C1C" BorderThickness="1" CornerRadius="4" Padding="16,10,16,10" Margin="0,0,0,4">
+<Grid>
   <Grid.ColumnDefinitions>
     <ColumnDefinition Width="*"/>
     <ColumnDefinition Width="Auto"/>
@@ -11,3 +12,4 @@
   </StackPanel>
   $CONTROL$
 </Grid>
+</Border>
