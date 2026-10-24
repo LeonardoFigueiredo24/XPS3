@@ -63,7 +63,18 @@ namespace rsx
 		{
 			if (video_path.empty()) return;
 
-			m_video_source = ensure(g_emu_callbacks.make_video_source());
+			// Frontends without a media player (headless, UWP) return nullptr: show the still image instead of failing
+			if (g_emu_callbacks.make_video_source)
+			{
+				m_video_source = g_emu_callbacks.make_video_source();
+			}
+
+			if (!m_video_source)
+			{
+				rsx_log.notice("video_view: no media player available, not playing '%s'", video_path);
+				return;
+			}
+
 			m_video_source->set_update_callback([this]()
 			{
 				if (m_video_active)
