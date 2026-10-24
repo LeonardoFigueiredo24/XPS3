@@ -1933,6 +1933,7 @@ namespace
 		static const float dark[4] = {0.08f, 0.085f, 0.105f, 1};
 		bool was_in_game = false;
 		u32 frames = 0;
+		HRESULT last_hr = S_OK;
 
 		for (;;)
 		{
@@ -1969,8 +1970,17 @@ namespace
 				g.ctx->ClearRenderTargetView(g.rtv, dark);
 			}
 			const HRESULT hr_present = g.sc->Present(1, 0);
-			if (++frames == 1 || FAILED(hr_present))
+			if (++frames == 1 || hr_present != last_hr)
 				sys_log.notice("UWP: XAML frame %u, state %u, Present: 0x%08x", frames, static_cast<u32>(st), static_cast<u32>(hr_present));
+			if (hr_present == DXGI_ERROR_DEVICE_REMOVED || hr_present == DXGI_ERROR_DEVICE_RESET)
+			{
+				// A lost device fails Present at once: without this the thread spun and logged every call
+				// (170000+ lines in a second of a 50 Cent crash log). Once, the reason (hung, reset, driver error).
+				if (hr_present != last_hr)
+					sys_log.error("UWP: XAML device lost, reason 0x%08x", static_cast<u32>(g.dev->GetDeviceRemovedReason()));
+				Sleep(100);
+			}
+			last_hr = hr_present;
 		}
 		return 0;
 	}
