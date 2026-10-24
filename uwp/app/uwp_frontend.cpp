@@ -955,6 +955,13 @@ namespace uwp_frontend
 		// ---- Package (.pkg) install ----
 		void start_package_install(const std::string& path, const std::string& title)
 		{
+			if (!g_host.no_storage.empty())
+			{
+				set_status("Connect a USB drive to install games", col_err);
+				post_modal("No USB drive", g_host.no_storage);
+				return;
+			}
+
 			if (g_installing.exchange(true))
 				return;
 
@@ -2254,6 +2261,14 @@ namespace uwp_frontend
 
 	bool boot(const std::string& path)
 	{
+		if (!g_host.no_storage.empty())
+		{
+			ui_log.error("UWP: not booting '%s': %s", path, g_host.no_storage);
+			set_status("Connect a USB drive to play", col_err);
+			post_modal("No USB drive", g_host.no_storage);
+			return false;
+		}
+
 		// Without firmware every firmware library must use RPCS3's built-in (HLE) version,
 		// otherwise the boot stops with "firmware missing". With firmware, use the defaults.
 		if (!firmware_installed())

@@ -283,15 +283,19 @@ namespace
 	// LocalState like the rest of the config. LocalState shares a nearly full volume on the Xbox
 	// (2 MB free in the user's log), so games died with "Not enough space on the device" as soon
 	// as they wrote game data. dev_hdd0 now lives on the big drive next to the cache (moved there
-	// once from LocalState, newer files win) and LocalState/hdd_home remembers where. When that
-	// drive is missing the app runs from LocalState for that start and moves anything written
-	// there over the next time the drive is back. dev_hdd1 (a scratch cache) simply follows the
-	// cache drive. The mounts are written to vfs.yml, which Emu.Init reads on every boot.
+	// once from LocalState, newer files win) and LocalState/hdd_home remembers where. Without that
+	// drive games and package installs are refused (g_no_storage) rather than run from LocalState;
+	// LocalState/storage "local" allows LocalState on purpose. dev_hdd1 (a scratch cache) follows
+	// the cache drive. The mounts are written to vfs.yml, which Emu.Init reads on every boot.
+	std::string g_no_storage;
 	std::string place_hdd()
 	{
 		const std::string local_hdd0 = g_android_config_dir + "dev_hdd0/";
 		const std::string local_hdd1 = g_android_config_dir + "dev_hdd1/";
 		const std::string home_file = g_local_dir + "hdd_home";
+		bool local_wanted = false; // LocalState/storage says "local"
+		if (fs::file f{g_local_dir + "storage"})
+			local_wanted = fmt::trim(f.to_string(), " \t\r\n") == "local";
 
 		std::string home;
 		if (fs::file f{home_file})
@@ -303,8 +307,12 @@ namespace
 		bool use_home = !home.empty();
 		if (use_home && !fs::is_dir(home.substr(0, 3)))
 		{
-			note = fmt::format("dev_hdd0 is on %s, which is not connected: games and saves there are missing this time, using LocalState", home);
+			note = fmt::format("dev_hdd0 is on %s, which is not connected", home);
 			use_home = false;
+		}
+		else if (!use_home)
+		{
+			note = "no drive with 2 GB free for dev_hdd0";
 		}
 
 		if (use_home && fs::is_dir(local_hdd0))
@@ -318,13 +326,22 @@ namespace
 			}
 			else
 			{
-				note = fmt::format("could not move dev_hdd0 to %s (see above), keeping it in LocalState", home);
+				note = fmt::format("could not move dev_hdd0 to %s (see above)", home);
 				use_home = false;
 			}
 		}
 
 		if (use_home && !fs::is_file(home_file))
 			fs::write_file(home_file, fs::rewrite, home);
+
+		if (!use_home && !local_wanted)
+		{
+			g_no_storage = "Games need a USB drive (or external hard drive) connected to the Xbox. "
+				"The app's own storage is far too small for games and saves.\n\n"
+				"Connect the drive and restart the app.";
+			if (!home.empty())
+				g_no_storage += fmt::format(" Your games and saves are on %s.", home.substr(0, 2));
+		}
 
 		g_cfg_vfs.load();
 		if (use_home)
@@ -342,7 +359,10 @@ namespace
 
 		if (!note.empty())
 			note += "; ";
-		return note + fmt::format("dev_hdd0 on %s, dev_hdd1 on %s", g_cfg_vfs.get(g_cfg_vfs.dev_hdd0), g_cfg_vfs.get(g_cfg_vfs.dev_hdd1));
+		note += fmt::format("dev_hdd0 on %s, dev_hdd1 on %s", g_cfg_vfs.get(g_cfg_vfs.dev_hdd0), g_cfg_vfs.get(g_cfg_vfs.dev_hdd1));
+		if (!g_no_storage.empty())
+			note += "; games are blocked until a drive is connected";
+		return note;
 	}
 
 	std::string wide_to_utf8(const wchar_t* s)
@@ -1065,7 +1085,7 @@ namespace
 			uwp_frontend::init({g_local_dir, get_package_dir(), [](std::function<void()> func)
 			{
 				g_emu_callbacks.call_from_main_thread(std::move(func), nullptr);
-			}});
+			}, g_no_storage});
 
 			// The app opens its controller menu; the XMB is started from the Games tab. A
 			// LocalState/autoboot file (used by the remote test runs) boots straight away instead:

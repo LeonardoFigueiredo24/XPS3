@@ -24,6 +24,9 @@ namespace uwp_frontend
 		std::string package_dir; // installed package folder, with trailing slash
 		// Runs a function on the emulator ("main") thread, which owns Emu state changes.
 		std::function<void(std::function<void()>)> run_on_main;
+		// Set when no USB/external drive holds the PS3 hard drive: games and package installs
+		// are refused with this text, since LocalState is far too small for them.
+		std::string no_storage;
 	};
 
 	// Emulator thread, after Emu.Init() and the shell's fixed settings.
