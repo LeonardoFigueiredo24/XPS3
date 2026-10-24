@@ -15,7 +15,18 @@ namespace rsx
 		{
 			if (audio_path.empty()) return;
 
-			m_video_source = ensure(g_emu_callbacks.make_video_source());
+			// Frontends without a media player (headless, UWP) return nullptr: skip the music instead of failing
+			if (g_emu_callbacks.make_video_source)
+			{
+				m_video_source = g_emu_callbacks.make_video_source();
+			}
+
+			if (!m_video_source)
+			{
+				rsx_log.notice("audio_player: no media player available, not playing '%s'", audio_path);
+				return;
+			}
+
 			m_video_source->set_audio_path(audio_path, audio_in_archive);
 
 			if (audio_in_archive)
