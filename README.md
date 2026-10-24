@@ -8,6 +8,8 @@ RPCS3 for Xbox (UWP)
 > The port is about 99% vibecoded: written with AI assistance (Claude), steered and checked with my
 > previous programming knowledge. :)
 
+[![RPCS3 for Xbox: watch the video](https://img.youtube.com/vi/VAKe_y5I3iw/maxresdefault.jpg)](https://youtu.be/VAKe_y5I3iw)
+
 Downloads are on the [Releases](../../releases) page. Building, packaging, internals, all settings and
 known issues are in [uwp/README.md](uwp/README.md).
 
