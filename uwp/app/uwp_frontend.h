@@ -112,6 +112,7 @@ namespace uwp_frontend
 		std::function<void()> on_accept;
 		std::string cancel_label; // empty: "Cancel"
 		std::function<void()> on_cancel; // the cancel button or B
+		bool refresh_settings = false;   // the answer changes a setting: rebuild the Settings page
 	};
 
 	struct setting_view

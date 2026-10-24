@@ -1136,6 +1136,10 @@ namespace uwp_xaml
 					d.on_accept();
 				else if (!accepted && d.on_cancel)
 					d.on_cancel();
+				// The first-start telemetry question changes a setting, and the Settings page was built
+				// on the first tick, before it was answered.
+				if (d.refresh_settings && settings_built)
+					build_settings(settings_panel, false, &first_setting);
 				if (!dialog_queue.empty())
 				{
 					show_next_dialog();

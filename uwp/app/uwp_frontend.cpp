@@ -514,6 +514,7 @@ namespace uwp_frontend
 			std::function<void()> on_accept;
 			std::string cancel_label; // empty: "Cancel" (or "OK" when there is no accept button)
 			std::function<void()> on_cancel; // also B / Back
+			bool refresh_settings = false;   // the answer changes a setting shown in Settings
 		};
 
 		// A text field (RPCN account details): typed on the system (Xbox) keyboard, or on the
@@ -641,6 +642,7 @@ namespace uwp_frontend
 			auto m = std::make_unique<modal>(modal{uwp_telemetry::consent_title(), uwp_telemetry::consent_text(), "Yes, send logs", [answer]() { answer(true); }});
 			m->cancel_label = "No";
 			m->on_cancel = [answer]() { answer(false); };
+			m->refresh_settings = true;
 			return m;
 		}
 
@@ -2500,7 +2502,7 @@ namespace uwp_frontend
 
 		dialog_view to_dialog_view(const modal& m)
 		{
-			return {m.title, m.text, m.accept_label, m.on_accept, m.cancel_label, m.on_cancel};
+			return {m.title, m.text, m.accept_label, m.on_accept, m.cancel_label, m.on_cancel, m.refresh_settings};
 		}
 
 		// The settings list of the XAML pages; index-stable for the lifetime of the app.
