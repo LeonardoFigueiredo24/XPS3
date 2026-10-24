@@ -3337,6 +3337,11 @@ error_code sys_fs_truncate(ppu_thread& ppu, vm::cptr<char> path, u64 size)
 	{
 		switch (auto error = fs::g_tls_error)
 		{
+		case fs::error::nospace:
+		{
+			// Host drive full: tell the game, like a full PS3 drive, instead of killing the thread.
+			return {sys_fs.error, CELL_ENOSPC, path};
+		}
 		case fs::error::notdir:
 		{
 			return { CELL_ENOTDIR, path};
@@ -3399,6 +3404,11 @@ error_code sys_fs_ftruncate(ppu_thread& ppu, u32 fd, u64 size)
 	{
 		switch (auto error = fs::g_tls_error)
 		{
+		case fs::error::nospace:
+		{
+			sys_fs.error("sys_fs_ftruncate(fd=%d, size=0x%llx): host drive full", fd, size);
+			return CELL_ENOSPC;
+		}
 		case fs::error::ok:
 		default:
 		{
