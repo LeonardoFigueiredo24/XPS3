@@ -27,6 +27,9 @@
 
       <Grid Grid.Row="0">
         <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom">
+          <!-- The port author's logo (white on transparent, uwp/package/Assets/AuthorLogo.png). -->
+          <Image Source="ms-appx:///Assets/AuthorLogo.png" Height="34" Width="34" Margin="0,0,14,2"
+                 VerticalAlignment="Bottom" Stretch="Uniform"/>
           <TextBlock FontSize="28" FontWeight="SemiBold">RPCS3</TextBlock>
           <TextBlock FontSize="15" Opacity="0.7" Margin="10,0,0,5" VerticalAlignment="Bottom">for Xbox</TextBlock>
           <Border Background="{ThemeResource SystemControlBackgroundAccentBrush}" CornerRadius="4" Padding="7,1,7,2"
@@ -35,7 +38,10 @@
           </Border>
         </StackPanel>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom">
-          <TextBlock x:Name="UsbHint" FontSize="14" Foreground="#FFE8B04D" Margin="0,0,24,3" Visibility="Collapsed">Reading USB drives...</TextBlock>
+          <StackPanel x:Name="UsbHint" Orientation="Horizontal" Margin="0,0,24,3" Visibility="Collapsed">
+            <ProgressRing IsActive="True" Width="16" Height="16" Foreground="#FFE8B04D" Margin="0,0,8,0" VerticalAlignment="Center"/>
+            <TextBlock FontSize="14" Foreground="#FFE8B04D">Reading USB drives...</TextBlock>
+          </StackPanel>
           <TextBlock x:Name="FirmwareText" FontSize="14" Margin="0,0,0,3"/>
         </StackPanel>
       </Grid>
@@ -55,6 +61,10 @@
             </Grid.ColumnDefinitions>
             <ListView x:Name="GamesList" SelectionMode="Single" IsItemClickEnabled="True"
                       SingleSelectionFollowsFocus="True" Margin="0,8,12,0"/>
+            <StackPanel x:Name="GamesBusy" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,16,0,0" Visibility="Collapsed">
+              <ProgressRing IsActive="True" Width="28" Height="28" Margin="0,0,14,0" VerticalAlignment="Center"/>
+              <TextBlock FontSize="15" Opacity="0.7" VerticalAlignment="Center">Looking for games...</TextBlock>
+            </StackPanel>
             <TextBlock x:Name="GamesEmpty" Grid.ColumnSpan="2" Margin="0,16,0,0" FontSize="15" Opacity="0.7"
                        TextWrapping="Wrap" Visibility="Collapsed"/>
             <Border x:Name="DetailsPanel" Grid.Column="1" Background="#FF2B2B2B" BorderBrush="#FF1C1C1C" BorderThickness="1"
@@ -101,6 +111,10 @@
               <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
             <TextBlock Margin="0,8,0,10" FontSize="14" Opacity="0.7" TextWrapping="Wrap">Firmware (PS3UPDAT.PUP), packages (.pkg) and licenses (.rap) from the app's LocalState, LocalState\firmware or LocalState\packages folder, or from a USB drive (root, PS3\UPDATE, PKG, packages or exdata folder).</TextBlock>
+            <StackPanel x:Name="InstallBusy" Grid.Row="1" Orientation="Horizontal" VerticalAlignment="Top" Visibility="Collapsed">
+              <ProgressRing IsActive="True" Width="28" Height="28" Margin="0,0,14,0" VerticalAlignment="Center"/>
+              <TextBlock FontSize="15" Opacity="0.7" VerticalAlignment="Center">Looking for files...</TextBlock>
+            </StackPanel>
             <TextBlock x:Name="InstallEmpty" Grid.Row="1" FontSize="15" Foreground="#FFE8B04D" Visibility="Collapsed"/>
             <ListView x:Name="InstallList" Grid.Row="1" SelectionMode="Single" IsItemClickEnabled="True"
                       SingleSelectionFollowsFocus="True"/>
