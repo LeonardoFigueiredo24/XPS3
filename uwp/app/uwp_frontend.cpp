@@ -2251,12 +2251,12 @@ namespace uwp_frontend
 				g_select_path = f.to_string();
 			g_select_pending = true;
 		}
-		g_ready = true;
-
 		// Remote test runs (LocalState/autoboot) boot straight away: don't scan the drives
-		// alongside the boot; the menu's refresh button scans later.
+		// alongside the boot; the menu's refresh button scans later. The scan starts before the
+		// model counts as ready, so the menu's first look already says it is scanning.
 		if (!fs::is_file(g_host.local_dir + "autoboot"))
 			rescan();
+		g_ready = true;
 	}
 
 	bool boot(const std::string& path)
