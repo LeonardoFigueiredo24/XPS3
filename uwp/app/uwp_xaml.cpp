@@ -12,6 +12,7 @@
 #include "stdafx.h"
 #include "uwp_xaml.h"
 #include "uwp_frontend.h"
+#include "uwp_update.h"
 #include "winrt_xaml_abi.h"
 
 #include <dxgi1_3.h>
@@ -464,8 +465,8 @@ namespace uwp_xaml
 			com<IItemsControl> games_items, install_items;
 			com<IListViewBase> games_lv, install_lv;
 			com<IPanel> settings_panel, pause_settings_panel;
-			com<IUIElement> games_list_el, games_empty_el, details_el, install_list_el, install_empty_el, usb_hint_el, games_busy_el, install_busy_el;
-			com<ITextBlock> t_firmware, t_telemetry, t_status, t_games_empty, t_install_empty;
+			com<IUIElement> games_list_el, games_empty_el, details_el, install_list_el, install_empty_el, usb_hint_el, update_el, games_busy_el, install_busy_el;
+			com<ITextBlock> t_firmware, t_version, t_update, t_telemetry, t_status, t_games_empty, t_install_empty;
 			com<ITextBlock> t_detail_title, t_detail_id, t_detail_kind, t_detail_version, t_detail_source, t_detail_placeholder;
 			com<IImage> detail_icon;
 			com<ITextBlock> t_loading_title, t_loading_detail, t_job_title, t_job_detail, t_dialog_title, t_dialog_text, t_error;
@@ -554,6 +555,9 @@ namespace uwp_xaml
 				games_busy_el = find_el<IUIElement>(root, L"GamesBusy");
 				install_busy_el = find_el<IUIElement>(root, L"InstallBusy");
 				t_firmware = find_el<ITextBlock>(root, L"FirmwareText");
+				t_version = find_el<ITextBlock>(root, L"VersionText");
+				t_update = find_el<ITextBlock>(root, L"UpdateText");
+				update_el = find_el<IUIElement>(root, L"UpdateText");
 				t_telemetry = find_el<ITextBlock>(root, L"TelemetryIdText");
 				t_status = find_el<ITextBlock>(root, L"StatusText");
 				t_detail_title = find_el<ITextBlock>(root, L"DetailTitle");
@@ -997,6 +1001,11 @@ namespace uwp_xaml
 				set_text(t_telemetry, snap.telemetry_id.empty() ? std::string() : "Anonymous ID " + snap.telemetry_id + (snap.telemetry_on ? "" : " (log sending off)"));
 				if (t_firmware)
 					t_firmware->put_Foreground(brush[snap.firmware.empty() ? 2 : 1].get());
+				set_text(t_version, "Version " + snap.app_version);
+				if (t_version)
+					t_version->put_Foreground(brush[!snap.update_checked ? 0 : snap.update_outdated ? 2 : 1].get());
+				set_text(t_update, snap.update_outdated ? fmt::format("Update %s available:\n%s", snap.update_latest, uwp_update::releases_page) : std::string());
+				set_visible(update_el, snap.update_outdated);
 				set_visible(usb_hint_el, snap.scanning_usb);
 				set_text(t_status, snap.status);
 				if (t_status)

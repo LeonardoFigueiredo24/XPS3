@@ -11,6 +11,7 @@
 #include "stdafx.h"
 #include "uwp_frontend.h"
 #include "uwp_firmware.h"
+#include "uwp_update.h"
 #include "uwp_rpcn.h"
 #include "uwp_telemetry.h"
 #include "uwp_textinput.h"
@@ -2293,6 +2294,8 @@ namespace uwp_frontend
 		// model counts as ready, so the menu's first look already says it is scanning.
 		if (!fs::is_file(g_host.local_dir + "autoboot"))
 			rescan();
+		// Is a newer release on GitHub? The header shows the answer.
+		uwp_update::start([]() { g_data_serial++; });
 		g_ready = true;
 	}
 
@@ -2552,6 +2555,11 @@ namespace uwp_frontend
 		out.scanning_usb = g_scanning_usb;
 		out.telemetry_id = uwp_telemetry::install_id();
 		out.telemetry_on = uwp_telemetry::get_consent() == uwp_telemetry::consent::yes;
+		out.app_version = uwp_update::app_version();
+		const uwp_update::status upd = uwp_update::get_status();
+		out.update_checked = upd != uwp_update::status::unknown;
+		out.update_outdated = upd == uwp_update::status::outdated;
+		out.update_latest = uwp_update::latest_version();
 	}
 
 	void clear_select_pending()
