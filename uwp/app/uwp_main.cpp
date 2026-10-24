@@ -2075,6 +2075,8 @@ namespace
 			CloseHandle(CreateThread(nullptr, 1024 * 1024, xaml_render_thread, nullptr, 0, nullptr));
 		};
 		h.poll_overlay = [](uwp_xaml::overlay_state& ov) { fill_overlay_state(ov); };
+		h.suspending = []() { uwp_telemetry::on_suspend(); };
+		h.resuming = []() { uwp_telemetry::on_resume(); };
 		// An empty LocalState/system_styles file keeps the standard (Windows 10) control styles.
 		h.winui_styles = !fs::is_file(get_local_state_dir() + "system_styles");
 		return uwp_xaml::run(h);

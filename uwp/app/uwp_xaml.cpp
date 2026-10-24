@@ -257,6 +257,7 @@ namespace uwp_xaml
 		using click_handler = handler<ItemClickEventHandler, IInspectable*, IItemClickEventArgs*>;
 		using tick_handler = handler<IEventHandlerObject, IInspectable*, IInspectable*>;
 		using back_handler = handler<IEventHandlerBackRequested, IInspectable*, IBackRequestedEventArgs*>;
+		using suspending_handler = handler<SuspendingEventHandler, IInspectable*, IInspectable*>;
 
 		template <class H, class F>
 		com<H> make_handler(F&& f)
@@ -1671,6 +1672,17 @@ namespace uwp_xaml
 							app2->put_RequiresPointerMode(ApplicationRequiresPointerMode::WhenRequested);
 						if (sh.h.winui_styles)
 							apply_winui_styles(app.get());
+						int64_t token = 0;
+						app->add_Suspending(make_handler<suspending_handler>([](IInspectable*, IInspectable*)
+						{
+							if (g_shell->h.suspending)
+								g_shell->h.suspending();
+						}).get(), &token);
+						app->add_Resuming(make_handler<tick_handler>([](IInspectable*, IInspectable*)
+						{
+							if (g_shell->h.resuming)
+								g_shell->h.resuming();
+						}).get(), &token);
 					}
 				}
 
