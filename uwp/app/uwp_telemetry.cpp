@@ -59,6 +59,7 @@ namespace uwp_telemetry
 			std::string path, kind, reason, title_id;
 			bool sync = false;   // RPCS3.log of this run: flush the logger first
 			bool fatal = false;  // the fatal error's log: drops the session marker once sent
+			bool live = false;   // rpcs3_live: only the part of RPCS3.log written since the last part
 			u32 attempts = 0;
 		};
 
@@ -82,6 +83,13 @@ namespace uwp_telemetry
 		u64 g_run_frames = 0, g_run_stutters = 0;
 		f64 g_run_secs = 0, g_run_min_fps = -1;
 		constexpr u64 c_max_stutters = 300; // per game run
+
+		// Live log: while a game runs, the part of RPCS3.log written since the last one goes up once a
+		// minute; at game exit only the rest. Off for this app start once the server refuses parts (403).
+		constexpr u64 c_live_max = 16ull << 20;
+		u64 g_live_offset = 0; // upload thread only
+		atomic_t<bool> g_live_off = false;
+		std::chrono::steady_clock::time_point g_live_next;
 
 		std::string session_file() { return g_local_dir + "telemetry_session"; }
 		std::string log_dir() { return g_local_dir + "rpcs3/"; }
@@ -537,8 +545,84 @@ namespace uwp_telemetry
 			return result_of(status);
 		}
 
+		sent send_log(const log_job& job, u32& retry_after);
+
+		// The new part of RPCS3.log (whole lines, at most c_live_max, newest kept), scrubbed and gzipped.
+		sent send_live(const log_job& job, u32& retry_after)
+		{
+			logs::listener::sync_all();
+			fs::file f(job.path);
+			if (!f)
+				return sent::drop;
+			const u64 size = f.size();
+			if (size < g_live_offset)
+				g_live_offset = 0; // a new file
+			u64 start = g_live_offset;
+			if (size - start > c_live_max)
+				start = size - c_live_max;
+			std::string data(size - start, '\0');
+			f.seek(start);
+			data.resize(f.read(data.data(), data.size()));
+			if (start != g_live_offset)
+			{
+				// Cut: continue at the start of a line.
+				const usz nl = data.find('\n');
+				const usz cut = nl == umax ? data.size() : nl + 1;
+				data.erase(0, cut);
+				start += cut;
+			}
+			const usz last = data.rfind('\n');
+			data.resize(last == umax ? 0 : last + 1);
+			if (data.empty())
+				return sent::ok;
+			const u64 end = start + data.size();
+
+			const scrubber sc = make_scrubber();
+			std::string lines;
+			lines.reserve(data.size());
+			for (usz pos = 0; pos < data.size();)
+			{
+				const usz nl = data.find('\n', pos);
+				lines += sc.scrub(std::string_view(data).substr(pos, nl - pos));
+				lines += '\n';
+				pos = nl + 1;
+			}
+			gzip_writer gw;
+			if (!gw.ok)
+				return sent::drop;
+			gw.write(lines, true);
+
+			std::vector<std::string> headers{"X-Telemetry-Log-Kind: rpcs3_live", "X-Telemetry-Reason: " + job.reason,
+				fmt::format("X-Telemetry-Log-Offset: %u", start), fmt::format("X-Telemetry-Log-End: %u", end)};
+			if (valid_title_id(job.title_id))
+				headers.push_back("X-Telemetry-Title-Id: " + job.title_id);
+			const long status = post("/api/v1/logs", "application/gzip", headers, gw.out, retry_after);
+			if (status == 200)
+			{
+				g_live_offset = end;
+				return sent::ok;
+			}
+			if (status == 403)
+			{
+				// Turned off on the server: no more parts this app start; at exit the whole log, as before.
+				tel_log.notice("The server doesn't take live logs");
+				g_live_off = true;
+				if (job.reason == "periodic")
+					return sent::drop;
+				log_job full = job;
+				full.live = false;
+				full.kind = "rpcs3";
+				return send_log(full, retry_after);
+			}
+			if (status)
+				tel_log.warning("The server answered %d to the live log", status);
+			return result_of(status);
+		}
+
 		sent send_log(const log_job& job, u32& retry_after)
 		{
+			if (job.live)
+				return send_live(job, retry_after);
 			if (job.sync)
 				logs::listener::sync_all();
 			std::string gz;
@@ -569,7 +653,24 @@ namespace uwp_telemetry
 				bool disabled_note = false;
 				{
 					std::unique_lock lock(g_mutex);
-					g_cv.wait(lock, [] { return g_disabled_note || (g_consent == consent::yes && (!g_events.empty() || !g_logs.empty())); });
+					const auto ready = [] { return g_disabled_note || (g_consent == consent::yes && (!g_events.empty() || !g_logs.empty())); };
+					const auto live = [] { return g_in_game && g_consent == consent::yes && !g_live_off; };
+					while (!ready())
+					{
+						if (!live())
+						{
+							g_cv.wait(lock, [&] { return ready() || live(); });
+							continue;
+						}
+						if (g_cv.wait_until(lock, g_live_next, ready))
+							break;
+						if (live() && std::chrono::steady_clock::now() >= g_live_next)
+						{
+							g_live_next = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+							if (std::none_of(g_logs.begin(), g_logs.end(), [](const log_job& j) { return j.live; }))
+								g_logs.push_back({log_dir() + "RPCS3.log", "rpcs3_live", "periodic", g_game_id, true, false, true});
+						}
+					}
 					if (g_disabled_note)
 					{
 						disabled_note = true;
@@ -924,9 +1025,11 @@ namespace uwp_telemetry
 			g_game_since = std::chrono::steady_clock::now();
 			g_perf_pending.clear();
 			g_perf_flushed = g_game_since;
+			g_live_next = g_game_since + std::chrono::seconds(60);
 			g_run_frames = g_run_stutters = 0;
 			g_run_secs = 0, g_run_min_fps = -1;
 		}
+		g_cv.notify_one(); // starts the live log minute
 		if (g_consent != consent::yes)
 			return;
 
@@ -981,7 +1084,7 @@ namespace uwp_telemetry
 		}
 		queue_event(make_event("game_exit", title_id, title, d));
 		if (!fatal)
-			queue_log({log_dir() + "RPCS3.log", "rpcs3", "game_exit", title_id, true});
+			queue_log({log_dir() + "RPCS3.log", g_live_off ? "rpcs3" : "rpcs3_live", "game_exit", title_id, true, false, !g_live_off});
 	}
 
 	void on_fatal(std::string_view text)
@@ -1004,7 +1107,7 @@ namespace uwp_telemetry
 		d.add("reason", "fatal_error");
 		d.add("message", sc.scrub(text));
 		queue_event(make_event("crash", title_id, title, d));
-		queue_log({log_dir() + "RPCS3.log", "rpcs3", "crash", title_id, true, true});
+		queue_log({log_dir() + "RPCS3.log", g_live_off ? "rpcs3" : "rpcs3_live", "crash", title_id, true, true, !g_live_off});
 	}
 
 	std::string consent_title()
@@ -1017,7 +1120,7 @@ namespace uwp_telemetry
 		return fmt::format(
 			"Most problems of this port only show up on consoles I don't have. If you agree, the app sends its emulator log to "
 			"rpcs3.emelinhabibovic.de when a game or the XMB starts or stops and after a crash, so I can see which games run, "
-			"how fast, and why they fail. While a game runs it also sends its frame rate and what slowed it down, once a minute.\n\n"
+			"how fast, and why they fail. While a game runs it also sends, once a minute, its frame rate, what slowed it down and the log's new lines.\n\n"
 			"Sent: the emulator log, frame rate and load numbers, the app version, the console model, the game's title ID and name, and an anonymous ID "
 			"made at random on this console (%s, also shown at the top of the menu).\n\n"
 			"Never sent: your gamertag or Microsoft account, RPCN username, password, token or email, other players' names, "

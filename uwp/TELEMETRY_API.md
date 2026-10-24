@@ -110,8 +110,9 @@ Extra headers:
 
 | Header | Required | Values |
 | --- | --- | --- |
-| `X-Telemetry-Log-Kind` | yes | `rpcs3` (RPCS3.log), `rpcs3_prev` (RPCS3.prev.log), `game` (RPCS3.game.log, last session that booted a game), `mesa`, `memory`, `crash` (crash dump text) |
-| `X-Telemetry-Reason` | no | `crash`, `game_launch`, `game_exit`, `app_start`, `manual` |
+| `X-Telemetry-Log-Kind` | yes | `rpcs3` (RPCS3.log), `rpcs3_prev` (RPCS3.prev.log), `rpcs3_live` (a new part of RPCS3.log, see below), `game` (RPCS3.game.log, last session that booted a game), `mesa`, `memory`, `crash` (crash dump text) |
+| `X-Telemetry-Reason` | no | `crash`, `game_launch`, `game_exit`, `app_start`, `manual`, `periodic` |
+| `X-Telemetry-Log-Offset`, `X-Telemetry-Log-End` | for `rpcs3_live` | byte range of the part in the app's RPCS3.log (before scrubbing) |
 | `X-Telemetry-Title-Id` | no | `BLES01222` |
 
 Typical flow: on start, if the previous run crashed, upload `rpcs3_prev` with
@@ -119,6 +120,22 @@ reason `crash` and send a `crash` event. After a game exits, upload `rpcs3`
 with reason `game_exit`.
 
 Response `200 {"ok":true,"log_id":"..."}`.
+
+### Live logs (`rpcs3_live`)
+
+While a game/XMB runs, the app sends the part of RPCS3.log written since its last
+part, once a minute (`X-Telemetry-Reason: periodic`, whole lines only), and the rest
+at game exit or after a fatal error (`game_exit` / `crash`) instead of the whole log.
+The server appends every part of an app start (session) to one stored log, so the
+panel shows it as one file that grows.
+
+- A part whose `End` is not past what the server has is a retry: `200` with `"duplicate":true`.
+- A part that starts after what the server has gets a "bytes missing" line in front.
+- At most 16 MB per part: when more was written, the app sends the newest 16 MB (a gap).
+- The server owner can turn live logs off in the admin panel. The server then answers
+  `403`; the app stops sending parts until it restarts, and at game exit uploads the
+  whole log as `rpcs3` (as before) instead of the rest.
+- Live parts have their own rate limit (default 90 / hour per install).
 
 The server also scrubs logs again (user folder names, emails, RPCN
 password/token lines), but the app must not send that data in the first place.
@@ -135,7 +152,8 @@ password/token lines), but the app must not send that data in the first place.
 | 5xx / network | server trouble | keep queued, retry with backoff |
 
 Limits (defaults): per IP 120 requests / 10 min, per install 60 event
-requests / 10 min and 20 log uploads / hour, 200 MB stored per install.
+requests / 10 min, 20 log uploads / hour and 90 live log parts / hour, 200 MB
+stored per install.
 
 ## Health
 
