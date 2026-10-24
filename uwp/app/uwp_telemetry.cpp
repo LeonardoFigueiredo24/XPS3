@@ -682,6 +682,11 @@ namespace uwp_telemetry
 		}
 	}
 
+	std::string_view tls_roots()
+	{
+		return {s_telemetry_roots, sizeof(s_telemetry_roots) - 1};
+	}
+
 	const std::string& install_id()
 	{
 		return g_install_id;

@@ -44,11 +44,17 @@
           <!-- The anonymous telemetry ID (uwp_telemetry.cpp), so a user can name their reports. -->
           <TextBlock x:Name="TelemetryIdText" FontSize="11" Opacity="0.55" HorizontalAlignment="Right" Margin="0,0,0,2"/>
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-            <StackPanel x:Name="UsbHint" Orientation="Horizontal" Margin="0,0,24,3" Visibility="Collapsed">
+            <StackPanel x:Name="UsbHint" Orientation="Horizontal" Margin="0,0,24,3" Visibility="Collapsed" VerticalAlignment="Top">
               <ProgressRing IsActive="True" Width="16" Height="16" Foreground="#FFE8B04D" Margin="0,0,8,0" VerticalAlignment="Center"/>
               <TextBlock FontSize="14" Foreground="#FFE8B04D">Reading USB drives...</TextBlock>
             </StackPanel>
-            <TextBlock x:Name="FirmwareText" FontSize="14" Margin="0,0,0,3"/>
+            <!-- The app's version: green when it is the newest release on GitHub, orange with a line
+                 under it when a newer one is out (uwp_update.cpp), grey without an answer. -->
+            <StackPanel Margin="0,0,24,0" VerticalAlignment="Top">
+              <TextBlock x:Name="VersionText" FontSize="14" Margin="0,0,0,3" Foreground="#FF9AA0AB"/>
+              <TextBlock x:Name="UpdateText" FontSize="11" Foreground="#FFE8B04D" Margin="0,0,0,3" Visibility="Collapsed"/>
+            </StackPanel>
+            <TextBlock x:Name="FirmwareText" FontSize="14" Margin="0,0,0,3" VerticalAlignment="Top"/>
           </StackPanel>
         </StackPanel>
       </Grid>

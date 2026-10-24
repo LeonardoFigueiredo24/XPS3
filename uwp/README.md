@@ -171,6 +171,15 @@ Logs over 112 MB are sent as their first 16 and last 96 MB. Failed uploads are r
 while the app runs (429 and 5xx; other 4xx are dropped); nothing is queued on disk. The TLS roots
 for curl are compiled in (`uwp_telemetry_roots.inc`), since the Xbox gives apps no system store.
 
+### Version and update notice
+
+The menu header shows the app's version left of the firmware line. On every app start
+`uwp/app/uwp_update.cpp` reads `https://api.github.com/repos/emelin2004/rpcs3-xbox/releases?per_page=10`
+(no login; pre-releases count, unlike `/releases/latest`) and compares the highest `vX.Y.Z.W` tag with
+the package version: green = current, orange with an "Update ... available" line = a newer release
+exists, grey = no answer (offline). It runs whether or not telemetry is on and sends nothing else.
+Publishing a GitHub release tagged `v0.1.34.xx` is all an update notice needs.
+
 ### Controls
 
 | Xbox | PS3 |

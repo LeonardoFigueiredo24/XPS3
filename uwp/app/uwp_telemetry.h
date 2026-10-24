@@ -45,6 +45,9 @@ namespace uwp_telemetry
 	// A fatal log line or report_fatal_error. Safe to call from the log listener: only queues work.
 	void on_fatal(std::string_view text);
 
+	// The root certificates curl checks the server against (also used by uwp_update for GitHub).
+	std::string_view tls_roots();
+
 	// The first-start question.
 	std::string consent_title();
 	std::string consent_text();

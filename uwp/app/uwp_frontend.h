@@ -95,6 +95,10 @@ namespace uwp_frontend
 		bool scanning_usb = false;
 		std::string telemetry_id; // the anonymous install ID (uwp_telemetry)
 		bool telemetry_on = false;
+		std::string app_version;   // this package's version
+		std::string update_latest; // the newest release on GitHub, empty: no answer (yet)
+		bool update_checked = false; // GitHub answered: current or outdated
+		bool update_outdated = false;
 	};
 
 	struct job_view
