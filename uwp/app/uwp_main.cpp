@@ -794,6 +794,8 @@ namespace
 			}
 			{
 				const std::string guard_log = g_local_dir + "heap_guard.log";
+				// Kept for telemetry: the guard fails fast, so its log is the only record of such an end.
+				fs::rename(guard_log, g_local_dir + "heap_guard.prev.log", true);
 				std::wstring wpath(guard_log.size() + 1, L'\0');
 				wpath.resize(::MultiByteToWideChar(CP_UTF8, 0, guard_log.c_str(), -1, wpath.data(), static_cast<int>(wpath.size())));
 				uwp_heap_guard_open_log(wpath.c_str());

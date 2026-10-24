@@ -928,6 +928,9 @@ namespace uwp_telemetry
 			queue_log({log_dir() + "RPCS3.prev.log", "rpcs3_prev", "crash", title_id});
 			queue_log({g_local_dir + "mesa.prev.log", "mesa", "crash", title_id});
 			queue_log({g_local_dir + "memory.prev.log", "memory", "crash", title_id});
+			// The heap guard's fail-fast leaves no line in RPCS3.log: a corrupted block or a failed new.
+			if (fs::stat_t st{}; fs::get_stat(g_local_dir + "heap_guard.prev.log", st) && st.size)
+				queue_log({g_local_dir + "heap_guard.prev.log", "crash", "crash", title_id});
 		}
 
 		void queue_app_start()
