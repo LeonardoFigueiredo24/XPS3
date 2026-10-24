@@ -1,0 +1,55 @@
+name: Game compatibility report
+description: Tell us how a game runs on the Xbox port.
+title: "[Compat] <game name> (<title ID>)"
+labels: ["compatibility"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing! This is the unofficial Xbox UWP port, a proof of concept.
+        Please don't report Xbox port problems to the RPCS3 team.
+  - type: input
+    id: game
+    attributes:
+      label: Game and title ID
+      placeholder: Portal 2 (BLES01222)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      placeholder: 0.1.34.71
+    validations:
+      required: true
+  - type: dropdown
+    id: console
+    attributes:
+      label: Console
+      options:
+        - Xbox Series X
+        - Xbox Series S
+    validations:
+      required: true
+  - type: dropdown
+    id: status
+    attributes:
+      label: How far does it get?
+      options:
+        - Playable
+        - Ingame (playable with problems)
+        - Menus only
+        - Boots, then crashes or hangs
+        - Doesn't boot
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Frame rate, crashes, graphics or sound problems, settings you changed.
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: Attach LocalState/rpcs3/RPCS3.log (Device Portal > File explorer), zipped if it is big.
