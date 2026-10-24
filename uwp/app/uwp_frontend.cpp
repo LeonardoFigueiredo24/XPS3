@@ -1404,7 +1404,10 @@ namespace uwp_frontend
 				{"Resolution scale", &g_cfg.video.resolution_scale_percent, {"50", "75", "100", "150", "200", "300"}, "Internal rendering resolution in percent of 720p."},
 				{"Frame limit", &g_cfg.video.frame_limit, {}, "Auto follows the game's refresh rate."},
 				{"VSync", &g_cfg.video.vsync, {}, {}},
-				{"Shader mode", &g_cfg.video.shadermode, {}, "Async with interpreter avoids stutter while shaders compile."},
+				// No interpreter modes: on Dozen their preload builds ~6700 pipelines of ~2 s each before the game
+				// starts (72 minutes in Portal 2 on .76) and keeps 1.1 GB of D3D12 pipelines for the whole run.
+				{"Shader mode", &g_cfg.video.shadermode, {"Async Recompiler (multi-threaded)", "Legacy Recompiler (single-threaded)"},
+					"Async compiles shaders on several threads. Legacy uses one thread and stutters more."},
 				{"Write color buffers", &g_cfg.video.write_color_buffers, {"false", "true"}, "Needed by some games for correct visuals; costs speed."},
 				{"Stats overlay", &g_cfg.video.perf_overlay.enabled, {"false", "true"}, "FPS, CPU and GPU load in the top right corner while a game runs."},
 				{"Stats detail", &g_cfg.video.perf_overlay.level, {"Minimal", "Low", "Medium", "High"}, "Minimal = FPS. Low adds CPU. Medium adds PPU/SPU/RSX. High adds GPU load."},

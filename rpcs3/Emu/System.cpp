@@ -1871,6 +1871,15 @@ game_boot_result Emulator::Load(const std::string& title_id, bool is_disc_patch,
 			}
 
 #ifdef RPCS3_UWP
+			// The shader interpreter modes are left out of the Xbox menu, but a config.yml or custom config
+			// saved by an older build can still hold one: its preload took 72 minutes and 1.1 GB on Dozen.
+			// Test runs can still pick it with config_override.yml below.
+			if (g_cfg.video.shadermode == shader_mode::async_with_interpreter || g_cfg.video.shadermode == shader_mode::interpreter_only)
+			{
+				sys_log.warning("UWP: shader mode '%s' replaced by Async Recompiler (the interpreter is too slow to build on the Xbox)", g_cfg.video.shadermode.to_string());
+				g_cfg.video.shadermode.set(shader_mode::async_recompiler);
+			}
+
 			// Test runs: settings from LocalState/config_override.yml on top of every boot's config
 			// (YAML as in config.yml), for A/B runs in games without touching their own configs.
 			if (!g_uwp_config_override_path.empty())
