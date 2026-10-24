@@ -19,6 +19,7 @@ known issues are in [uwp/README.md](uwp/README.md).
 | Portal 2 | Playable, ~28 fps (limited by the emulated PPU main thread) |
 | Minecraft PlayStation 3 Edition | Playable, ~57 fps (pick "Continue playing offline" at the PSN prompt) |
 | Jetpack Joyride Deluxe | Playable, 60 fps |
+| PlayStation Home | Launches and works, ~20 fps; sometimes crashes in the main plaza (runs out of memory) |
 | GTA V, Watch Dogs, Plants vs. Zombies Garden Warfare | Boot, but not playable (single-digit fps or out of memory) |
 
 Heavy games are mostly CPU-bound: the Xbox runs the PPU/SPU recompilers fine, but big games need
@@ -54,6 +55,11 @@ storage is far too small), and your own PS3 firmware file (`PS3UPDAT.PUP`, 4.93 
 | Hold View + Menu ~1 s | Pause menu (resume, stop the game, live settings) |
 
 In the app menu: D-pad or left stick to move, A select, B back, LB/RB switch tabs, Y rescan.
+
+## Contributing
+
+Pull requests are very welcome, and so are compatibility reports: if you try a game, open an issue
+with the game's name and title ID, what happened (fps, crashes, glitches) and the app version.
 
 ## License and credits
 

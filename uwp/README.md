@@ -18,6 +18,7 @@ PC, and is installed through the Xbox Device Portal.
 | Portal 2 (BLES01222) | Playable, ~28 fps in big rooms, no compile stalls; bound by the game's PPU main thread |
 | Minecraft PlayStation 3 Edition | Playable, ~57 fps (PS3 network off for it automatically) |
 | Jetpack Joyride Deluxe | Runs, locked 60 fps |
+| PlayStation Home | Launches and works, ~20 fps; sometimes crashes in the main plaza when it runs out of memory |
 | GTA V | Boots, ~10 fps, SPU-bound; not playable |
 | Watch Dogs (BLES01854) | Title screen; in-game loading runs out of the 5 GB limit. Not playable |
 | Plants vs. Zombies Garden Warfare (BLES02021) | Main menu at 5-7 fps with the PS3 network off (EA servers are gone). Not playable |
