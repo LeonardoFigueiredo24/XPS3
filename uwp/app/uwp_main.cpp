@@ -14,6 +14,7 @@
 #include "winrt_min.h"
 #include "uwp_frontend.h"
 #include "uwp_localized.h"
+#include "uwp_telemetry.h"
 #include "uwp_xaml.h"
 
 #include "Emu/System.h"
@@ -678,6 +679,7 @@ namespace
 				g_fatal_text.clear();
 			}
 			g_state = shell_state::running;
+			uwp_telemetry::on_game_started();
 			uwp_frontend::on_emulation_started();
 		};
 		g_emu_callbacks.on_pause = []() {};
@@ -693,6 +695,7 @@ namespace
 				logs::listener::sync_all();
 				fs::copy_file(g_android_config_dir + "RPCS3.log", g_android_config_dir + "RPCS3.game.log", true);
 			}
+			uwp_telemetry::on_game_stopped();
 			uwp_frontend::on_emulation_stopped();
 		};
 		g_emu_callbacks.on_ready = []() {};
@@ -861,6 +864,7 @@ namespace
 								g_fatal_text = fmt::format("%s%s", prefix, text.substr(0, 600));
 						}
 						g_state = shell_state::failed;
+						uwp_telemetry::on_fatal(fmt::format("%s%s", prefix, text.substr(0, 600)));
 					}
 				}
 			};
@@ -1099,6 +1103,9 @@ namespace
 				sys_log.always()("UWP: removing stray %s: %s", stray_game, fs::remove_all(stray_game));
 
 			Emulator::SaveSettings(g_cfg.to_string(), {});
+
+			// Opt-in log uploads (asked on the first start); reports a previous run that ended during a game.
+			uwp_telemetry::init(g_local_dir);
 
 			uwp_frontend::init({g_local_dir, get_package_dir(), [](std::function<void()> func)
 			{

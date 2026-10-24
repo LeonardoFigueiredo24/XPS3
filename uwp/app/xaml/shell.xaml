@@ -41,6 +41,8 @@
             <Image Source="ms-appx:///Assets/AuthorLogo.png" Height="28" Width="28" Stretch="Uniform" HorizontalAlignment="Center"/>
             <TextBlock FontSize="8" Opacity="0.55" Margin="0,2,0,0" HorizontalAlignment="Center">emelinhabibovic.de</TextBlock>
           </StackPanel>
+          <!-- The anonymous telemetry ID (uwp_telemetry.cpp), so a user can name their reports. -->
+          <TextBlock x:Name="TelemetryIdText" FontSize="11" Opacity="0.55" HorizontalAlignment="Right" Margin="0,0,0,2"/>
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
             <StackPanel x:Name="UsbHint" Orientation="Horizontal" Margin="0,0,24,3" Visibility="Collapsed">
               <ProgressRing IsActive="True" Width="16" Height="16" Foreground="#FFE8B04D" Margin="0,0,8,0" VerticalAlignment="Center"/>
@@ -240,7 +242,7 @@
       <StackPanel>
         <StackPanel Padding="24,24,24,16">
           <TextBlock x:Name="DialogTitle" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap"/>
-          <ScrollViewer MaxHeight="240" Margin="0,12,0,0" VerticalScrollBarVisibility="Auto">
+          <ScrollViewer MaxHeight="330" Margin="0,12,0,0" VerticalScrollBarVisibility="Auto">
             <TextBlock x:Name="DialogText" FontSize="15" Opacity="0.75" TextWrapping="Wrap"/>
           </ScrollViewer>
         </StackPanel>

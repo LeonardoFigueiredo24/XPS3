@@ -93,6 +93,8 @@ namespace uwp_frontend
 		bool select_pending = false; // set until the list has been shown once; cleared by clear_select_pending()
 		bool scanning = false;
 		bool scanning_usb = false;
+		std::string telemetry_id; // the anonymous install ID (uwp_telemetry)
+		bool telemetry_on = false;
 	};
 
 	struct job_view
@@ -108,6 +110,9 @@ namespace uwp_frontend
 		std::string title, text;
 		std::string accept_label; // empty: a single OK button
 		std::function<void()> on_accept;
+		std::string cancel_label; // empty: "Cancel"
+		std::function<void()> on_cancel; // the cancel button or B
+		bool refresh_settings = false;   // the answer changes a setting: rebuild the Settings page
 	};
 
 	struct setting_view

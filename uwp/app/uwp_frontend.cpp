@@ -12,6 +12,7 @@
 #include "uwp_frontend.h"
 #include "uwp_firmware.h"
 #include "uwp_rpcn.h"
+#include "uwp_telemetry.h"
 #include "uwp_textinput.h"
 
 #include "Emu/System.h"
@@ -502,6 +503,7 @@ namespace uwp_frontend
 			std::string note;
 			std::function<void()> on_open;
 			std::function<std::string()> value;
+			std::function<void()> on_change; // set: called instead of saving config.yml
 		};
 
 		struct modal
@@ -510,6 +512,9 @@ namespace uwp_frontend
 			std::string text;
 			std::string accept_label; // empty: OK only
 			std::function<void()> on_accept;
+			std::string cancel_label; // empty: "Cancel" (or "OK" when there is no accept button)
+			std::function<void()> on_cancel; // also B / Back
+			bool refresh_settings = false;   // the answer changes a setting shown in Settings
 		};
 
 		// A text field (RPCN account details): typed on the system (Xbox) keyboard, or on the
@@ -620,6 +625,25 @@ namespace uwp_frontend
 			g_status_text = std::move(text);
 			g_status_color = color;
 			g_data_serial++;
+		}
+
+		// The telemetry question, once, on the first start (before other messages). g_data_mutex held.
+		std::unique_ptr<modal> take_consent_prompt()
+		{
+			static bool asked = false;
+			if (asked || !g_ready || uwp_telemetry::get_consent() != uwp_telemetry::consent::unknown)
+				return nullptr;
+			asked = true;
+			const auto answer = [](bool yes)
+			{
+				uwp_telemetry::set_consent(yes);
+				g_data_serial++;
+			};
+			auto m = std::make_unique<modal>(modal{uwp_telemetry::consent_title(), uwp_telemetry::consent_text(), "Yes, send logs", [answer]() { answer(true); }});
+			m->cancel_label = "No";
+			m->on_cancel = [answer]() { answer(false); };
+			m->refresh_settings = true;
+			return m;
 		}
 
 		void post_modal(std::string title, std::string text)
@@ -1394,6 +1418,13 @@ namespace uwp_frontend
 					return g_ui->rpcn_account.npid.empty() ? std::string("Not set up") : g_ui->rpcn_account.npid;
 				}},
 				{"System language", &g_cfg.sys.language, {}, {}},
+				{"Send logs to the developer", &uwp_telemetry::setting(), {"false", "true"},
+					fmt::format("Logs of game starts, exits and crashes, without personal data, to help fix the emulator. Anonymous ID %s.", uwp_telemetry::install_id()),
+					{}, {}, []()
+				{
+					uwp_telemetry::set_consent(uwp_telemetry::setting().get());
+					g_data_serial++;
+				}},
 			};
 		}
 
@@ -1415,7 +1446,10 @@ namespace uwp_frontend
 			if (item.node->from_string(values[idx]))
 			{
 				ui_log.notice("UI: setting '%s' = %s", item.label, values[idx]);
-				save_settings();
+				if (item.on_change)
+					item.on_change();
+				else
+					save_settings();
 			}
 		}
 
@@ -1771,7 +1805,9 @@ namespace uwp_frontend
 				}
 				else if (pressed & act_back)
 				{
-					ui.dialog.reset();
+					auto d = std::move(ui.dialog);
+					if (d->on_cancel)
+						d->on_cancel();
 				}
 				return;
 			}
@@ -2216,7 +2252,8 @@ namespace uwp_frontend
 				cv.fill(x, y, w, 4, col_accent);
 				cv.text(x + 50, y + 40, ui.dialog->title, 40, col_text, w - 100);
 				cv.paragraph(x + 50, y + 110, ui.dialog->text, 30, col_dim, w - 100);
-				const std::string buttons = ui.dialog->accept_label.empty() ? std::string("A  OK") : "A  " + ui.dialog->accept_label + "        B  Cancel";
+				const std::string buttons = ui.dialog->accept_label.empty() ? std::string("A  OK") :
+					"A  " + ui.dialog->accept_label + "        B  " + (ui.dialog->cancel_label.empty() ? std::string("Cancel") : ui.dialog->cancel_label);
 				cv.text(x + 50, y + h - 70, buttons, 30, col_accent);
 			}
 		}
@@ -2397,10 +2434,13 @@ namespace uwp_frontend
 
 		{
 			std::lock_guard lock(g_data_mutex);
-			if (g_pending_modal && !ui.dialog)
+			if (!ui.dialog)
 			{
-				ui.dialog = std::move(g_pending_modal);
-				ui.dirty = true;
+				if (auto consent = take_consent_prompt())
+					ui.dialog = std::move(consent);
+				else if (g_pending_modal)
+					ui.dialog = std::move(g_pending_modal);
+				ui.dirty = ui.dirty || ui.dialog;
 			}
 			pending_ui.swap(g_pending_ui);
 
@@ -2462,7 +2502,7 @@ namespace uwp_frontend
 
 		dialog_view to_dialog_view(const modal& m)
 		{
-			return {m.title, m.text, m.accept_label, m.on_accept};
+			return {m.title, m.text, m.accept_label, m.on_accept, m.cancel_label, m.on_cancel, m.refresh_settings};
 		}
 
 		// The settings list of the XAML pages; index-stable for the lifetime of the app.
@@ -2510,6 +2550,8 @@ namespace uwp_frontend
 		out.select_pending = g_select_pending;
 		out.scanning = g_scanning;
 		out.scanning_usb = g_scanning_usb;
+		out.telemetry_id = uwp_telemetry::install_id();
+		out.telemetry_on = uwp_telemetry::get_consent() == uwp_telemetry::consent::yes;
 	}
 
 	void clear_select_pending()
@@ -2547,6 +2589,8 @@ namespace uwp_frontend
 			return out;
 		}
 		std::lock_guard lock(g_data_mutex);
+		if (const auto consent = take_consent_prompt())
+			return to_dialog_view(*consent);
 		if (!g_pending_modal)
 			return std::nullopt;
 		std::optional<dialog_view> out = to_dialog_view(*g_pending_modal);
@@ -2629,7 +2673,10 @@ namespace uwp_frontend
 		if (item.node->from_string(values[value_index]))
 		{
 			ui_log.notice("UI: setting '%s' = %s", item.label, values[value_index]);
-			save_settings();
+			if (item.on_change)
+				item.on_change();
+			else
+				save_settings();
 		}
 	}
 

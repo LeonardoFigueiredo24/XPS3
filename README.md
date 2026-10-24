@@ -61,6 +61,33 @@ storage is far too small), and your own PS3 firmware file (`PS3UPDAT.PUP`, 4.93 
 
 In the app menu: D-pad or left stick to move, A select, B back, LB/RB switch tabs, Y rescan.
 
+## Privacy and log sending (telemetry)
+
+On the first start the app asks whether it may send its logs to me, the developer, to help fix the
+emulator. Nothing is sent unless you choose **Yes**, and you can turn it off at any time in
+**Settings > Send logs to the developer**.
+
+When it is on, the app sends reports to `rpcs3.emelinhabibovic.de`, automatically:
+
+- when you agree (an "install" report, so I can count consoles) and when the app starts,
+- when a game, homebrew or the XMB starts and when it stops (with the emulator log),
+- after an emulator crash or fatal error, and on the next start after a run that ended while a game
+  was running (with that run's logs).
+
+**What is sent:** the emulator log (RPCS3.log, plus Mesa's graphics log and the app's memory log
+after a crash), the app version and build commit, the console model (e.g. Xbox Series S), the Xbox
+OS version, the PS3 firmware version, the emulator settings, the title ID and name of the game that
+ran, how long it ran, and an **anonymous ID**: a random number made on your console when the app
+first starts. It is shown at the top right of the menu, above the firmware, so you can mention it
+in a bug report. Reports are grouped by that ID only.
+
+**What is not sent:** your Xbox gamertag or Microsoft account, your RPCN username, password, token
+or email, other players' names, IP or MAC addresses, your location, or the list of games you have.
+The app removes these from the logs before uploading (`uwp/app/uwp_telemetry_scrub.cpp`), and the
+server filters them again. The server doesn't store IP addresses. Reinstalling the app makes a new
+anonymous ID and asks again. To have your reports deleted, open an issue or contact me with your
+anonymous ID.
+
 ## Contributing
 
 Pull requests are very welcome, and so are compatibility reports: if you try a game, open an issue

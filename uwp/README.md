@@ -142,6 +142,35 @@ MAKEMSIX=/path/to/makemsix uwp/package/package.sh build-uwp RPCS3Xbox.appx cert.
   A successful login sets PSN to RPCN. The login is saved in `LocalState/rpcs3/rpcn.yml` (the
   same file as desktop RPCS3's, so one can be copied over), with the password stored hashed.
 
+- **Settings > Send logs to the developer** (telemetry, asked once on the first start, Yes focused):
+  see "Telemetry" below.
+
+### Telemetry
+
+`uwp/app/uwp_telemetry.cpp` sends events and gzip-compressed logs to `https://rpcs3.emelinhabibovic.de`
+(API: [TELEMETRY_API.md](TELEMETRY_API.md); the server is a separate repository) on one low-priority
+thread with libcurl, only while the user's answer is Yes:
+
+| When | Event | Logs |
+| --- | --- | --- |
+| The user says Yes (first time per install) | `install`, `app_start` | RPCS3.log so far (`app_start`) |
+| Every app start | `app_start` (console model from `AnalyticsInfo.DeviceForm`, OS, firmware, build) | |
+| A game, homebrew or the XMB starts | `game_launch` (title, kind, renderer, decoders, scale, build) | |
+| It stops | `game_exit` (duration) | RPCS3.log (`game_exit`) |
+| A fatal error | `crash` (scrubbed message) | RPCS3.log (`crash`) |
+| Start after a run that ended during a game | `crash` (`ended_during_game`) | RPCS3.prev.log, mesa.prev.log, memory.prev.log |
+
+LocalState files: `telemetry_id` (the anonymous UUID v4, shown above the firmware line),
+`telemetry` (`on`/`off`; missing = ask), `telemetry_installed` (the install event was sent) and
+`telemetry_session` (exists while a game runs). Every log line goes through
+`uwp_telemetry_scrub.cpp` first: the RPCN name/password hash/token from `rpcn.yml` and XMB user names
+are replaced wherever they appear, and user folders in paths, emails, IPv4/IPv6/MAC addresses,
+`password=`/`token:`-style values and other players' names in RPCN/NP lines are replaced by
+`<labels>`. Host test: `c++ -std=c++20 -I uwp/app uwp/app/uwp_telemetry_scrub.cpp uwp/app/test/telemetry_scrub_test.cpp`.
+Logs over 112 MB are sent as their first 16 and last 96 MB. Failed uploads are retried with backoff
+while the app runs (429 and 5xx; other 4xx are dropped); nothing is queued on disk. The TLS roots
+for curl are compiled in (`uwp_telemetry_roots.inc`), since the Xbox gives apps no system store.
+
 ### Controls
 
 | Xbox | PS3 |
