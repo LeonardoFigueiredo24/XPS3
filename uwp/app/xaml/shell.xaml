@@ -27,9 +27,11 @@
 
       <Grid Grid.Row="0">
         <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom">
-          <!-- The port author's logo (white on transparent, uwp/package/Assets/AuthorLogo.png). -->
-          <Image Source="ms-appx:///Assets/AuthorLogo.png" Height="34" Width="34" Margin="0,0,14,2"
-                 VerticalAlignment="Bottom" Stretch="Uniform"/>
+          <!-- The port author's logo (white on transparent, uwp/package/Assets/AuthorLogo.png) and site. -->
+          <StackPanel Margin="0,0,16,2" VerticalAlignment="Bottom">
+            <Image Source="ms-appx:///Assets/AuthorLogo.png" Height="34" Width="34" Stretch="Uniform" HorizontalAlignment="Center"/>
+            <TextBlock FontSize="10" Opacity="0.6" Margin="0,3,0,0" HorizontalAlignment="Center">emelinhabibovic.de</TextBlock>
+          </StackPanel>
           <TextBlock FontSize="28" FontWeight="SemiBold">RPCS3</TextBlock>
           <TextBlock FontSize="15" Opacity="0.7" Margin="10,0,0,5" VerticalAlignment="Bottom">for Xbox</TextBlock>
           <Border Background="{ThemeResource SystemControlBackgroundAccentBrush}" CornerRadius="4" Padding="7,1,7,2"
