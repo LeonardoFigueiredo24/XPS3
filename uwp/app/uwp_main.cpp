@@ -852,11 +852,14 @@ namespace
 			sys_log.always()("UWP: %s", place_hdd());
 
 			// Any fatal log line (e.g. a dying RSX thread, which doesn't stop the emulator) turns the screen red.
+			// Except the patch engine's (PAT): it logs a broken user patch.yml as fatal, skips that file and the
+			// game runs on. Seen on .75-.77: an undefined YAML anchor covered the running XMB and every game with
+			// the error screen and was reported as a crash at each start.
 			struct fatal_listener final : logs::listener
 			{
 				void log(u64, const logs::message& msg, std::string_view prefix, std::string_view text) override
 				{
-					if (logs::level{msg} == logs::level::fatal)
+					if (logs::level{msg} == logs::level::fatal && !(msg->name && std::string_view{msg->name} == "PAT"))
 					{
 						{
 							std::lock_guard lock(g_frame_mutex);
