@@ -25,6 +25,7 @@ known issues are in [uwp/README.md](uwp/README.md).
 | Jetpack Joyride Deluxe | Playable, 60 fps |
 | PlayStation Home | Launches and works, ~20 fps; sometimes crashes in the main plaza (runs out of memory) |
 | GTA V, Watch Dogs, Plants vs. Zombies Garden Warfare | Boot, but not playable (single-digit fps or out of memory) |
+| 007 Legends, | Boots, intro scene around 40 to 55 fps |
 
 Heavy games are mostly CPU-bound: the Xbox runs the PPU/SPU recompilers fine, but big games need
 more CPU and memory than a UWP game app gets (5 GB). The first start of the XMB or a game compiles
