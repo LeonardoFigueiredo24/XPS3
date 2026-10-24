@@ -3,6 +3,9 @@
 #include "util/types.hpp"
 #include "util/atomic.hpp"
 
+#include <string>
+#include <vector>
+
 namespace rsx
 {
 #ifdef RPCS3_UWP
@@ -55,5 +58,36 @@ namespace rsx
 				g_uwp_rsx_where.release(prev);
 		}
 	};
+
+	// Performance report for telemetry, made every 10 s on the RSX thread (RSXThread.cpp flip) and
+	// handed to g_uwp_perf_sink (set by the app, null = off). Times are per frame unless noted.
+	struct uwp_perf_stutter
+	{
+		f64 at_s = 0;          // system time of the frame's end
+		u32 frame = 0;         // frame number, to find the sampler's text
+		f64 frame_ms = 0, avg_ms = 0;
+		u64 new_pipelines = 0; // pipelines (shaders) created during the frame
+		f64 submit_ms = 0, present_wait_ms = 0, present_copy_ms = 0, rsx_idle_ms = 0, gpu_wait_ms = 0, rsx_cpu_ms = -1;
+		f64 setup_ms = 0, vertex_ms = 0, texture_ms = 0, draw_ms = 0;
+		u32 draws = 0, submits = 0;
+		f64 mem_poll_ago_ms = -1;
+		std::string rsx_phases; // the 1 ms sampler's top phases, e.g. "fifo idle 61%; semaphore 22%;"
+	};
+
+	struct uwp_perf_window
+	{
+		f64 secs = 0, fps = 0, frame_max_ms = 0;
+		u32 frames = 0, frames_50ms = 0, frames_100ms = 0;
+		f64 rsx_busy = 0, rsx_idle = 0; // percent; busy = CPU time of the RSX thread (includes spinning)
+		f64 draws = 0, submits = 0, setup_ms = 0, vertex_ms = 0, texture_ms = 0, draw_ms = 0;
+		f64 gpu_wait_ms = 0, submit_ms = 0, present_wait_ms = 0;
+		u64 new_pipelines = 0;
+		std::vector<std::pair<std::string, f64>> ppu; // thread name, % of one core; busiest first
+		std::vector<f64> spu;                        // % of one core; busiest first
+		std::vector<uwp_perf_stutter> stutters;      // longest frames (>= 100 ms and >= 2.5x the average), at most 5
+	};
+
+	extern void (*g_uwp_perf_sink)(const uwp_perf_window&);
+	extern atomic_t<u32> g_uwp_rsx_runs; // RSX thread starts, so the flip statistics restart with each game
 #endif
 }

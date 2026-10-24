@@ -1419,7 +1419,7 @@ namespace uwp_frontend
 				}},
 				{"System language", &g_cfg.sys.language, {}, {}},
 				{"Send logs to the developer", &uwp_telemetry::setting(), {"false", "true"},
-					fmt::format("Logs of game starts, exits and crashes, without personal data, to help fix the emulator. Anonymous ID %s.", uwp_telemetry::install_id()),
+					fmt::format("Logs of game starts, exits and crashes and frame rate reports, without personal data, to help fix the emulator. Anonymous ID %s.", uwp_telemetry::install_id()),
 					{}, {}, []()
 				{
 					uwp_telemetry::set_consent(uwp_telemetry::setting().get());

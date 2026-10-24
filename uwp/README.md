@@ -155,8 +155,9 @@ thread with libcurl, only while the user's answer is Yes:
 | --- | --- | --- |
 | The user says Yes (first time per install) | `install`, `app_start` | RPCS3.log so far (`app_start`) |
 | Every app start | `app_start` (console model from `AnalyticsInfo.DeviceForm`, OS, firmware, build) | |
-| A game, homebrew or the XMB starts | `game_launch` (title, kind, renderer, decoders, scale, build) | |
-| It stops | `game_exit` (duration) | RPCS3.log (`game_exit`) |
+| A game, homebrew or the XMB starts | `game_launch` (title, kind, renderer, decoders, scale, frame limit, shader mode, build) | |
+| Every 10 s while it runs (sent once a minute) | `perf` (fps, longest frame, RSX/GPU/present time, draws, new shaders, busiest PPU threads, SPU load, app memory) and up to 5 `stutter` events (frames of 100 ms or more and 2.5x the average, with the frame's own breakdown and the 1 ms RSX sampler's phases) | |
+| It stops | `game_exit` (duration, avg/min fps, stutters) | RPCS3.log (`game_exit`) |
 | A fatal error | `crash` (scrubbed message) | RPCS3.log (`crash`) |
 | Start after a run that ended during a game | `crash` (`ended_during_game`) | RPCS3.prev.log, mesa.prev.log, memory.prev.log |
 

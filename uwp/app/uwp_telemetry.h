@@ -2,7 +2,8 @@
 
 // Opt-in telemetry: with the user's consent (asked once, on the first start; Settings can turn it
 // off) the app sends events and its logs to the developer's server, rpcs3.emelinhabibovic.de, when a
-// game or the XMB starts or stops, after a fatal error and after a run that ended while a game ran.
+// game or the XMB starts or stops, after a fatal error and after a run that ended while a game ran,
+// plus a performance report every 10 s while a game runs (sent once a minute).
 // Logs go through uwp_telemetry_scrub first (no account names, passwords, tokens, emails, IPs or
 // user folders). Reports carry a random anonymous ID made on the first start, nothing that names
 // the user or console. The upload API is described in uwp/TELEMETRY_API.md.
