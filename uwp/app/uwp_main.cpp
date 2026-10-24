@@ -699,13 +699,26 @@ namespace
 			uwp_frontend::on_emulation_stopped();
 		};
 		g_emu_callbacks.on_ready = []() {};
-		g_emu_callbacks.on_emulation_stop_no_response = [](std::shared_ptr<atomic_t<bool>> closed, int)
+		// Called on the Stop Watchdog thread after 10 s (25 s while held). Desktop RPCS3 asks whether to keep
+		// waiting. Here F1, GTA V and Portal 2 got the error screen at a normal game exit (.73-.75), with RSX
+		// or the pipeline cache saver still busy; saves to the USB drive took up to 34 s in F1. Wait up to a minute;
+		// the watchdog is aborted once the stop is through.
+		g_emu_callbacks.on_emulation_stop_no_response = [](std::shared_ptr<atomic_t<bool>> closed, int seconds)
 		{
-			if (!closed || !*closed)
+			if (closed && *closed)
+				return;
+			sys_log.error("UWP: stopping the emulator takes more than %d s, waiting up to 60 s", seconds);
+			for (int ms = seconds * 1000; ms < 60'000; ms += 100)
 			{
-				sys_log.fatal("Stopping emulator took too long; some thread has probably deadlocked.");
-				g_state = shell_state::failed;
+				if (thread_ctrl::state() == thread_state::aborting)
+				{
+					sys_log.warning("UWP: the emulator stopped after about %d s", ms / 1000);
+					return;
+				}
+				thread_ctrl::wait_for(100'000);
 			}
+			sys_log.fatal("Stopping emulator took too long; some thread has probably deadlocked.");
+			g_state = shell_state::failed;
 		};
 		g_emu_callbacks.on_save_state_progress = [](std::shared_ptr<atomic_t<bool>>, stx::shared_ptr<utils::serial>, stx::atomic_ptr<std::string>*, std::shared_ptr<void>) {};
 		g_emu_callbacks.enable_disc_eject = [](bool) {};
