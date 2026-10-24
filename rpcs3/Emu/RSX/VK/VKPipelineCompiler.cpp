@@ -38,11 +38,13 @@ namespace vk
 
 #ifdef RPCS3_UWP
 	atomic_t<u64> g_uwp_pipelines_created = 0; // VKProgramPipeline.cpp
+	static atomic_t<u64> g_uwp_pipelines_saved = 0; // g_uwp_pipelines_created when the cache was loaded or last saved
 	static std::unique_ptr<named_thread<std::function<void()>>> g_uwp_cache_saver;
 
 	static void uwp_save_pipeline_cache()
 	{
 		const auto start = get_system_time();
+		const u64 count = g_uwp_pipelines_created;
 		std::vector<u8> data;
 
 		for (int attempt = 0; attempt < 3; attempt++)
@@ -73,9 +75,18 @@ namespace vk
 		if (data.empty())
 			return;
 
+		// Timed apart: most saves take 0.1-0.3 s, but some took 7 s, 34 s (F1) and 254 s (Portal 2, with
+		// the cache on a USB drive), and a stop waits for a save that is running.
+		const auto got = get_system_time();
 		const std::string tmp = g_uwp_pipeline_cache_path + ".tmp";
 		if (fs::write_file(tmp, fs::rewrite, data) && fs::rename(tmp, g_uwp_pipeline_cache_path, true))
-			rsx_log.notice("UWP: saved the pipeline cache (%u KB, %u pipelines made this session) in %.0f ms", data.size() >> 10, g_uwp_pipelines_created.load(), (get_system_time() - start) / 1000.);
+		{
+			g_uwp_pipelines_saved = count;
+			const auto end = get_system_time();
+			const auto log = end - start >= 1'000'000 ? &rsx_log.warning : &rsx_log.notice;
+			(*log)("UWP: saved the pipeline cache (%u KB, %u pipelines made this session) in %.0f ms (%.0f ms getting it, %.0f ms writing it)",
+				data.size() >> 10, count, (end - start) / 1000., (got - start) / 1000., (end - got) / 1000.);
+		}
 		else
 			rsx_log.error("UWP: could not save the pipeline cache to %s (%s)", g_uwp_pipeline_cache_path, fs::g_tls_error);
 	}
@@ -435,6 +446,8 @@ namespace vk
 
 			if (g_pipeline_cache && !g_uwp_pipeline_cache_path.empty())
 			{
+				g_uwp_pipelines_saved = g_uwp_pipelines_created.load();
+
 				// Save 10 s after the last new pipeline, or every minute while they keep coming
 				g_uwp_cache_saver = std::make_unique<named_thread<std::function<void()>>>("VK Pipeline Cache Saver", []()
 				{
@@ -506,7 +519,8 @@ namespace vk
 		{
 			g_uwp_cache_saver.reset();
 
-			if (g_pipeline_cache)
+			// Not again when the saver already wrote everything: the stop waits for this save.
+			if (g_pipeline_cache && g_uwp_pipelines_created != g_uwp_pipelines_saved)
 				uwp_save_pipeline_cache();
 		}
 #endif
