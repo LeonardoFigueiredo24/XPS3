@@ -238,8 +238,14 @@ namespace
 	}
 
 
+	// Shown as a loading screen while place_hdd moves dev_hdd0 (the menu is not up yet).
+	atomic_t<bool> g_hdd_moving{false};
+	atomic_t<u64> g_hdd_moved_bytes{0};
+
 	// Copies every file under src to the same place under dst, keeping a file already in dst
-	// unless the one in src is newer. Returns false at the first file that cannot be copied.
+	// unless the one in src is newer. Each file is copied to a .part name and renamed when
+	// complete, so a move cut off midway never leaves a half file that looks finished.
+	// Returns false at the first file that cannot be copied.
 	bool copy_tree(const std::string& src, const std::string& dst, u64& files, u64& bytes)
 	{
 		if (!fs::create_path(dst))
@@ -264,9 +270,11 @@ namespace
 			if (fs::get_stat(dst + entry.name, have) && !have.is_directory && have.mtime >= entry.mtime)
 				continue;
 
-			if (!fs::copy_file(src + entry.name, dst + entry.name, true))
+			const std::string part = dst + entry.name + ".rpcs3part";
+			if (!fs::copy_file(src + entry.name, part, true) || !fs::rename(part, dst + entry.name, true))
 			{
 				sys_log.error("UWP: cannot copy %s%s to %s (%s)", src, entry.name, dst, fs::g_tls_error);
+				fs::remove_file(part);
 				return false;
 			}
 
@@ -274,6 +282,7 @@ namespace
 			if ((bytes >> 30) != ((bytes + entry.size) >> 30))
 				sys_log.always()("UWP: moving dev_hdd0: %llu MB so far", (bytes + entry.size) >> 20);
 			bytes += entry.size;
+			g_hdd_moved_bytes += entry.size;
 		}
 
 		return true;
@@ -319,7 +328,10 @@ namespace
 		{
 			u64 files = 0, bytes = 0;
 			sys_log.always()("UWP: moving dev_hdd0 from LocalState to %s", home);
-			if (copy_tree(local_hdd0, home, files, bytes))
+			g_hdd_moving = true;
+			const bool copied = copy_tree(local_hdd0, home, files, bytes);
+			g_hdd_moving = false;
+			if (copied)
 			{
 				fs::remove_all(local_hdd0, true, true);
 				note = fmt::format("moved dev_hdd0 from LocalState to %s (%llu files, %llu MB)", home, files, bytes >> 20);
@@ -1954,6 +1966,17 @@ namespace
 	// rules as show_loading_screen() of the software-drawn menu). UI thread, every tick.
 	void fill_overlay_state(uwp_xaml::overlay_state& ov)
 	{
+		if (g_hdd_moving)
+		{
+			ov.loading = true;
+			ov.loading_over_game = false;
+			ov.loading_title = "Moving your PS3 hard drive to the USB drive";
+			ov.loading_detail = fmt::format("%llu MB copied so far.\n\nThis happens once: installed games, game data and saves move off the "
+				"console's small app storage. Please keep the app open until the menu appears.", g_hdd_moved_bytes.load() >> 20);
+			ov.loading_done = 0;
+			ov.loading_total = 0;
+			return;
+		}
 		const shell_state st = effective_state();
 		if (st == shell_state::failed)
 		{
