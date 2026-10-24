@@ -33,11 +33,11 @@ storage is far too small), and your own PS3 firmware file (`PS3UPDAT.PUP`, 4.93 
 
 1. Put the console in Developer Mode (Microsoft's "Xbox Dev Mode" app and a developer account) and
    enable the Device Portal in Dev Home. Open it in a browser on your PC: `https://<your-xbox-ip>:11443/`.
-2. From the release, download the `.appx`, `Microsoft.UI.Xaml.2.8.appx` and the `.cer` certificate.
+2. From the release, download the `.appx` and `Microsoft.UI.Xaml.2.8.appx`.
 3. In Device Portal: **Home > Add**, choose the RPCS3 `.appx`, then on the next page add
-   `Microsoft.UI.Xaml.2.8.appx` as a dependency and the `.cer` as the certificate, and install.
+   `Microsoft.UI.Xaml.2.8.appx` as a dependency, and install. Dev Mode doesn't ask for a certificate.
    The package is signed with a self-made test certificate (`CN=RPCS3XboxProbe`), not by Microsoft
-   or the RPCS3 team; Dev Mode accepts it once the `.cer` is installed with the app.
+   or the RPCS3 team; the release has its `.cer` in case your tool asks for one.
 4. In Dev Home on the Xbox, highlight **RPCS3 Xbox (Beta)**, press View > **View details** and set
    **App type: Game** (gives the app 5 GB of RAM instead of 1 GB). Reinstalling can reset this.
 5. Plug in the USB drive and start the app. Copy `PS3UPDAT.PUP` to the root of the USB drive (or
