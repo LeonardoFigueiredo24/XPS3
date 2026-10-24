@@ -2070,7 +2070,7 @@ namespace uwp_frontend
 			// Header: title, firmware state, tabs.
 			cv.fill(0, 0, canvas_width, margin_y + 120, col_header);
 			cv.text(margin_x, margin_y, "RPCS3", 48, col_text);
-			cv.text(margin_x + cv.text_width("RPCS3 ", 48), margin_y + 14, "for Xbox  (unofficial test build)", 30, col_dim);
+			cv.text(margin_x + cv.text_width("RPCS3 ", 48), margin_y + 14, "for Xbox  (unofficial beta build)", 30, col_dim);
 
 			std::unique_lock lock(g_data_mutex);
 			const std::string fw = g_fw_version.empty() ? "Firmware: not installed (built-in libraries)" : "Firmware " + g_fw_version;
