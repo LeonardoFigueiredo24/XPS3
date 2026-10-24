@@ -465,7 +465,7 @@ namespace uwp_xaml
 			com<IListViewBase> games_lv, install_lv;
 			com<IPanel> settings_panel, pause_settings_panel;
 			com<IUIElement> games_list_el, games_empty_el, details_el, install_list_el, install_empty_el, usb_hint_el, games_busy_el, install_busy_el;
-			com<ITextBlock> t_firmware, t_status, t_games_empty, t_install_empty;
+			com<ITextBlock> t_firmware, t_telemetry, t_status, t_games_empty, t_install_empty;
 			com<ITextBlock> t_detail_title, t_detail_id, t_detail_kind, t_detail_version, t_detail_source, t_detail_placeholder;
 			com<IImage> detail_icon;
 			com<ITextBlock> t_loading_title, t_loading_detail, t_job_title, t_job_detail, t_dialog_title, t_dialog_text, t_error;
@@ -554,6 +554,7 @@ namespace uwp_xaml
 				games_busy_el = find_el<IUIElement>(root, L"GamesBusy");
 				install_busy_el = find_el<IUIElement>(root, L"InstallBusy");
 				t_firmware = find_el<ITextBlock>(root, L"FirmwareText");
+				t_telemetry = find_el<ITextBlock>(root, L"TelemetryIdText");
 				t_status = find_el<ITextBlock>(root, L"StatusText");
 				t_detail_title = find_el<ITextBlock>(root, L"DetailTitle");
 				t_detail_id = find_el<ITextBlock>(root, L"DetailId");
@@ -993,6 +994,7 @@ namespace uwp_xaml
 			void sync_header()
 			{
 				set_text(t_firmware, snap.firmware.empty() ? "Firmware: not installed (built-in libraries)" : "Firmware " + snap.firmware);
+				set_text(t_telemetry, snap.telemetry_id.empty() ? std::string() : "Anonymous ID " + snap.telemetry_id + (snap.telemetry_on ? "" : " (log sending off)"));
 				if (t_firmware)
 					t_firmware->put_Foreground(brush[snap.firmware.empty() ? 2 : 1].get());
 				set_visible(usb_hint_el, snap.scanning_usb);
@@ -1114,7 +1116,7 @@ namespace uwp_xaml
 				set_text(t_dialog_text, dialog->text);
 				const bool confirm = !dialog->accept_label.empty();
 				set_button_text(dialog_accept, dialog->accept_label);
-				set_button_text(dialog_cancel, confirm ? "Cancel" : "OK");
+				set_button_text(dialog_cancel, !confirm ? "OK" : dialog->cancel_label.empty() ? "Cancel" : dialog->cancel_label);
 				if (const auto accept_el = dialog_accept.as<IUIElement>())
 					accept_el->put_Visibility(confirm ? Visibility::Visible : Visibility::Collapsed);
 				set_visible(dialog_layer, true);
@@ -1132,6 +1134,8 @@ namespace uwp_xaml
 				update_gating();
 				if (accepted && d.on_accept)
 					d.on_accept();
+				else if (!accepted && d.on_cancel)
+					d.on_cancel();
 				if (!dialog_queue.empty())
 				{
 					show_next_dialog();

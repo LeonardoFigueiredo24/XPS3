@@ -10,6 +10,8 @@ add_executable(rpcs3_uwp WIN32
     ${CMAKE_BINARY_DIR}/uwp_xaml/uwp_xaml_pages.inc
     uwp_firmware.cpp
     uwp_rpcn.cpp
+    uwp_telemetry.cpp
+    uwp_telemetry_scrub.cpp
     uwp_textinput.cpp
     uwp_stubs.cpp
     uwp_sysstubs.c
@@ -44,10 +46,16 @@ target_include_directories(rpcs3_uwp PRIVATE
     ${CMAKE_BINARY_DIR}/uwp_localized
     ${CMAKE_BINARY_DIR}/uwp_xaml)
 
-target_compile_definitions(rpcs3_uwp PRIVATE UNICODE _UNICODE)
+# The package version (uwp/package/AppxManifest.xml), sent with telemetry reports.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/uwp/package/AppxManifest.xml)
+file(READ ${CMAKE_SOURCE_DIR}/uwp/package/AppxManifest.xml UWP_MANIFEST)
+string(REGEX MATCH "<Identity [^>]*Version=\"([0-9.]+)\"" _ "${UWP_MANIFEST}")
+set(UWP_APP_VERSION "${CMAKE_MATCH_1}")
+
+target_compile_definitions(rpcs3_uwp PRIVATE UNICODE _UNICODE RPCS3_XBOX_VERSION="${UWP_APP_VERSION}")
 target_link_libraries(rpcs3_uwp PRIVATE
-    rpcs3_emu 3rdparty::wolfssl 3rdparty::hidapi 3rdparty::zlib 3rdparty::libusb 3rdparty::stblib 3rdparty::opencv 3rdparty::fusion
-    d3d11 dxgi winmm
+    rpcs3_emu 3rdparty::wolfssl 3rdparty::libcurl 3rdparty::hidapi 3rdparty::zlib 3rdparty::libusb 3rdparty::stblib 3rdparty::opencv 3rdparty::fusion
+    d3d11 dxgi winmm bcrypt
     # WinRT activation/strings and the UWP *FromApp APIs (import libs from mkimplibs.sh)
     winrt_activation winrt_string uwp_memory_6 uwp_memory_5 uwp_memory_3 uwp_memory_1 uwp_file_fromapp)
 # zig ignores -mwindows; UWP apps must be GUI-subsystem executables.
