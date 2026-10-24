@@ -173,6 +173,11 @@ namespace uwp_telemetry
 				fmt::append(body, "%s%s:%s", body.empty() ? "" : ",", json_str(key), json_str(value));
 				return *this;
 			}
+			// Without it a string literal would take the bool overload (a standard conversion).
+			json_data& add(std::string_view key, const char* value)
+			{
+				return add(key, std::string_view(value));
+			}
 			json_data& add(std::string_view key, s64 value)
 			{
 				fmt::append(body, "%s%s:%d", body.empty() ? "" : ",", json_str(key), value);
@@ -896,7 +901,24 @@ namespace uwp_telemetry
 			const std::string title = lines.size() > 1 ? lines[1] : std::string();
 			const std::string kind = lines.size() > 2 ? lines[2] : std::string();
 			const bool fatal = lines.size() > 3 && lines[3] == "fatal";
+			// Suspended (Xbox Home) and never resumed, or a run of another version (an update was
+			// installed over the running app; markers before 0.1.34.76 have no version): ended from outside.
+			const bool suspended = std::find(lines.begin(), lines.end(), "suspended") != lines.end();
+			const auto version = std::find_if(lines.begin(), lines.end(), [](const std::string& l) { return l.starts_with("v="); });
+			const bool updated = version == lines.end() || version->substr(2) != c_app_version;
 			fs::remove_file(session_file());
+
+			if (!fatal && (suspended || updated))
+			{
+				json_data d;
+				d.add("kind", kind);
+				d.add("reason", suspended ? "app_closed" : "app_updated");
+				d.add("note", suspended ? "The app was closed while suspended (Xbox Home), with this running." :
+					"The app was updated or reinstalled while this ran.");
+				queue_event(make_event("game_exit", title_id, title, d));
+				queue_log({log_dir() + "RPCS3.prev.log", "rpcs3_prev", "game_exit", title_id});
+				return;
+			}
 
 			json_data d;
 			d.add("reason", fatal ? "fatal_error" : "ended_during_game");
@@ -987,7 +1009,7 @@ namespace uwp_telemetry
 			if (g_in_game)
 			{
 				std::lock_guard lock(g_mutex);
-				fs::write_file(session_file(), fs::rewrite, fmt::format("%s\n%s\n%s\n", g_game_id, g_game_title, "game"));
+				fs::write_file(session_file(), fs::rewrite, fmt::format("%s\n%s\n%s\nv=%s\n", g_game_id, g_game_title, "game", c_app_version));
 			}
 			return;
 		}
@@ -1038,7 +1060,7 @@ namespace uwp_telemetry
 		if (g_consent != consent::yes)
 			return;
 
-		fs::write_file(session_file(), fs::rewrite, fmt::format("%s\n%s\n%s\n", title_id, title, kind));
+		fs::write_file(session_file(), fs::rewrite, fmt::format("%s\n%s\n%s\nv=%s\n", title_id, title, kind, c_app_version));
 		json_data d;
 		d.add("kind", kind);
 		add_release(d);
@@ -1092,6 +1114,27 @@ namespace uwp_telemetry
 			queue_log({log_dir() + "RPCS3.log", g_live_off ? "rpcs3" : "rpcs3_live", "game_exit", title_id, true, false, !g_live_off});
 	}
 
+	void on_suspend()
+	{
+		std::lock_guard lock(g_mutex);
+		if (g_in_game && g_consent == consent::yes && fs::is_file(session_file()))
+			fs::write_file(session_file(), fs::write + fs::append, std::string_view{"suspended\n"});
+	}
+
+	void on_resume()
+	{
+		std::lock_guard lock(g_mutex);
+		const fs::file f{session_file()};
+		if (!f)
+			return;
+		std::string text = f.to_string();
+		if (const usz pos = text.find("suspended\n"); pos != umax)
+		{
+			text.erase(pos);
+			fs::write_file(session_file(), fs::rewrite, text);
+		}
+	}
+
 	void on_fatal(std::string_view text)
 	{
 		std::string title_id, title;
@@ -1106,7 +1149,7 @@ namespace uwp_telemetry
 		}
 		// Marked, so a log that couldn't be sent before the app ended is sent on the next start.
 		if (g_in_game)
-			fs::write_file(session_file(), fs::rewrite, fmt::format("%s\n%s\n%s\nfatal\n", title_id, title, "game"));
+			fs::write_file(session_file(), fs::rewrite, fmt::format("%s\n%s\n%s\nfatal\nv=%s\n", title_id, title, "game", c_app_version));
 		const scrubber sc = make_scrubber();
 		json_data d;
 		d.add("reason", "fatal_error");

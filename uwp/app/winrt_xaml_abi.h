@@ -28,6 +28,7 @@ struct IApplication;
 struct IApplication2;
 struct IApplicationInitializationCallbackParams;
 struct ApplicationInitializationCallback;
+struct SuspendingEventHandler;
 struct ILaunchActivatedEventArgs;
 struct IWindow;
 struct IWindowStatics;
@@ -573,7 +574,7 @@ struct IApplication : IInspectable
 	virtual HRESULT STDMETHODCALLTYPE put_RequestedTheme(ApplicationTheme value) = 0;
 	virtual HRESULT STDMETHODCALLTYPE add_UnhandledException(void* handler, int64_t* result) = 0;
 	virtual HRESULT STDMETHODCALLTYPE remove_UnhandledException(int64_t token) = 0;
-	virtual HRESULT STDMETHODCALLTYPE add_Suspending(void* handler, int64_t* result) = 0;
+	virtual HRESULT STDMETHODCALLTYPE add_Suspending(SuspendingEventHandler* handler, int64_t* result) = 0;
 	virtual HRESULT STDMETHODCALLTYPE remove_Suspending(int64_t token) = 0;
 	virtual HRESULT STDMETHODCALLTYPE add_Resuming(void* handler, int64_t* result) = 0;
 	virtual HRESULT STDMETHODCALLTYPE remove_Resuming(int64_t token) = 0;
@@ -599,6 +600,11 @@ struct IApplicationInitializationCallbackParams : IInspectable
 struct ApplicationInitializationCallback : IUnknown
 {
 	virtual HRESULT STDMETHODCALLTYPE Invoke(IApplicationInitializationCallbackParams* p) = 0;
+};
+
+struct SuspendingEventHandler : IUnknown
+{
+	virtual HRESULT STDMETHODCALLTYPE Invoke(IInspectable* sender, IInspectable* e) = 0;
 };
 
 struct ILaunchActivatedEventArgs : IInspectable
@@ -1409,6 +1415,7 @@ template <> struct iid_traits<IApplication> { static constexpr GUID value = {0x7
 template <> struct iid_traits<IApplication2> { static constexpr GUID value = {0x019104be, 0x522a, 0x5904, {0xf5, 0x2f, 0xde, 0x72, 0x01, 0x04, 0x29, 0xe0}}; };
 template <> struct iid_traits<IApplicationInitializationCallbackParams> { static constexpr GUID value = {0x751b792e, 0x5772, 0x4488, {0x8b, 0x87, 0xf5, 0x47, 0xfa, 0xa6, 0x44, 0x74}}; };
 template <> struct iid_traits<ApplicationInitializationCallback> { static constexpr GUID value = {0xb6351c55, 0xc284, 0x46e4, {0x83, 0x10, 0xfb, 0x09, 0x67, 0xfa, 0xb7, 0x6f}}; };
+template <> struct iid_traits<SuspendingEventHandler> { static constexpr GUID value = {0x23429465, 0xe36a, 0x40e2, {0xb1, 0x39, 0xa4, 0x70, 0x46, 0x02, 0xa6, 0xe1}}; };
 template <> struct iid_traits<ILaunchActivatedEventArgs> { static constexpr GUID value = {0xfbc93e26, 0xa14a, 0x4b4f, {0x82, 0xb0, 0x33, 0xbe, 0xd9, 0x20, 0xaf, 0x52}}; };
 template <> struct iid_traits<IWindow> { static constexpr GUID value = {0x3276167d, 0xc9f6, 0x462d, {0x9d, 0xe2, 0xae, 0x4c, 0x1f, 0xd8, 0xc2, 0xe5}}; };
 template <> struct iid_traits<IWindowStatics> { static constexpr GUID value = {0x93328409, 0x4ea1, 0x4afa, {0x83, 0xdc, 0x0c, 0x4e, 0x73, 0xe8, 0x8b, 0xb1}}; };

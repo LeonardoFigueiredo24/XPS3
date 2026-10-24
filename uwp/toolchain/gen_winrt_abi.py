@@ -23,7 +23,7 @@ XCP = "Windows.UI.Xaml.Controls.Primitives."
 INTERFACES = [
     # Application model
     X + "IApplicationStatics", X + "IApplicationFactory", X + "IApplicationOverrides", X + "IApplication", X + "IApplication2",
-    X + "IApplicationInitializationCallbackParams", X + "ApplicationInitializationCallback",
+    X + "IApplicationInitializationCallbackParams", X + "ApplicationInitializationCallback", X + "SuspendingEventHandler",
     "Windows.ApplicationModel.Activation.ILaunchActivatedEventArgs",
     X + "IWindow", X + "IWindowStatics",
     "Windows.UI.ViewManagement.IApplicationViewStatics2", "Windows.UI.ViewManagement.IApplicationView2",

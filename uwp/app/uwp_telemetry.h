@@ -43,6 +43,10 @@ namespace uwp_telemetry
 	// Emulator callbacks (Emu.on_run / on_stop): a game, homebrew or the XMB started or stopped.
 	void on_game_started();
 	void on_game_stopped();
+	// UI thread: the app was suspended (Xbox Home) or resumed. A run that is suspended and never
+	// resumed was ended by the system or the user, which the next start reports as an exit, not a crash.
+	void on_suspend();
+	void on_resume();
 	// A fatal log line or report_fatal_error. Safe to call from the log listener: only queues work.
 	void on_fatal(std::string_view text);
 
