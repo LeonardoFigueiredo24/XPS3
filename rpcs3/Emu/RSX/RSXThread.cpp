@@ -36,6 +36,7 @@
 #include "util/asm.hpp"
 
 #include <algorithm>
+#include <mutex>
 #include <span>
 #include <thread>
 #include <unordered_map>
@@ -145,6 +146,24 @@ namespace rsx
 	uwp_fifo_counters g_uwp_fifo;
 	thread_local bool g_uwp_on_rsx_thread = false;
 	static atomic_t<u32> g_uwp_rsx_frame = 0;
+	void (*g_uwp_perf_sink)(const uwp_perf_window&) = nullptr;
+	atomic_t<u32> g_uwp_rsx_runs = 0;
+
+	// The sampler's text for recent frames of 60 ms or more, by frame number (for the telemetry stutters).
+	static std::mutex g_uwp_sampled_mutex;
+	static std::pair<u32, std::string> g_uwp_sampled[16];
+
+	// The longest frames of the current 10 s window (flip, RSX thread only).
+	static std::vector<uwp_perf_stutter> g_uwp_tel_stutters;
+
+	static std::string uwp_sampled_text(u32 frame)
+	{
+		std::lock_guard lock(g_uwp_sampled_mutex);
+		for (const auto& [f, text] : g_uwp_sampled)
+			if (f == frame && !text.empty())
+				return text;
+		return {};
+	}
 
 	// Samples g_uwp_rsx_where every 1 ms. Frames of 60 ms or more are logged with their most common
 	// samples and the RSX thread's CPU time (low CPU time = it was waiting or not scheduled).
@@ -168,9 +187,8 @@ namespace rsx
 			{
 				const u64 now = get_system_time(), cpu = rsx_thread->get_cpu_time_us();
 
-				if (now - start >= 60'000 && logged < 1000)
+				if (now - start >= 60'000)
 				{
-					logged++;
 					std::sort(hist.begin(), hist.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
 
 					std::string text, name;
@@ -187,8 +205,17 @@ namespace rsx
 						fmt::append(text, " %u%%;", hist[i].second * 100 / std::max<u32>(samples, 1));
 					}
 
-					rsx_log.notice("UWP RSX sampled: %.0f ms frame, RSX CPU %.0f ms, %u samples:%s", (now - start) / 1000.,
-						(cpu - cpu_start) / 1000., samples, text);
+					{
+						std::lock_guard lock(g_uwp_sampled_mutex);
+						g_uwp_sampled[frame % std::size(g_uwp_sampled)] = {frame, fmt::format("RSX CPU %.0f ms:%s", (cpu - cpu_start) / 1000., text)};
+					}
+
+					if (logged < 1000)
+					{
+						logged++;
+						rsx_log.notice("UWP RSX sampled: %.0f ms frame, RSX CPU %.0f ms, %u samples:%s", (now - start) / 1000.,
+							(cpu - cpu_start) / 1000., samples, text);
+					}
 				}
 
 				hist.clear();
@@ -1366,6 +1393,7 @@ namespace rsx
 
 #ifdef RPCS3_UWP
 		g_uwp_on_rsx_thread = true;
+		g_uwp_rsx_runs++;
 		g_uwp_rsx_where.release(u32{uwp_phase_fifo} << 16);
 
 		struct uwp_sampler
@@ -3646,12 +3674,21 @@ namespace rsx
 		// Hitches: frames that took 1.4x the running average or more, with how long before each one
 		// the app polled its memory and the stats overlay updated (to find periodic stutter).
 		bool uwp_hitch = false;
+		// This frame and the running average (0 on the first frame of a run), for the telemetry report.
+		u64 uwp_frame_us = 0, uwp_avg_us = 0;
+		static u32 s_uwp_run = 0;
+		const bool uwp_new_run = s_uwp_run != g_uwp_rsx_runs.load();
+		s_uwp_run = g_uwp_rsx_runs.load();
+		const u32 uwp_frame_no = g_uwp_rsx_frame.load();
 		{
 			static u64 s_prev = 0, s_avg = 0;
 			const u64 now = get_system_time();
+			if (uwp_new_run)
+				s_prev = 0, s_avg = 0;
 			if (s_prev && now > s_prev)
 			{
 				const u64 dt = now - s_prev;
+				uwp_frame_us = dt, uwp_avg_us = s_avg;
 				if (s_avg && dt >= s_avg * 14 / 10 && dt >= 20'000)
 				{
 					g_uwp_hitches++;
@@ -3695,6 +3732,27 @@ namespace rsx
 					st.draw_calls, st.submit_count, st.setup_time / 1000., st.vertex_upload_time / 1000., st.textures_upload_time / 1000., st.draw_exec_time / 1000.,
 					st.program_cache_lookups_ellided, st.program_cache_lookups_total);
 			}
+			// Telemetry: frames of 100 ms or more and 2.5x the average (longer than 30 s is a pause), the longest 5 per window.
+			if (g_uwp_perf_sink && uwp_avg_us && uwp_frame_us >= 100'000 && uwp_frame_us * 2 >= uwp_avg_us * 5 && uwp_frame_us < 30'000'000)
+			{
+				const auto& st = m_frame_stats;
+				const u64 mem_at = g_uwp_mem_poll_at_us.load();
+				uwp_perf_stutter t;
+				t.at_s = now / 1e6, t.frame = uwp_frame_no;
+				t.frame_ms = uwp_frame_us / 1000., t.avg_ms = uwp_avg_us / 1000.;
+				t.new_pipelines = pipelines - s_last_pipelines;
+				t.submit_ms = (submit_us - s_last_submit) / 1000., t.present_wait_ms = (pwait_us - s_last_pwait) / 1000., t.present_copy_ms = (pcopy_us - s_last_pcopy) / 1000.;
+				t.rsx_idle_ms = (idle >= s_last_idle ? idle - s_last_idle : idle) / 1000., t.gpu_wait_ms = (gpu_wait - s_last_gpu_wait) / 1000.;
+				t.setup_ms = st.setup_time / 1000., t.vertex_ms = st.vertex_upload_time / 1000., t.texture_ms = st.textures_upload_time / 1000., t.draw_ms = st.draw_exec_time / 1000.;
+				t.draws = st.draw_calls, t.submits = st.submit_count;
+				t.mem_poll_ago_ms = mem_at && now >= mem_at ? (now - mem_at) / 1000. : -1.;
+
+				auto& list = g_uwp_tel_stutters;
+				if (list.size() < 5)
+					list.push_back(std::move(t));
+				else if (auto it = std::min_element(list.begin(), list.end(), [](const auto& a, const auto& b) { return a.frame_ms < b.frame_ms; }); it->frame_ms < t.frame_ms)
+					*it = std::move(t);
+			}
 			s_last_pipelines = pipelines, s_last_submit = submit_us, s_last_pwait = pwait_us, s_last_pcopy = pcopy_us;
 			s_last_flip = now, s_last_idle = idle, s_last_gpu_wait = gpu_wait, s_last_gpu_waits = gpu_waits;
 		}
@@ -3706,18 +3764,32 @@ namespace rsx
 			static u64 s_win_start = 0, s_win_idle = 0, s_prev_idle = 0, s_win_frames = 0, s_win_draws = 0, s_win_submits = 0;
 			static u64 s_win_setup = 0, s_win_vertex = 0, s_win_tex = 0, s_win_draw = 0, s_win_rsx_cycles = 0;
 			static std::unordered_map<u32, u64> s_win_thread_cycles;
+			// For telemetry: longest frame, slow frame counts and the Vulkan counters at the window's start.
+			static u64 s_win_frame_max = 0, s_win_50 = 0, s_win_100 = 0, s_win_gpu_wait = 0, s_win_submit = 0, s_win_pwait = 0, s_win_pipelines = 0;
 			const u64 now = get_system_time(), idle = performance_counters.idle_time;
 			const auto& st = m_frame_stats;
 			s_win_idle += idle >= s_prev_idle ? idle - s_prev_idle : idle;
 			s_prev_idle = idle;
 			s_win_frames++, s_win_draws += st.draw_calls, s_win_submits += st.submit_count;
 			s_win_setup += st.setup_time, s_win_vertex += st.vertex_upload_time, s_win_tex += st.textures_upload_time, s_win_draw += st.draw_exec_time;
+			if (uwp_frame_us < 30'000'000)
+			{
+				s_win_frame_max = std::max(s_win_frame_max, uwp_frame_us);
+				s_win_50 += uwp_frame_us >= 50'000, s_win_100 += uwp_frame_us >= 100'000;
+			}
+			const auto win_reset_tel = [&]()
+			{
+				s_win_frame_max = s_win_50 = s_win_100 = 0;
+				s_win_gpu_wait = vk::g_uwp_fence_wait_us.load(), s_win_submit = vk::g_uwp_submit_us.load(), s_win_pwait = vk::g_uwp_present_wait_us.load(), s_win_pipelines = vk::g_uwp_pipelines_created.load();
+				g_uwp_tel_stutters.clear();
+			};
 
-			if (!s_win_start || now < s_win_start)
+			if (!s_win_start || now < s_win_start || uwp_new_run)
 			{
 				s_win_start = now, s_win_idle = 0, s_win_rsx_cycles = thread_ctrl::get_current() ? thread_ctrl::get_current()->get_cpu_time_us() : 0;
 				s_win_frames = s_win_draws = s_win_submits = s_win_setup = s_win_vertex = s_win_tex = s_win_draw = 0;
 				s_win_thread_cycles.clear();
+				win_reset_tel();
 			}
 			else if (now - s_win_start >= 10'000'000)
 			{
@@ -3727,19 +3799,29 @@ namespace rsx
 
 				std::string ppu_text, spu_text;
 				std::unordered_map<u32, u64> cycles_now;
+				uwp_perf_window rep;
 				idm::select<named_thread<ppu_thread>>([&](u32 id, named_thread<ppu_thread>& ppu)
 				{
 					const u64 c = thread_ctrl::get_cpu_time_us(ppu);
 					cycles_now[id] = c;
-					if (auto it = s_win_thread_cycles.find(id); it != s_win_thread_cycles.end() && c >= it->second && busy(c - it->second) >= 5.)
-						fmt::append(ppu_text, " %s %.0f%%", ppu.ppu_tname.load() ? *ppu.ppu_tname.load() : std::string("?"), busy(c - it->second));
+					if (auto it = s_win_thread_cycles.find(id); it != s_win_thread_cycles.end() && c >= it->second)
+					{
+						const f64 b = busy(c - it->second);
+						std::string name = ppu.ppu_tname.load() ? *ppu.ppu_tname.load() : std::string("?");
+						if (b >= 5.)
+							fmt::append(ppu_text, " %s %.0f%%", name, b);
+						rep.ppu.emplace_back(std::move(name), b);
+					}
 				});
 				idm::select<named_thread<spu_thread>>([&](u32 id, named_thread<spu_thread>& spu)
 				{
 					const u64 c = thread_ctrl::get_cpu_time_us(spu);
 					cycles_now[id] = c;
 					if (auto it = s_win_thread_cycles.find(id); it != s_win_thread_cycles.end() && c >= it->second)
+					{
 						fmt::append(spu_text, " %.0f%%", busy(c - it->second));
+						rep.spu.push_back(busy(c - it->second));
+					}
 				});
 
 				const f64 frames = static_cast<f64>(std::max<u64>(s_win_frames, 1));
@@ -3760,6 +3842,27 @@ namespace rsx
 				rsx_log.notice("UWP hitches: %u in 10 s%s | memory poll max %.1f ms, stats overlay update max %.1f ms",
 					g_uwp_hitches, g_uwp_hitch_text, g_uwp_mem_poll_max_us.exchange(0) / 1000., g_uwp_overlay_update_max_us.exchange(0) / 1000.);
 				g_uwp_hitches = 0, g_uwp_hitch_text.clear();
+
+				// Telemetry (uwp_telemetry.cpp): the same numbers plus the longest frames, without the log text.
+				if (auto sink = g_uwp_perf_sink; sink && secs <= 15.)
+				{
+					rep.secs = secs, rep.frames = static_cast<u32>(s_win_frames), rep.fps = s_win_frames / secs;
+					rep.frame_max_ms = s_win_frame_max / 1000., rep.frames_50ms = static_cast<u32>(s_win_50), rep.frames_100ms = static_cast<u32>(s_win_100);
+					rep.rsx_busy = busy(rsx_cycles - s_win_rsx_cycles), rep.rsx_idle = 100. * s_win_idle / (now - s_win_start);
+					rep.draws = s_win_draws / frames, rep.submits = s_win_submits / frames;
+					rep.setup_ms = s_win_setup / frames / 1000., rep.vertex_ms = s_win_vertex / frames / 1000., rep.texture_ms = s_win_tex / frames / 1000., rep.draw_ms = s_win_draw / frames / 1000.;
+					rep.gpu_wait_ms = (vk::g_uwp_fence_wait_us.load() - s_win_gpu_wait) / frames / 1000.;
+					rep.submit_ms = (vk::g_uwp_submit_us.load() - s_win_submit) / frames / 1000.;
+					rep.present_wait_ms = (vk::g_uwp_present_wait_us.load() - s_win_pwait) / frames / 1000.;
+					rep.new_pipelines = vk::g_uwp_pipelines_created.load() - s_win_pipelines;
+					std::sort(rep.ppu.begin(), rep.ppu.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+					std::sort(rep.spu.begin(), rep.spu.end(), std::greater<>());
+					rep.stutters = std::move(g_uwp_tel_stutters);
+					for (uwp_perf_stutter& t : rep.stutters)
+						t.rsx_phases = uwp_sampled_text(t.frame);
+					sink(rep);
+				}
+				win_reset_tel();
 
 				s_win_start = now, s_win_idle = 0, s_win_rsx_cycles = rsx_cycles;
 				s_win_frames = s_win_draws = s_win_submits = s_win_setup = s_win_vertex = s_win_tex = s_win_draw = 0;
