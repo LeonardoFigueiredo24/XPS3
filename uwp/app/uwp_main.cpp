@@ -355,6 +355,12 @@ namespace
 				g_no_storage += fmt::format(" Your games and saves are on %s.", home.substr(0, 2));
 		}
 
+		// Emu.Init refuses (fatal) a VFS path that isn't the default and doesn't exist yet.
+		if (use_home)
+			fs::create_path(home);
+		if (!g_storage_root.empty())
+			fs::create_path(g_storage_root + "dev_hdd1/");
+
 		g_cfg_vfs.load();
 		if (use_home)
 			g_cfg_vfs.dev_hdd0.from_string(home);
