@@ -1,23 +1,26 @@
 # RPCS3 for Xbox (UWP, Dev Mode)
 
-Unofficial port of the RPCS3 PlayStation 3 emulator to a UWP app for Xbox Series X in Developer
-Mode. Not supported by the RPCS3 team; don't ask them for help with it. This repository is private.
+Unofficial proof-of-concept port of the RPCS3 PlayStation 3 emulator to a UWP app for Xbox
+Series X|S in Developer Mode. Not supported by the RPCS3 team; don't ask them for help with it.
+For installing a release, see the [main README](../README.md); this page is the technical side.
 
 The port is one app package (`RPCS3Xbox`): a XAML controller menu (games, installs, settings) plus
 the full emulator. It is built on Linux with a zig/clang cross toolchain, needs no Qt and no Windows
 PC, and is installed through the Xbox Device Portal.
 
-## Current state (2026-10-16)
+## Current state (2026-10-24)
 
 | What | Status |
 | --- | --- |
 | PS3 XMB (firmware 4.93) | Boots from the Games tab ("PS3 System Menu (XMB)") in ~20 s warm, steady 60 fps with PPU LLVM |
 | Network and XMB web browser | Works; network is "Connected" by default, browser opens (lazily committed 256 MB `sys_vm` mapping) |
 | Controller, audio | Windows.Gaming.Input pads 1-4, XAudio2 |
+| Portal 2 (BLES01222) | Playable, ~28 fps in big rooms, no compile stalls; bound by the game's PPU main thread |
+| Minecraft PlayStation 3 Edition | Playable, ~57 fps (PS3 network off for it automatically) |
 | Jetpack Joyride Deluxe | Runs, locked 60 fps |
-| Minecraft PlayStation 3 Edition | Runs, ~55 fps in menus, ~30 fps in a new world (network off for it) |
-| Watch Dogs (BLES01854) | Title screen at 30 fps; in-game loading runs out of the 5 GB limit at ~85%. Memory work in PR #9 |
-| Plants vs. Zombies Garden Warfare (BLES02021) | Main menu at 5-7 fps with the PS3 network off (EA servers are gone). Auto network-off in PR #10 |
+| GTA V | Boots, ~10 fps, SPU-bound; not playable |
+| Watch Dogs (BLES01854) | Title screen; in-game loading runs out of the 5 GB limit. Not playable |
+| Plants vs. Zombies Garden Warfare (BLES02021) | Main menu at 5-7 fps with the PS3 network off (EA servers are gone). Not playable |
 | Stats overlay | Settings > Stats overlay (FPS, CPU, GPU, top right) |
 
 Cold first start of the XMB compiles its PPU code with LLVM (~8.5 min); later starts reuse the cache.
@@ -185,6 +188,5 @@ app memory trend even when RPCS3.log has hit its size cap. A fatal error shows i
 
 ## Branches
 
-- `main`: console-tested work only.
-- `xbox-builds`: separate history with built `.appx` packages and Xbox test logs/screenshots.
+- `main`: console-tested work only. Packages are published on the Releases page.
 - `claude/*`: work in progress, reaches main through PRs.
