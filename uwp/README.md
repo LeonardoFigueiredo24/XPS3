@@ -114,7 +114,7 @@ MAKEMSIX=/path/to/makemsix uwp/package/package.sh build-uwp RPCS3Xbox.appx cert.
 ## Installing on the Xbox
 
 1. Put the console in Developer Mode and open the Device Portal (`https://<xbox-ip>:11443/`).
-2. Home > Add, pick the `.appx` (first time: also the signing `.cer`, and as a dependency
+2. Home > Add, pick the `.appx` (first time: as a dependency also
    `Microsoft.UI.Xaml.2.8.appx` (x64) from the Microsoft.UI.Xaml 2.8.7 NuGet package,
    `tools/AppX/x64/Release`), install.
 3. In Dev Home, select RPCS3Xbox > View details and set **App type: Game** (5 GB RAM instead of 1 GB).
