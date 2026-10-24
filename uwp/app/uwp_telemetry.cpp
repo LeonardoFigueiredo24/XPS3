@@ -1119,9 +1119,9 @@ namespace uwp_telemetry
 	{
 		return fmt::format(
 			"Most problems of this port only show up on consoles I don't have. If you agree, the app sends its emulator log to "
-			"rpcs3.emelinhabibovic.de when a game or the XMB starts or stops and after a crash, so I can see which games run, "
-			"how fast, and why they fail. While a game runs it also sends, once a minute, its frame rate, what slowed it down and the log's new lines.\n\n"
-			"Sent: the emulator log, frame rate and load numbers, the app version, the console model, the game's title ID and name, and an anonymous ID "
+			"rpcs3.emelinhabibovic.de every minute while a game or the XMB runs and after a crash, so I can see which games run, "
+			"how fast, and why they fail.\n\n"
+			"Sent: the emulator log, frame rate numbers, the app version, the console model, the game's title ID and name, and an anonymous ID "
 			"made at random on this console (%s, also shown at the top of the menu).\n\n"
 			"Never sent: your gamertag or Microsoft account, RPCN username, password, token or email, other players' names, "
 			"IP addresses, your location or the list of games you have. They are removed from the logs before upload.\n\n"
