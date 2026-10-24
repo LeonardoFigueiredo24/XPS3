@@ -464,7 +464,7 @@ namespace uwp_xaml
 			com<IItemsControl> games_items, install_items;
 			com<IListViewBase> games_lv, install_lv;
 			com<IPanel> settings_panel, pause_settings_panel;
-			com<IUIElement> games_list_el, games_empty_el, details_el, install_list_el, install_empty_el, usb_hint_el;
+			com<IUIElement> games_list_el, games_empty_el, details_el, install_list_el, install_empty_el, usb_hint_el, games_busy_el, install_busy_el;
 			com<ITextBlock> t_firmware, t_status, t_games_empty, t_install_empty;
 			com<ITextBlock> t_detail_title, t_detail_id, t_detail_kind, t_detail_version, t_detail_source, t_detail_placeholder;
 			com<IImage> detail_icon;
@@ -551,6 +551,8 @@ namespace uwp_xaml
 				install_empty_el = find_el<IUIElement>(root, L"InstallEmpty");
 				t_install_empty = find_el<ITextBlock>(root, L"InstallEmpty");
 				usb_hint_el = find_el<IUIElement>(root, L"UsbHint");
+				games_busy_el = find_el<IUIElement>(root, L"GamesBusy");
+				install_busy_el = find_el<IUIElement>(root, L"InstallBusy");
 				t_firmware = find_el<ITextBlock>(root, L"FirmwareText");
 				t_status = find_el<ITextBlock>(root, L"StatusText");
 				t_detail_title = find_el<ITextBlock>(root, L"DetailTitle");
@@ -940,10 +942,12 @@ namespace uwp_xaml
 				const bool have = !snap.games.empty();
 				set_visible(games_list_el, have);
 				set_visible(details_el, have);
-				set_visible(games_empty_el, !have);
-				if (!have)
+				// While the first scan runs, a spinning ring stands in for the empty list.
+				set_visible(games_busy_el, !have && snap.scanning);
+				set_visible(games_empty_el, !have && !snap.scanning);
+				if (!have && !snap.scanning)
 				{
-					set_text(t_games_empty, snap.scanning ? "Looking for games..." :
+					set_text(t_games_empty,
 						"No games found.\n\n"
 						"Copy a game folder (with PS3_GAME inside, or PARAM.SFO + USRDIR) or an .iso into the app's LocalState\\games folder with the Device Portal's File explorer, "
 						"or put games in a GAMES folder on a USB drive. Press Y to look again.");
@@ -980,9 +984,10 @@ namespace uwp_xaml
 
 				const bool have = !snap.installs.empty();
 				set_visible(install_list_el, have);
-				set_visible(install_empty_el, !have);
-				if (!have)
-					set_text(t_install_empty, snap.scanning ? "Looking for files..." : "Nothing to install found. Press Y to look again.");
+				set_visible(install_busy_el, !have && snap.scanning);
+				set_visible(install_empty_el, !have && !snap.scanning);
+				if (!have && !snap.scanning)
+					set_text(t_install_empty, "Nothing to install found. Press Y to look again.");
 			}
 
 			void sync_header()

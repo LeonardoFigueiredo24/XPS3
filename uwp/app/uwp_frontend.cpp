@@ -2070,7 +2070,7 @@ namespace uwp_frontend
 			// Header: title, firmware state, tabs.
 			cv.fill(0, 0, canvas_width, margin_y + 120, col_header);
 			cv.text(margin_x, margin_y, "RPCS3", 48, col_text);
-			cv.text(margin_x + cv.text_width("RPCS3 ", 48), margin_y + 14, "for Xbox  (unofficial test build)", 30, col_dim);
+			cv.text(margin_x + cv.text_width("RPCS3 ", 48), margin_y + 14, "for Xbox  (unofficial beta build)", 30, col_dim);
 
 			std::unique_lock lock(g_data_mutex);
 			const std::string fw = g_fw_version.empty() ? "Firmware: not installed (built-in libraries)" : "Firmware " + g_fw_version;
@@ -2251,12 +2251,12 @@ namespace uwp_frontend
 				g_select_path = f.to_string();
 			g_select_pending = true;
 		}
-		g_ready = true;
-
 		// Remote test runs (LocalState/autoboot) boot straight away: don't scan the drives
-		// alongside the boot; the menu's refresh button scans later.
+		// alongside the boot; the menu's refresh button scans later. The scan starts before the
+		// model counts as ready, so the menu's first look already says it is scanning.
 		if (!fs::is_file(g_host.local_dir + "autoboot"))
 			rescan();
+		g_ready = true;
 	}
 
 	bool boot(const std::string& path)

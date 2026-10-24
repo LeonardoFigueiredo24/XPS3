@@ -1,14 +1,73 @@
 RPCS3 for Xbox (UWP)
 ====================
 
-**This is a private, unofficial port of RPCS3 to Xbox Series X (UWP app, Developer Mode).**
-It is not supported by the RPCS3 team. Everything about the port (state, building, packaging,
-installing through Device Portal, controls, known issues) is in [uwp/README.md](uwp/README.md).
+> **Proof of concept.** This is an unofficial, experimental port of the [RPCS3](https://rpcs3.net)
+> PlayStation 3 emulator to Xbox Series X|S as a UWP app (Developer Mode). It is **not** supported by
+> the RPCS3 team, so please don't ask them for help with it. Expect crashes, slow games and rough edges.
+>
+> The port is about 99% vibecoded: written with AI assistance (Claude), steered and checked with my
+> previous programming knowledge. :)
 
-Status on 2026-10-16: the PS3 XMB runs at 60 fps with network and web browser, Jetpack Joyride
-Deluxe (60 fps) and Minecraft PS3 Edition (~55 fps) are playable, Watch Dogs reaches its title
-screen (in-game loading still runs out of memory) and Plants vs. Zombies Garden Warfare reaches its
-main menu with the network off.
+Downloads are on the [Releases](../../releases) page. Building, packaging, internals, all settings and
+known issues are in [uwp/README.md](uwp/README.md).
+
+## What works (October 2026)
+
+| | |
+| --- | --- |
+| PS3 system menu (XMB, firmware 4.93) | Steady 60 fps, network and web browser work |
+| Portal 2 | Playable, ~28 fps (limited by the emulated PPU main thread) |
+| Minecraft PlayStation 3 Edition | Playable, ~57 fps (pick "Continue playing offline" at the PSN prompt) |
+| Jetpack Joyride Deluxe | Playable, 60 fps |
+| PlayStation Home | Launches and works, ~20 fps; sometimes crashes in the main plaza (runs out of memory) |
+| GTA V, Watch Dogs, Plants vs. Zombies Garden Warfare | Boot, but not playable (single-digit fps or out of memory) |
+
+Heavy games are mostly CPU-bound: the Xbox runs the PPU/SPU recompilers fine, but big games need
+more CPU and memory than a UWP game app gets (5 GB). The first start of the XMB or a game compiles
+its code and shaders and can take several minutes; later starts use the cache.
+
+## Installing on your Xbox
+
+You need an Xbox Series X|S in **Developer Mode**, a PC on the same network, a **USB drive or
+external hard drive** (the emulated PS3 hard drive, games and caches live there; the app's own
+storage is far too small), and your own PS3 firmware file (`PS3UPDAT.PUP`, 4.93 is tested) and games.
+
+1. Put the console in Developer Mode (Microsoft's "Xbox Dev Mode" app and a developer account) and
+   enable the Device Portal in Dev Home. Open it in a browser on your PC: `https://<your-xbox-ip>:11443/`.
+2. From the release, download the `.appx` and `Microsoft.UI.Xaml.2.8.appx`.
+3. In Device Portal: **Home > Add**, choose the RPCS3 `.appx`, then on the next page add
+   `Microsoft.UI.Xaml.2.8.appx` as a dependency, and install.
+4. In Dev Home on the Xbox, highlight **RPCS3 Xbox (Beta)**, press View > **View details** and set
+   **App type: Game** (gives the app 5 GB of RAM instead of 1 GB). Reinstalling can reset this.
+5. Plug in the USB drive and start the app. Copy `PS3UPDAT.PUP` to the root of the USB drive (or
+   `PS3/UPDATE/`), open the **Install** tab and install the firmware.
+6. Put games on the USB drive: game folders (with `PS3_GAME` inside) or `.iso` files in `GAMES/`,
+   `PS3ISO/` or the root, and `.pkg`/`.rap` files in `PKG/` or the root (install those from the
+   Install tab). Press Y in the menu to look again. Boot the XMB or a game from the **Games** tab.
+
+### Controls
+
+| Xbox | PS3 |
+| --- | --- |
+| A / B / X / Y | Cross / Circle / Square / Triangle |
+| Menu / View | Start / Select |
+| Tap View + Menu | PS button |
+| Hold View + Menu ~1 s | Pause menu (resume, stop the game, live settings) |
+
+In the app menu: D-pad or left stick to move, A select, B back, LB/RB switch tabs, Y rescan.
+
+## Contributing
+
+Pull requests are very welcome, and so are compatibility reports: if you try a game, open an issue
+with the game's name and title ID, what happened (fps, crashes, glitches) and the app version.
+
+## License and credits
+
+This port is based on [RPCS3](https://github.com/RPCS3/rpcs3) and keeps its license (GPL-2.0, see
+[LICENSE](LICENSE)); all emulation credit goes to the RPCS3 team and contributors. Graphics run on
+[Mesa](https://mesa3d.org)'s Dozen driver (Vulkan on D3D12, MIT license) with Microsoft's DXIL
+signer. The menu uses Microsoft's WinUI 2 (MIT). The source of everything in a release is in this
+repository.
 
 The upstream RPCS3 README follows.
 
