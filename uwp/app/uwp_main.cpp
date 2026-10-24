@@ -1976,8 +1976,16 @@ namespace
 			{
 				// A lost device fails Present at once: without this the thread spun and logged every call
 				// (170000+ lines in a second of a 50 Cent crash log). Once, the reason (hung, reset, driver error).
+				// Logged as the fatal error: the whole adapter is gone, and RSX dies a few ms later with a
+				// misleading Vulkan "out of video/host memory" (50 Cent, SAW 2, PS Home on .75-.77).
 				if (hr_present != last_hr)
-					sys_log.error("UWP: XAML device lost, reason 0x%08x", static_cast<u32>(g.dev->GetDeviceRemovedReason()));
+				{
+					const HRESULT reason = g.dev->GetDeviceRemovedReason();
+					sys_log.fatal("UWP: the GPU device was lost (%s, 0x%08x)",
+						reason == DXGI_ERROR_DEVICE_HUNG ? "device hung" : reason == DXGI_ERROR_DEVICE_RESET ? "device reset" :
+						reason == DXGI_ERROR_DRIVER_INTERNAL_ERROR ? "driver internal error" : reason == DXGI_ERROR_DEVICE_REMOVED ? "device removed" :
+						reason == DXGI_ERROR_INVALID_CALL ? "invalid call" : "other", static_cast<u32>(reason));
+				}
 				Sleep(100);
 			}
 			last_hr = hr_present;
