@@ -1,7 +1,9 @@
 <ListViewItem xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-              HorizontalContentAlignment="Stretch" Padding="8,6,8,6">
-  <StackPanel>
-    <TextBlock FontSize="17" TextTrimming="CharacterEllipsis" MaxLines="1">$TITLE$</TextBlock>
-    <TextBlock FontSize="12" Opacity="0.65" TextTrimming="CharacterEllipsis" MaxLines="1">$SUBTITLE$</TextBlock>
-  </StackPanel>
+              HorizontalContentAlignment="Stretch" Padding="6" Margin="0,0,0,7">
+  <Border Background="#D9171D32" BorderBrush="#44394671" BorderThickness="1" CornerRadius="10" Padding="18,13">
+    <StackPanel>
+      <TextBlock FontSize="16" FontWeight="SemiBold" Foreground="#FFF4F6FF" TextTrimming="CharacterEllipsis" MaxLines="1">$TITLE$</TextBlock>
+      <TextBlock FontSize="12" Foreground="#FF9BA7CA" TextTrimming="CharacterEllipsis" MaxLines="1" Margin="0,4,0,0">$SUBTITLE$</TextBlock>
+    </StackPanel>
+  </Border>
 </ListViewItem>

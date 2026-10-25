@@ -1,8 +1,9 @@
 <Button xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="16,10,16,10" Margin="0,0,0,4">
+        HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="18,13" Margin="0,0,0,7"
+        Background="#D9171D32" BorderBrush="#44394671" BorderThickness="1">
   <StackPanel>
-    <TextBlock FontSize="17">$LABEL$</TextBlock>
-    <TextBlock FontSize="12" Opacity="0.6" TextWrapping="Wrap">$DETAIL$</TextBlock>
+    <TextBlock FontSize="16" FontWeight="SemiBold" Foreground="#FFF4F6FF">$LABEL$</TextBlock>
+    <TextBlock FontSize="12" Foreground="#FF9BA7CA" TextWrapping="Wrap" Margin="0,4,0,0">$DETAIL$</TextBlock>
   </StackPanel>
 </Button>

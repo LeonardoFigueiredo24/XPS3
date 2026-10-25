@@ -1403,7 +1403,7 @@ namespace uwp_frontend
 		{
 			return {
 				{"Resolution scale", &g_cfg.video.resolution_scale_percent, {"50", "75", "100", "150", "200", "300"}, "Internal rendering resolution in percent of 720p."},
-				{"Frame limit", &g_cfg.video.frame_limit, {}, "Auto follows the game's refresh rate."},
+				{"Frame limit", &g_cfg.video.frame_limit, {}, "Auto follows the game. 120 requires a compatible title or patch and a 120 Hz display; forcing it can break timing."},
 				{"VSync", &g_cfg.video.vsync, {}, {}},
 				// No interpreter modes: on Dozen their preload builds ~6700 pipelines of ~2 s each before the game
 				// starts (72 minutes in Portal 2 on .76) and keeps 1.1 GB of D3D12 pipelines for the whole run.
