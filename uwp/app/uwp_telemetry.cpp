@@ -1156,6 +1156,11 @@ namespace uwp_telemetry
 		d.add("message", sc.scrub(text));
 		queue_event(make_event("crash", title_id, title, d));
 		queue_log({log_dir() + "RPCS3.log", g_live_off ? "rpcs3" : "rpcs3_live", "crash", title_id, true, true, !g_live_off});
+		// This run's Dozen and memory logs too (sent only after silent ends so far): Dozen writes why a call
+		// failed there, e.g. "ID3D12GraphicsCommandList::Close failed: 0x..." with the D3D12 messages behind
+		// the LittleBigPlanet VK_ERROR_OUT_OF_HOST_MEMORY at 2.8 GB of 5 on .77.
+		queue_log({g_local_dir + "mesa.log", "mesa", "crash", title_id});
+		queue_log({g_local_dir + "memory.log", "memory", "crash", title_id});
 	}
 
 	std::string consent_title()
