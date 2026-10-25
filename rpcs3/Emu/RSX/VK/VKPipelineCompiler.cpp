@@ -467,7 +467,7 @@ namespace vk
 				g_uwp_cache_saver = std::make_unique<named_thread<std::function<void()>>>("VK Pipeline Cache Saver", []()
 				{
 					u64 saved = g_uwp_pipelines_created, seen = saved, last_save = get_system_time();
-					u64 waited = 0;
+					u64 last_check = get_system_time();
 
 					while (thread_ctrl::state() != thread_state::aborting)
 					{
@@ -478,10 +478,10 @@ namespace vk
 						if (thread_ctrl::state() == thread_state::aborting)
 							break;
 
-						if ((waited += 250'000) < 10'000'000)
+						if (get_system_time() - last_check < 10'000'000)
 							continue;
 
-						waited = 0;
+						last_check = get_system_time();
 
 						const u64 now_count = g_uwp_pipelines_created;
 						const bool quiet = now_count == seen;
