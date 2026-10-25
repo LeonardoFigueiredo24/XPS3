@@ -1,17 +1,23 @@
-# Render the package tile/splash images from the official RPCS3 logo (rpcs3/rpcs3.svg).
-# The PNGs are committed under uwp/package/Assets; rerun this only when the logo or sizes change.
-# Usage: python3 make_assets.py   (needs cairosvg and Pillow)
-import io, os
-import cairosvg
-from PIL import Image
+# Render XPS3-owned package tile/splash images.
+# The PNGs are committed under uwp/package/Assets; rerun this only when the sizes change.
+# Usage: python3 make_assets.py   (needs Pillow)
+import os
+from PIL import Image, ImageDraw
 
 here = os.path.dirname(os.path.abspath(__file__))
-svg = os.path.join(here, '..', '..', 'rpcs3', 'rpcs3.svg')
 background = (0x1A, 0x1A, 0x1F, 255)  # matches BackgroundColor in AppxManifest.xml
+accent = (0x55, 0xAA, 0xFF, 255)
 
 def logo(size):
-    png = cairosvg.svg2png(url=svg, output_width=size * 4, output_height=size * 4)
-    return Image.open(io.BytesIO(png)).convert('RGBA').resize((size, size), Image.LANCZOS)
+    scale = 4
+    image = Image.new('RGBA', (size * scale, size * scale), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    margin = max(2, size // 6) * scale
+    width = max(2, size // 11) * scale
+    last = size * scale - margin
+    draw.line((margin, margin, last, last), fill=accent, width=width)
+    draw.line((last, margin, margin, last), fill=accent, width=width)
+    return image.resize((size, size), Image.Resampling.LANCZOS)
 
 # name: (width, height, logo size); tiles keep the logo on the tile background colour.
 for name, (w, h, s) in {'StoreLogo': (50, 50, 50), 'Square44x44Logo': (44, 44, 44),

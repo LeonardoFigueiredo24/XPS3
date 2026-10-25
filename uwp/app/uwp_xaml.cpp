@@ -1588,7 +1588,7 @@ namespace uwp_xaml
 			}
 			HRESULT STDMETHODCALLTYPE GetRuntimeClassName(HSTRING* name) override
 			{
-				return WindowsCreateString(L"RPCS3Xbox.App", 13, name);
+				return WindowsCreateString(L"XPS3.App", 8, name);
 			}
 			HRESULT STDMETHODCALLTYPE GetTrustLevel(TrustLevel* level) override
 			{

@@ -1419,13 +1419,6 @@ namespace uwp_frontend
 					return g_ui->rpcn_account.npid.empty() ? std::string("Not set up") : g_ui->rpcn_account.npid;
 				}},
 				{"System language", &g_cfg.sys.language, {}, {}},
-				{"Send logs to the developer", &uwp_telemetry::setting(), {"false", "true"},
-					fmt::format("Logs of game starts, exits and crashes and frame rate reports, without personal data, to help fix the emulator. Anonymous ID %s.", uwp_telemetry::install_id()),
-					{}, {}, []()
-				{
-					uwp_telemetry::set_consent(uwp_telemetry::setting().get());
-					g_data_serial++;
-				}},
 			};
 		}
 
@@ -2106,7 +2099,7 @@ namespace uwp_frontend
 
 			// Header: title, firmware state, tabs.
 			cv.fill(0, 0, canvas_width, margin_y + 120, col_header);
-			cv.text(margin_x, margin_y, "RPCS3", 48, col_text);
+			cv.text(margin_x, margin_y, "XPS3", 48, col_text);
 			cv.text(margin_x + cv.text_width("RPCS3 ", 48), margin_y + 14, "for Xbox  (unofficial beta build)", 30, col_dim);
 
 			std::unique_lock lock(g_data_mutex);
@@ -2294,7 +2287,7 @@ namespace uwp_frontend
 		// model counts as ready, so the menu's first look already says it is scanning.
 		if (!fs::is_file(g_host.local_dir + "autoboot"))
 			rescan();
-		// Is a newer release on GitHub? The header shows the answer.
+		// XPS3 disables the inherited automatic update request; start() is an offline no-op.
 		uwp_update::start([]() { g_data_serial++; });
 		g_ready = true;
 	}

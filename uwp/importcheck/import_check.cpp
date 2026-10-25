@@ -1,4 +1,4 @@
-// Loads every DLL and function rpcs3_uwp.exe imports and writes which ones are missing to
+// Loads every DLL and function xps3_uwp.exe imports and writes which ones are missing to
 // LocalState/import_check.txt. Run it on a device where the main app fails to start: the
 // loader refuses a whole exe when one import is missing and doesn't say which.
 

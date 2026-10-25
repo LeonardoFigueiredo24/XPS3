@@ -180,7 +180,7 @@ namespace
 		}
 	}
 	std::string g_local_dir; // LocalState, with trailing slash
-	std::string g_storage_root; // folder on the big drive chosen by choose_cache_dir ("E:/RPCS3/"), empty = LocalState
+	std::string g_storage_root; // folder on the big drive chosen by choose_cache_dir ("E:/XPS3/"), empty = LocalState
 
 	// The app's own storage on the Xbox (LocalState, drive Q:) has only a few MB free, far too
 	// little for the PPU/SPU/shader caches (hundreds of MB for the XMB alone). Put the cache on
@@ -217,7 +217,7 @@ namespace
 				if (st.avail_free > best)
 				{
 					best = st.avail_free;
-					choice = root + "RPCS3/";
+					choice = root + "XPS3/";
 				}
 			}
 		}

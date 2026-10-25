@@ -1,5 +1,12 @@
-RPCS3 for Xbox (UWP)
-====================
+XPS3 experimental RPCS3-UWP integration
+========================================
+
+> This `xps3/uwp-integration` branch preserves the complete RPCS3/RPCS3-Xbox history and adds a
+> narrowly scoped XPS3 overlay. See [XPS3_INTEGRATION.md](XPS3_INTEGRATION.md) for provenance,
+> privacy changes and the current evidence boundary. It is not yet an XPS3 gameplay release.
+
+RPCS3 for Xbox (UWP) — imported base documentation
+===================================================
 
 > **Proof of concept.** This is an unofficial, experimental port of the [RPCS3](https://rpcs3.net)
 > PlayStation 3 emulator to Xbox Series X|S as a UWP app (Developer Mode). It is **not** supported by

@@ -6,6 +6,9 @@
 set -e
 src=$(realpath "$1"); build=$2; prefix=$(realpath -m "$3")
 tc=$(dirname "$(realpath "$0")")
+jobs=${XPS3_JOBS:-$(nproc)}
+case "$jobs" in *[!0-9]*|'') echo "XPS3_JOBS must be a positive integer" >&2; exit 2;; esac
+[ "$jobs" -gt 0 ] || { echo "XPS3_JOBS must be greater than zero" >&2; exit 2; }
 mkdir -p "$build"
 cd "$build"
 
@@ -29,5 +32,5 @@ cd "$build"
 	--enable-protocol=file \
 	--enable-bsf=mjpeg2jpeg
 
-make -j"$(nproc)"
+make -j"$jobs"
 make install

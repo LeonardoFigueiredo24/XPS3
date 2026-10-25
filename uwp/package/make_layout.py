@@ -1,6 +1,6 @@
 # Lay out the UWP package directory: exe (with the AppContainer PE flag set), manifest,
 # tile logos and the bundled test programs.
-# Usage: make_layout.py <rpcs3_uwp.exe> <rpcs3 source dir> <layout dir>
+# Usage: make_layout.py <xps3_uwp.exe> <source dir> <layout dir>
 import os, shutil, struct, sys
 
 exe, src, out = sys.argv[1:4]
@@ -14,10 +14,10 @@ data = bytearray(open(exe, 'rb').read())
 pe = struct.unpack_from('<I', data, 0x3c)[0]
 dllchar = pe + 24 + 70  # IMAGE_OPTIONAL_HEADER64.DllCharacteristics
 struct.pack_into('<H', data, dllchar, struct.unpack_from('<H', data, dllchar)[0] | 0x1000)  # APPCONTAINER
-open(os.path.join(out, 'rpcs3_uwp.exe'), 'wb').write(data)
+open(os.path.join(out, 'xps3_uwp.exe'), 'wb').write(data)
 
 shutil.copy(os.path.join(here, 'AppxManifest.xml'), out)
-shutil.copy(os.path.join(os.path.dirname(exe), 'rpcs3_uwp_importcheck.exe'), out)
+shutil.copy(os.path.join(os.path.dirname(exe), 'xps3_uwp_importcheck.exe'), out)
 # Graphics driver (Mesa Dozen: Vulkan on D3D12) and Microsoft's DXIL signer, if given.
 for extra in os.environ.get('UWP_EXTRA_FILES', '').split(os.pathsep):
     if extra:

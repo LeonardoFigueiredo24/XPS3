@@ -1,0 +1,7 @@
+*.sh text eol=lf
+*.py text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+Dockerfile* text eol=lf
+/uwp/toolchain/zig-* text eol=lf
+*.ps1 text eol=crlf

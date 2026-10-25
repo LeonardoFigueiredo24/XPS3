@@ -9,13 +9,16 @@ set -e
 build=$(realpath -m "$1"); prefix=$(realpath -m "$2")
 native=$(realpath -m "${3:-$build-native}")
 tc=$(dirname "$(realpath "$0")")
-src=$(realpath "$tc/../../3rdparty/llvm/llvm/llvm")
+src=$(realpath "${XPS3_LLVM_SOURCE:-$tc/../../3rdparty/llvm/llvm/llvm}")
+jobs=${XPS3_JOBS:-$(nproc)}
+case "$jobs" in *[!0-9]*|'') echo "XPS3_JOBS must be a positive integer" >&2; exit 2;; esac
+[ "$jobs" -gt 0 ] || { echo "XPS3_JOBS must be greater than zero" >&2; exit 2; }
 
 if [ ! -x "$native/bin/llvm-tblgen" ] || [ ! -x "$native/bin/llvm-min-tblgen" ]; then
 	cmake -S "$src" -B "$native" -G Ninja -DCMAKE_BUILD_TYPE=Release \
 		-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
 		-DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF
-	ninja -C "$native" llvm-tblgen llvm-min-tblgen
+	ninja -j "$jobs" -C "$native" llvm-tblgen llvm-min-tblgen
 fi
 
 cmake -S "$src" -B "$build" -G Ninja \
@@ -29,4 +32,4 @@ cmake -S "$src" -B "$build" -G Ninja \
 	-DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_ENABLE_LIBEDIT=OFF \
 	-DLLVM_ENABLE_LIBPFM=OFF -DLLVM_ENABLE_DIA_SDK=OFF -DLLVM_ENABLE_BINDINGS=OFF \
 	-DLLVM_USE_INTEL_JITEVENTS=OFF -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=OFF
-ninja -C "$build" install
+ninja -j "$jobs" -C "$build" install

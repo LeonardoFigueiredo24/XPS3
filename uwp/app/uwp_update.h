@@ -1,11 +1,7 @@
 #pragma once
 
-// The update check: once per app start, the app asks GitHub for the port's releases
-// (github.com/emelin2004/rpcs3-xbox, pre-releases included) and compares the highest
-// vX.Y.Z.W tag with its own package version. The menu shows the version in green when it is
-// current and in orange, with a line naming the newer release, when it is outdated. Without an
-// answer (offline, GitHub down) the version is shown without either. Not telemetry: nothing
-// is sent but the request itself, whatever the user chose there.
+// XPS3 deliberately disables the inherited automatic network update check. The API remains so
+// the RPCS3-derived frontend can report the package version without contacting a third party.
 
 #include <functional>
 #include <string>
@@ -29,7 +25,7 @@ namespace uwp_update
 	// The newest release's version (without the "v"), empty before an answer.
 	std::string latest_version();
 	// Where to get it.
-	inline constexpr const char* releases_page = "github.com/emelin2004/rpcs3-xbox/releases";
+	inline constexpr const char* releases_page = "update service not configured";
 
 	// Compares two dotted version numbers ("0.1.34.75"): <0, 0 or >0.
 	int compare(const std::string& a, const std::string& b);

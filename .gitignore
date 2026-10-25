@@ -127,5 +127,10 @@ CMakeUserPresets.json
 .cache/
 .lldbinit
 
+# Python helpers and local XPS3 cross-build outputs
+__pycache__/
+*.pyc
+/build-xps3-*
+
 # claude
 CLAUDE.md

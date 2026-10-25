@@ -26,7 +26,7 @@ typedef struct lazy_desc
 static u64 lazy_ret_0(void) { return 0; }
 static u64 lazy_ret_not_found(void) { return 2; /* ERROR_FILE_NOT_FOUND */ }
 static u64 lazy_ret_e_fail(void) { return 0x80004005; }
-static const wchar_t16 lazy_empty_cmdline[] = u"rpcs3_uwp.exe";
+static const wchar_t16 lazy_empty_cmdline[] = u"xps3_uwp.exe";
 static u64 lazy_ret_cmdline(void) { return (u64)lazy_empty_cmdline; }
 
 #define K32 u"kernel32.dll"
