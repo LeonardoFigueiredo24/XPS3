@@ -31,6 +31,11 @@ match after CRLF/LF normalization. No file had a substantive difference.
 - The supplied `Microsoft.UI.Xaml.2.8.appx` has a valid Microsoft signature and manifest identity
   version `8.2501.31001.0`, matching the package dependency.
 
+The supplied WinUI AppX is byte-identical (SHA-256 `1421dba0...abaaa`) to the x64 dependency
+extracted by `xps3-fetch-packages.sh` from the locked Microsoft.UI.Xaml 2.8.7 NuGet. The release's
+`dxil.dll` and `dxcompiler.dll` are likewise byte-identical to the locked Microsoft.Direct3D.DXC
+1.9.2609.5 package. This independently confirms the dependency versions selected for XPS3.
+
 ## Changes integrated into XPS3
 
 The complete upstream commit was merged so the RPCS3 core remains coherent rather than copying
