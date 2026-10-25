@@ -24,6 +24,7 @@ add_executable(rpcs3_uwp WIN32
     ${CMAKE_BINARY_DIR}/uwp_localized/uwp_localized_strings.inc
     ${CMAKE_SOURCE_DIR}/rpcs3/rpcs3_version.cpp
     # Qt-free input code (upstream builds these in the Qt UI target).
+    ${CMAKE_SOURCE_DIR}/rpcs3/Input/blob_detector.cpp
     ${CMAKE_SOURCE_DIR}/rpcs3/Input/ds3_pad_handler.cpp
     ${CMAKE_SOURCE_DIR}/rpcs3/Input/ds4_pad_handler.cpp
     ${CMAKE_SOURCE_DIR}/rpcs3/Input/dualsense_pad_handler.cpp
@@ -55,7 +56,7 @@ set(UWP_APP_VERSION "${CMAKE_MATCH_1}")
 
 target_compile_definitions(rpcs3_uwp PRIVATE UNICODE _UNICODE RPCS3_XBOX_VERSION="${UWP_APP_VERSION}")
 target_link_libraries(rpcs3_uwp PRIVATE
-    rpcs3_emu 3rdparty::wolfssl 3rdparty::libcurl 3rdparty::hidapi 3rdparty::zlib 3rdparty::libusb 3rdparty::stblib 3rdparty::opencv 3rdparty::fusion
+    rpcs3_emu 3rdparty::wolfssl 3rdparty::libcurl 3rdparty::hidapi 3rdparty::zlib 3rdparty::libusb 3rdparty::stblib 3rdparty::fusion
     d3d11 dxgi winmm bcrypt
     # WinRT activation/strings and the UWP *FromApp APIs (import libs from mkimplibs.sh)
     winrt_activation winrt_string uwp_memory_6 uwp_memory_5 uwp_memory_3 uwp_memory_1 uwp_file_fromapp)

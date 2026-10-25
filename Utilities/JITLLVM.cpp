@@ -519,21 +519,36 @@ public:
 		{
 			const std::vector<u8> cached_data = cached.to_vector<u8>();
 
-			if (cached_data.empty()) [[unlikely]]
+			if (cached_data.size() < 18) [[unlikely]] // gzip header + trailer
 			{
 				return nullptr;
 			}
 
-			const std::vector<u8> out = unzip(cached_data);
+			std::unique_ptr<llvm::WritableMemoryBuffer> buf;
 
-			if (out.empty())
+			// Get out size from trailer
+			const u32 out_size = read_from_ptr<u32>(cached_data, cached_data.size() - 4);
+			if (out_size != 0 && out_size <= cached_data.size() * 1032) // Check for impossible sizes
 			{
-				jit_log.error("LLVM: Failed to unzip module: '%s'", path);
-				return nullptr;
+				buf = llvm::WritableMemoryBuffer::getNewUninitMemBuffer(out_size);
 			}
 
-			auto buf = llvm::WritableMemoryBuffer::getNewUninitMemBuffer(out.size());
-			std::memcpy(buf->getBufferStart(), out.data(), out.size());
+			if (!buf || !unzip(cached_data.data(), cached_data.size(), reinterpret_cast<u8*>(buf->getBufferStart()), out_size))
+			{
+				jit_log.error("LLVM: Failed to unzip module directly into the buffer: '%s'", path);
+
+				// Try again with old unzip method
+				const std::vector<u8> out = unzip(cached_data);
+				if (out.empty())
+				{
+					jit_log.error("LLVM: Failed to unzip module: '%s'", path);
+					return nullptr;
+				}
+
+				buf = llvm::WritableMemoryBuffer::getNewUninitMemBuffer(out.size());
+				std::memcpy(buf->getBufferStart(), out.data(), out.size());
+			}
+
 			return buf;
 		}
 
@@ -924,55 +939,9 @@ bool jit_compiler::try_add(std::unique_ptr<llvm::Module> _module, std::string& e
 	return true;
 }
 
-static shared_mutex s_prefetch_mutex;
-static std::unordered_map<std::string, std::unique_ptr<llvm::MemoryBuffer>> s_prefetched;
-
-void jit_compiler::prefetch(const std::vector<std::string>& paths)
-{
-	if (paths.size() < 2)
-	{
-		return;
-	}
-
-	atomic_t<usz> next = 0;
-	const u32 count = std::min<u32>(::size32(paths), std::max<u32>(utils::get_thread_count(), 2));
-
-	named_thread_group workers("LLVM Prefetch ", count, [&]
-	{
-		for (usz i; (i = next++) < paths.size();)
-		{
-			auto buf = ObjectCache::load(paths[i]);
-
-			if (!buf)
-			{
-				continue;
-			}
-
-			std::lock_guard lock(s_prefetch_mutex);
-			s_prefetched[paths[i]] = std::move(buf);
-		}
-	});
-
-	workers.join();
-}
-
 bool jit_compiler::add(const std::string& path)
 {
-	std::unique_ptr<llvm::MemoryBuffer> cache;
-	{
-		std::lock_guard lock(s_prefetch_mutex);
-
-		if (auto found = s_prefetched.find(path); found != s_prefetched.end())
-		{
-			cache = std::move(found->second);
-			s_prefetched.erase(found);
-		}
-	}
-
-	if (!cache)
-	{
-		cache = ObjectCache::load(path);
-	}
+	auto cache = ObjectCache::load(path);
 
 	if (!cache)
 	{
@@ -980,35 +949,54 @@ bool jit_compiler::add(const std::string& path)
 		return false;
 	}
 
-	if (auto object_file = llvm::object::ObjectFile::createObjectFile(*cache))
+	return add(std::move(cache), path);
+}
+
+bool jit_compiler::add(std::unique_ptr<llvm::MemoryBuffer> object, const std::string& path)
+{
+	if (!object)
 	{
-		m_engine->addObjectFile(llvm::object::OwningBinary<llvm::object::ObjectFile>(std::move(*object_file), std::move(cache)));
+		jit_log.error("ObjectCache: Failed to add nullptr object for file. (path='%s')", path);
+		return false;
+	}
+
+	if (auto object_file = llvm::object::ObjectFile::createObjectFile(*object))
+	{
+		m_engine->addObjectFile(llvm::object::OwningBinary<llvm::object::ObjectFile>(std::move(*object_file), std::move(object)));
 		jit_log.trace("ObjectCache: Successfully added %s", path);
 		return true;
 	}
 	else
 	{
-		jit_log.error("ObjectCache: Adding failed: %s", path);
+		jit_log.error("ObjectCache: Adding failed: %s (%s)", path, llvm::toString(object_file.takeError()));
 		return false;
 	}
 }
 
-bool jit_compiler::check(const std::string& path)
+std::unique_ptr<llvm::MemoryBuffer> jit_compiler::load_object(const std::string& path)
 {
 	if (auto cache = ObjectCache::load(path))
 	{
 		if (auto object_file = llvm::object::ObjectFile::createObjectFile(*cache))
 		{
-			return true;
+			return cache;
+		}
+		else
+		{
+			llvm::consumeError(object_file.takeError());
 		}
 
-		if (fs::remove_file(path))
+		// Remove cached and uncached file
+		const bool removed_gz = fs::remove_file(path + ".gz");
+		const bool removed = fs::remove_file(path);
+
+		if (removed_gz || removed)
 		{
 			jit_log.error("ObjectCache: Removed damaged file: %s", path);
 		}
 	}
 
-	return false;
+	return nullptr;
 }
 
 void jit_compiler::update_global_mapping(const std::string& name, u64 addr)
