@@ -173,7 +173,13 @@ namespace
 				return p;
 			std::new_handler handler = std::get_new_handler();
 			if (!handler)
+			{
+				char buf[160];
+				std::snprintf(buf, sizeof(buf), "heap guard: out of memory: new of %llu bytes (align %llu) from exe+%llx\n",
+					static_cast<unsigned long long>(size), static_cast<unsigned long long>(align), static_cast<unsigned long long>(rva(caller)));
+				write_log(buf);
 				__fastfail(7); // FAST_FAIL_FATAL_APP_EXIT: out of memory, built without exceptions
+			}
 			handler();
 		}
 	}

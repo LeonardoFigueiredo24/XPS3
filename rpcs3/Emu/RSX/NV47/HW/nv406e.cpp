@@ -7,6 +7,13 @@
 
 #include "context_accessors.define.h"
 
+#ifdef RPCS3_UWP
+namespace rsx
+{
+	extern u32 g_uwp_rsx_idle_sleep_us; // RSXFIFO.cpp
+}
+#endif
+
 namespace rsx
 {
 	namespace nv406e
@@ -104,6 +111,18 @@ namespace rsx
 				}
 
 				RSX(ctx)->on_semaphore_acquire_wait();
+
+#ifdef RPCS3_UWP
+				// After 1 ms, sleep between checks like the empty-FIFO wait does (RSXFIFO.cpp) instead of
+				// spinning: RSX kept a whole core busy here while the game it waits for needed it. Hitch frames
+				// spent 30%+ in this wait in GTA V (110 of 160 sampled), Wolverine (690 of 930), PS Home and
+				// Portal 2; Wolverine's menu showed RSX 98% busy while idle 91%. LocalState/rsx_idle_sleep.
+				if (g_uwp_rsx_idle_sleep_us && get_system_time() - start >= 1000)
+				{
+					thread_ctrl::wait_for(g_uwp_rsx_idle_sleep_us, false);
+					continue;
+				}
+#endif
 
 				// Wait until the value changes or until 100us pass.
 				utils::spin_on_cacheline_once(atomic_sema, sema, 100);

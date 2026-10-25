@@ -27,6 +27,7 @@ def main() -> int:
     require(identity is not None, "manifest Identity missing")
     require(identity.attrib["Name"] == "XPS3.Experimental.Emulator", "foreign package identity")
     require(identity.attrib["Publisher"] == "CN=XPS3Development", "foreign publisher")
+    require(identity.attrib["Version"] == "0.3.1.0", "unexpected package version after 0.1.35.0 merge")
     require(identity.attrib["ProcessorArchitecture"] == "x64", "Xbox target must be x64")
     apps = manifest.findall("f:Applications/f:Application", ns)
     require([a.attrib["Executable"] for a in apps] ==
@@ -38,6 +39,9 @@ def main() -> int:
     require("add_executable(xps3_uwp WIN32" in cmake, "XPS3 target missing")
     require("add_executable(xps3_uwp_importcheck WIN32" in cmake, "import checker target missing")
     require("xps3_offline_services.cpp" in cmake, "offline services missing")
+    require("${CMAKE_SOURCE_DIR}/rpcs3/Input/blob_detector.cpp" in cmake,
+            "0.1.35.0 input source missing")
+    require("3rdparty::opencv" not in cmake, "retired OpenCV dependency returned")
     for inherited in ("uwp_telemetry.cpp", "uwp_telemetry_scrub.cpp", "uwp_update.cpp"):
         require(not re.search(rf"^\s*{re.escape(inherited)}\s*$", cmake, re.MULTILINE),
                 f"inherited network service still compiled: {inherited}")
@@ -56,6 +60,15 @@ def main() -> int:
     require('WindowsCreateString(L"XPS3.App", 8, name)' in xaml_cpp, "activation class mismatch")
     require(not (PACKAGE / "Assets" / "AuthorLogo.png").exists(), "foreign author logo packaged")
     checks.append("branding_and_storage")
+
+    frontend_cpp = (APP / "uwp_frontend.cpp").read_text(encoding="utf-8")
+    nv406e_cpp = (ROOT / "rpcs3" / "Emu" / "RSX" / "NV47" / "HW" / "nv406e.cpp").read_text(encoding="utf-8")
+    iso_cpp = (ROOT / "rpcs3" / "Loader" / "ISO.cpp").read_text(encoding="utf-8")
+    require("void suspend_game()" in frontend_cpp and "void resume_game()" in frontend_cpp,
+            "UWP suspend/resume integration missing")
+    require("g_uwp_rsx_idle_sleep_us" in nv406e_cpp, "UWP RSX semaphore yielding missing")
+    require("path_component.empty()" in iso_cpp, "0.1.35.0 ISO path fix missing")
+    checks.append("upstream_0_1_35_integration")
 
     print(json.dumps({"result": "PASS", "checks": checks}, indent=2))
     return 0

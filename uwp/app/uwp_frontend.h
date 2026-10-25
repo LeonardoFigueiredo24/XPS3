@@ -191,5 +191,9 @@ namespace uwp_frontend
 	bool poll_pause_combo();
 	// Pauses or resumes the running game for the pause menu.
 	void set_paused(bool paused);
+	// The app is being suspended (Xbox Home) / resumed: pause the running game, and resume it only if
+	// this paused it. Any thread; suspend waits up to 500 ms for the pause.
+	void suspend_game();
+	void resume_game();
 	void stop_game();
 }

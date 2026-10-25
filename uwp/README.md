@@ -91,7 +91,7 @@ cmake -S . -B build-uwp -G Ninja \
   -DWITH_LLVM=ON -DBUILD_LLVM=OFF -DSTATIC_LINK_LLVM=ON -DLLVM_DIR=$PWD/llvm-install/lib/cmake/llvm \
   -DUSE_NATIVE_INSTRUCTIONS=OFF -DUSE_PRECOMPILED_HEADERS=OFF \
   -DUSE_SDL=OFF -DUSE_FAUDIO=OFF -DUSE_SYSTEM_ZLIB=OFF -DUSE_SYSTEM_CURL=OFF -DUSE_SYSTEM_SDL=OFF \
-  -DUSE_SYSTEM_OPENCV=OFF -DUSE_DISCORD_RPC=OFF -DUSE_GAMEMODE=OFF -DUSE_LIBEVDEV=OFF
+  -DUSE_DISCORD_RPC=OFF -DUSE_GAMEMODE=OFF -DUSE_LIBEVDEV=OFF
 ninja -C build-uwp rpcs3_uwp rpcs3_uwp_importcheck
 
 # 4. Mesa Dozen (after step 3, which creates the import libraries it links against)
@@ -210,7 +210,8 @@ Empty files in the app's `LocalState` folder (via Device Portal file explorer):
 - `default_timer`: don't raise the system timer resolution (the app raises it to the finest the
   device allows, as desktop RPCS3 does; the log shows both).
 - `rsx_idle_sleep`: microseconds the RSX thread sleeps per check once the game has given it
-  nothing to do for 1 ms, instead of spinning (default 200; `0` spins as RPCS3 does).
+  nothing to do, or kept it waiting on a semaphore, for 1 ms, instead of spinning (default 200;
+  `0` spins as RPCS3 does).
 - `dynamic_stencil_bias`: keep stencil masks and depth bias as Vulkan dynamic state. By default
   they are baked into the pipelines, because Dozen otherwise builds a D3D12 PSO for each new value
   at draw time on the RSX thread (hitches of 0.1-4 s in Portal 2).

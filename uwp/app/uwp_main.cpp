@@ -699,13 +699,26 @@ namespace
 			uwp_frontend::on_emulation_stopped();
 		};
 		g_emu_callbacks.on_ready = []() {};
-		g_emu_callbacks.on_emulation_stop_no_response = [](std::shared_ptr<atomic_t<bool>> closed, int)
+		// Called on the Stop Watchdog thread after 10 s (25 s while held). Desktop RPCS3 asks whether to keep
+		// waiting. Here F1, GTA V and Portal 2 got the error screen at a normal game exit (.73-.75), with RSX
+		// or the pipeline cache saver still busy; saves to the USB drive took up to 34 s in F1. Wait up to a minute;
+		// the watchdog is aborted once the stop is through.
+		g_emu_callbacks.on_emulation_stop_no_response = [](std::shared_ptr<atomic_t<bool>> closed, int seconds)
 		{
-			if (!closed || !*closed)
+			if (closed && *closed)
+				return;
+			sys_log.error("UWP: stopping the emulator takes more than %d s, waiting up to 60 s", seconds);
+			for (int ms = seconds * 1000; ms < 60'000; ms += 100)
 			{
-				sys_log.fatal("Stopping emulator took too long; some thread has probably deadlocked.");
-				g_state = shell_state::failed;
+				if (thread_ctrl::state() == thread_state::aborting)
+				{
+					sys_log.warning("UWP: the emulator stopped after about %d s", ms / 1000);
+					return;
+				}
+				thread_ctrl::wait_for(100'000);
 			}
+			sys_log.fatal("Stopping emulator took too long; some thread has probably deadlocked.");
+			g_state = shell_state::failed;
 		};
 		g_emu_callbacks.on_save_state_progress = [](std::shared_ptr<atomic_t<bool>>, stx::shared_ptr<utils::serial>, stx::atomic_ptr<std::string>*, std::shared_ptr<void>) {};
 		g_emu_callbacks.enable_disc_eject = [](bool) {};
@@ -794,6 +807,8 @@ namespace
 			}
 			{
 				const std::string guard_log = g_local_dir + "heap_guard.log";
+				// Kept for telemetry: the guard fails fast, so its log is the only record of such an end.
+				fs::rename(guard_log, g_local_dir + "heap_guard.prev.log", true);
 				std::wstring wpath(guard_log.size() + 1, L'\0');
 				wpath.resize(::MultiByteToWideChar(CP_UTF8, 0, guard_log.c_str(), -1, wpath.data(), static_cast<int>(wpath.size())));
 				uwp_heap_guard_open_log(wpath.c_str());
@@ -852,11 +867,14 @@ namespace
 			sys_log.always()("UWP: %s", place_hdd());
 
 			// Any fatal log line (e.g. a dying RSX thread, which doesn't stop the emulator) turns the screen red.
+			// Except the patch engine's (PAT): it logs a broken user patch.yml as fatal, skips that file and the
+			// game runs on. Seen on .75-.77: an undefined YAML anchor covered the running XMB and every game with
+			// the error screen and was reported as a crash at each start.
 			struct fatal_listener final : logs::listener
 			{
 				void log(u64, const logs::message& msg, std::string_view prefix, std::string_view text) override
 				{
-					if (logs::level{msg} == logs::level::fatal)
+					if (logs::level{msg} == logs::level::fatal && !(msg->name && std::string_view{msg->name} == "PAT"))
 					{
 						{
 							std::lock_guard lock(g_frame_mutex);
@@ -1933,6 +1951,7 @@ namespace
 		static const float dark[4] = {0.08f, 0.085f, 0.105f, 1};
 		bool was_in_game = false;
 		u32 frames = 0;
+		HRESULT last_hr = S_OK;
 
 		for (;;)
 		{
@@ -1969,8 +1988,25 @@ namespace
 				g.ctx->ClearRenderTargetView(g.rtv, dark);
 			}
 			const HRESULT hr_present = g.sc->Present(1, 0);
-			if (++frames == 1 || FAILED(hr_present))
+			if (++frames == 1 || hr_present != last_hr)
 				sys_log.notice("UWP: XAML frame %u, state %u, Present: 0x%08x", frames, static_cast<u32>(st), static_cast<u32>(hr_present));
+			if (hr_present == DXGI_ERROR_DEVICE_REMOVED || hr_present == DXGI_ERROR_DEVICE_RESET)
+			{
+				// A lost device fails Present at once: without this the thread spun and logged every call
+				// (170000+ lines in a second of a 50 Cent crash log). Once, the reason (hung, reset, driver error).
+				// Logged as the fatal error: the whole adapter is gone, and RSX dies a few ms later with a
+				// misleading Vulkan "out of video/host memory" (50 Cent, SAW 2, PS Home on .75-.77).
+				if (hr_present != last_hr)
+				{
+					const HRESULT reason = g.dev->GetDeviceRemovedReason();
+					sys_log.fatal("UWP: the GPU device was lost (%s, 0x%08x)",
+						reason == DXGI_ERROR_DEVICE_HUNG ? "device hung" : reason == DXGI_ERROR_DEVICE_RESET ? "device reset" :
+						reason == DXGI_ERROR_DRIVER_INTERNAL_ERROR ? "driver internal error" : reason == DXGI_ERROR_DEVICE_REMOVED ? "device removed" :
+						reason == DXGI_ERROR_INVALID_CALL ? "invalid call" : "other", static_cast<u32>(reason));
+				}
+				Sleep(100);
+			}
+			last_hr = hr_present;
 		}
 		return 0;
 	}
@@ -2075,8 +2111,8 @@ namespace
 			CloseHandle(CreateThread(nullptr, 1024 * 1024, xaml_render_thread, nullptr, 0, nullptr));
 		};
 		h.poll_overlay = [](uwp_xaml::overlay_state& ov) { fill_overlay_state(ov); };
-		h.suspending = []() { uwp_telemetry::on_suspend(); };
-		h.resuming = []() { uwp_telemetry::on_resume(); };
+		h.suspending = []() { uwp_frontend::suspend_game(); uwp_telemetry::on_suspend(); };
+		h.resuming = []() { uwp_frontend::resume_game(); uwp_telemetry::on_resume(); };
 		// An empty LocalState/system_styles file keeps the standard (Windows 10) control styles.
 		h.winui_styles = !fs::is_file(get_local_state_dir() + "system_styles");
 		return uwp_xaml::run(h);
