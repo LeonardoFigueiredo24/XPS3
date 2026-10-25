@@ -1457,6 +1457,12 @@ namespace uwp_frontend
 		// Boots a Games-tab entry the way the menu does and remembers it as the last played game.
 		void start_game_entry(const game_entry& game)
 		{
+			// A second press while the first boot is still queued would boot again over the running game.
+			if (g_in_game.exchange(true))
+			{
+				ui_log.warning("UI: not booting '%s': a game is already starting or running", game.title);
+				return;
+			}
 			{
 				std::lock_guard lock(g_data_mutex);
 				g_select_path = game.path;
@@ -1466,9 +1472,13 @@ namespace uwp_frontend
 			fs::write_file(last_game_file(), fs::rewrite, game.path);
 
 			set_status(fmt::format("Starting %s...", game.title), col_dim);
-			g_in_game = true;
 			g_host.run_on_main([game]()
 			{
+				if (!Emu.IsStopped(true))
+				{
+					ui_log.warning("UWP: not booting '%s': the emulator is not stopped", game.path);
+					return;
+				}
 				if (!boot(game.path))
 				{
 					g_in_game = false;
