@@ -47,6 +47,15 @@ External source inputs are pinned in `uwp/XPS3_SOURCE_LOCK.md` and fetched with
 `uwp/xps3-fetch-sources.sh`. A source checkout is accepted only when its resolved commit matches
 the recorded hash.
 
+After fetching, build the pinned FFmpeg tree in the persistent Docker volume with:
+
+```sh
+XPS3_JOBS=1 /src/uwp/xps3-docker-build-ffmpeg.sh
+```
+
+The versioned Microsoft redistributables used at packaging time are downloaded and SHA-256 checked
+with `uwp/xps3-fetch-packages.sh`.
+
 After FFmpeg and LLVM have been cross-built and Vulkan headers are available, the XPS3 targets are
 configured and built with:
 

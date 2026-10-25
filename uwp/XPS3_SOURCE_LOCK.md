@@ -15,7 +15,13 @@ Run in the XPS3 builder container:
 /src/uwp/xps3-fetch-sources.sh /build/sources
 ```
 
-This lock does not cover the Microsoft binary framework dependencies used only
-during packaging (`Microsoft.Direct3D.DXC` and `Microsoft.UI.Xaml`). Those will be
-downloaded as versioned NuGet archives and recorded with SHA-256 checksums before
-the first package is produced.
+## Microsoft redistributable package lock
+
+| Package | Version | NuGet SHA-256 | Files used |
+|---|---|---|---|
+| Microsoft.Direct3D.DXC | `1.9.2609.5` | `73cfa082245918c2cc1ec6740250eb7377e83a757b3b3a3e16e0d71535bfbfc3` | x64 `dxil.dll`, `dxcompiler.dll`, license files |
+| Microsoft.UI.Xaml | `2.8.7` | `79207b10fe243eb1a8dcdc29beceba2f472f145ed31f147f7ae3f43b0659c9f7` | x64 framework `.appx`, license |
+
+`uwp/xps3-fetch-packages.sh` downloads the archives only from NuGet's official API, verifies the
+complete archive before extraction and stages only the documented x64 redistributables. No package
+publisher identity, application identity or signing certificate is reused.
