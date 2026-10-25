@@ -5,6 +5,7 @@ add_executable(rpcs3_bench_runner
     ${CMAKE_SOURCE_DIR}/uwp/app/uwp_stubs.cpp
     ${CMAKE_SOURCE_DIR}/rpcs3/rpcs3_version.cpp
     # Qt-free input code, as in the UWP app (uwp/app/CMakeLists.txt).
+    ${CMAKE_SOURCE_DIR}/rpcs3/Input/blob_detector.cpp
     ${CMAKE_SOURCE_DIR}/rpcs3/Input/ds3_pad_handler.cpp
     ${CMAKE_SOURCE_DIR}/rpcs3/Input/ds4_pad_handler.cpp
     ${CMAKE_SOURCE_DIR}/rpcs3/Input/dualsense_pad_handler.cpp

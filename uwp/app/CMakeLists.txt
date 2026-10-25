@@ -24,6 +24,7 @@ add_executable(rpcs3_uwp WIN32
     ${CMAKE_BINARY_DIR}/uwp_localized/uwp_localized_strings.inc
     ${CMAKE_SOURCE_DIR}/rpcs3/rpcs3_version.cpp
     # Qt-free input code (upstream builds these in the Qt UI target).
+    ${CMAKE_SOURCE_DIR}/rpcs3/Input/blob_detector.cpp
     ${CMAKE_SOURCE_DIR}/rpcs3/Input/ds3_pad_handler.cpp
     ${CMAKE_SOURCE_DIR}/rpcs3/Input/ds4_pad_handler.cpp
     ${CMAKE_SOURCE_DIR}/rpcs3/Input/dualsense_pad_handler.cpp
