@@ -20,6 +20,6 @@ add_executable(rpcs3_bench_runner
     ${CMAKE_SOURCE_DIR}/rpcs3/Input/skateboard_pad_handler.cpp
     ${CMAKE_SOURCE_DIR}/rpcs3/Input/wiimote_handler.cpp)
 target_include_directories(rpcs3_bench_runner PRIVATE ${CMAKE_SOURCE_DIR}/rpcs3 ${CMAKE_SOURCE_DIR})
-target_link_libraries(rpcs3_bench_runner PRIVATE rpcs3_emu 3rdparty::hidapi 3rdparty::zlib 3rdparty::libusb 3rdparty::stblib 3rdparty::opencv 3rdparty::fusion)
+target_link_libraries(rpcs3_bench_runner PRIVATE rpcs3_emu 3rdparty::hidapi 3rdparty::zlib 3rdparty::libusb 3rdparty::stblib 3rdparty::fusion)
 # pad_thread.cpp pulls in the Qt keyboard handler unless built Qt-less like the UWP app.
 set_source_files_properties(${CMAKE_SOURCE_DIR}/rpcs3/Input/pad_thread.cpp PROPERTIES COMPILE_DEFINITIONS RPCS3_UWP)

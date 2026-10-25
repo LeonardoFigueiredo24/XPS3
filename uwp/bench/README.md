@@ -70,7 +70,7 @@ batch can be run per setting. Delete `autotest.done` and the results afterwards 
 
 ```
 cmake -G Ninja <src> -DRPCS3_BENCH_RUNNER=ON -DCMAKE_C_COMPILER=clang-19 -DCMAKE_CXX_COMPILER=clang++-19 \
-  -DUSE_NATIVE_INSTRUCTIONS=OFF -DUSE_SDL=OFF -DUSE_FAUDIO=OFF -DUSE_SYSTEM_OPENCV=OFF -DCMAKE_DISABLE_FIND_PACKAGE_Wayland=ON
+  -DUSE_NATIVE_INSTRUCTIONS=OFF -DUSE_SDL=OFF -DUSE_FAUDIO=OFF -DCMAKE_DISABLE_FIND_PACKAGE_Wayland=ON
 ninja rpcs3_bench_runner
 bin/rpcs3_bench_runner [--ppu llvm|interp] [--spu llvm|asmjit|interp] [--timeout s] prog.elf... > results.txt
 ```
