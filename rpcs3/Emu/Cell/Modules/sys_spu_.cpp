@@ -359,6 +359,10 @@ error_code sys_spu_image_close(ppu_thread& ppu, vm::ptr<sys_spu_image> img)
 
 	if (img->type == SYS_SPU_IMAGE_TYPE_USER)
 	{
+		// vm::dealloc takes the VM writer lock, which needs cpu_flag::wait set (as _sys_spu_image_close does):
+		// without it spurs_test.self died with "vm::writer_lock is being used without cpu_flag::wait".
+		ppu.state += cpu_flag::wait;
+
 		//_sys_free(img->segs.addr());
 		vm::dealloc(img->segs.addr(), vm::main);
 	}
