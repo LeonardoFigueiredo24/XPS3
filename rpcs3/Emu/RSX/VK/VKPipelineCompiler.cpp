@@ -41,11 +41,24 @@ namespace vk
 	static atomic_t<u64> g_uwp_pipelines_saved = 0; // g_uwp_pipelines_created when the cache was loaded or last saved
 	static std::unique_ptr<named_thread<std::function<void()>>> g_uwp_cache_saver;
 
+	// What the saver does and since when, logged when a stop has to wait for it: on .77 three stops (PS Home,
+	// 50 Cent) waited over 10 s for it, one with no new pipeline since its last 67 ms save.
+	enum uwp_saver_phase : u32 { uwp_saver_waiting, uwp_saver_getting, uwp_saver_writing };
+	static atomic_t<u32> g_uwp_saver_phase = uwp_saver_waiting;
+	static atomic_t<u64> g_uwp_saver_phase_since = 0;
+
+	static void uwp_saver_set_phase(uwp_saver_phase phase)
+	{
+		g_uwp_saver_phase_since = get_system_time();
+		g_uwp_saver_phase = phase;
+	}
+
 	static void uwp_save_pipeline_cache()
 	{
 		const auto start = get_system_time();
 		const u64 count = g_uwp_pipelines_created;
 		std::vector<u8> data;
+		uwp_saver_set_phase(uwp_saver_getting);
 
 		for (int attempt = 0; attempt < 3; attempt++)
 		{
@@ -78,6 +91,7 @@ namespace vk
 		// Timed apart: most saves take 0.1-0.3 s, but some took 7 s, 34 s (F1) and 254 s (Portal 2, with
 		// the cache on a USB drive), and a stop waits for a save that is running.
 		const auto got = get_system_time();
+		uwp_saver_set_phase(uwp_saver_writing);
 		const std::string tmp = g_uwp_pipeline_cache_path + ".tmp";
 		if (fs::write_file(tmp, fs::rewrite, data) && fs::rename(tmp, g_uwp_pipeline_cache_path, true))
 		{
@@ -447,6 +461,7 @@ namespace vk
 			if (g_pipeline_cache && !g_uwp_pipeline_cache_path.empty())
 			{
 				g_uwp_pipelines_saved = g_uwp_pipelines_created.load();
+				uwp_saver_set_phase(uwp_saver_waiting);
 
 				// Save 10 s after the last new pipeline, or every minute while they keep coming
 				g_uwp_cache_saver = std::make_unique<named_thread<std::function<void()>>>("VK Pipeline Cache Saver", []()
@@ -467,6 +482,7 @@ namespace vk
 						if (now_count != saved && (quiet || get_system_time() - last_save >= 60'000'000))
 						{
 							uwp_save_pipeline_cache();
+							uwp_saver_set_phase(uwp_saver_waiting);
 							saved = now_count;
 							last_save = get_system_time();
 						}
@@ -517,7 +533,14 @@ namespace vk
 #ifdef RPCS3_UWP
 		if (g_uwp_cache_saver)
 		{
+			const u64 stop_start = get_system_time();
+			const u32 phase = g_uwp_saver_phase;
+			rsx_log.notice("UWP: stopping the pipeline cache saver (%s for %.0f ms)",
+				phase == uwp_saver_getting ? "getting the cache data" : phase == uwp_saver_writing ? "writing the file" : "waiting",
+				(stop_start - g_uwp_saver_phase_since) / 1000.);
 			g_uwp_cache_saver.reset();
+			if (const u64 took = get_system_time() - stop_start; took >= 1'000'000)
+				rsx_log.warning("UWP: the pipeline cache saver took %.0f ms to stop", took / 1000.);
 
 			// Not again when the saver already wrote everything: the stop waits for this save.
 			if (g_pipeline_cache && g_uwp_pipelines_created != g_uwp_pipelines_saved)
