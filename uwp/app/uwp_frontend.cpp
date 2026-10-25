@@ -564,6 +564,7 @@ namespace uwp_frontend
 		atomic_t<bool> g_ready{false};
 		atomic_t<bool> g_in_game{false};
 		atomic_t<bool> g_paused_by_menu{false}; // the pause menu paused the emulator
+		atomic_t<bool> g_paused_by_suspend{false}; // suspend_game() paused the emulator
 
 		std::mutex g_data_mutex; // games, pups, messages written by worker threads
 		std::vector<game_entry> g_games;
@@ -2353,6 +2354,7 @@ namespace uwp_frontend
 	void on_emulation_stopped()
 	{
 		g_paused_by_menu = false;
+		g_paused_by_suspend = false;
 		if (g_in_game.exchange(false))
 		{
 			ui_log.notice("UI: emulation stopped, back to the menu");
@@ -2884,6 +2886,33 @@ namespace uwp_frontend
 			{
 				Emu.Resume();
 			}
+		});
+	}
+
+	// Both 50 Cent runs that came back after 37 s and 55 s in Xbox Home (.76/.77) found the GPU device
+	// removed and died with a Vulkan out-of-memory error; the emulator had kept submitting frames into the
+	// suspend. Stop it first so no RSX work is in flight while the app is frozen.
+	void suspend_game()
+	{
+		std::shared_ptr<atomic_t<bool>> done = std::make_shared<atomic_t<bool>>(false);
+		g_host.run_on_main([done]()
+		{
+			if (Emu.IsRunning() && Emu.Pause(false, false))
+				g_paused_by_suspend = true;
+			*done = true;
+		});
+		for (int i = 0; i < 50 && !*done; i++)
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		ui_log.notice("UWP: suspending (%s)", g_paused_by_suspend ? "game paused" : *done ? "nothing to pause" : "pause still pending");
+	}
+
+	void resume_game()
+	{
+		ui_log.notice("UWP: resuming");
+		g_host.run_on_main([]()
+		{
+			if (g_paused_by_suspend.exchange(false) && Emu.IsPaused())
+				Emu.Resume();
 		});
 	}
 
