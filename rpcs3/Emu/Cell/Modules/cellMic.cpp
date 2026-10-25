@@ -930,8 +930,14 @@ s32 cellMicIsAttached(s32 dev_num)
 {
 	cellMic.trace("cellMicIsAttached(dev_num=%d)", dev_num);
 
-	// TODO
-	return 1;
+	auto& mic_thr = g_fxo->get<mic_thread>();
+	const std::lock_guard lock(mic_thr.mutex);
+	if (!mic_thr.init)
+		return 1; // TODO
+
+	// Only devices that cellMicOpen can open: with no microphone configured, 50 Cent: Blood on the Sand
+	// saw a headset on all 8 slots and tried to open them every frame (186k log lines in 17 minutes).
+	return mic_thr.check_device(dev_num) ? 1 : 0;
 }
 
 error_code cellMicClose(s32 dev_num)

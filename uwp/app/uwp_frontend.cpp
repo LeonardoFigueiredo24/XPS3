@@ -564,6 +564,7 @@ namespace uwp_frontend
 		atomic_t<bool> g_ready{false};
 		atomic_t<bool> g_in_game{false};
 		atomic_t<bool> g_paused_by_menu{false}; // the pause menu paused the emulator
+		atomic_t<bool> g_paused_by_suspend{false}; // suspend_game() paused the emulator
 
 		std::mutex g_data_mutex; // games, pups, messages written by worker threads
 		std::vector<game_entry> g_games;
@@ -1404,7 +1405,10 @@ namespace uwp_frontend
 				{"Resolution scale", &g_cfg.video.resolution_scale_percent, {"50", "75", "100", "150", "200", "300"}, "Internal rendering resolution in percent of 720p."},
 				{"Frame limit", &g_cfg.video.frame_limit, {}, "Auto follows the game's refresh rate."},
 				{"VSync", &g_cfg.video.vsync, {}, {}},
-				{"Shader mode", &g_cfg.video.shadermode, {}, "Async with interpreter avoids stutter while shaders compile."},
+				// No interpreter modes: on Dozen their preload builds ~6700 pipelines of ~2 s each before the game
+				// starts (72 minutes in Portal 2 on .76) and keeps 1.1 GB of D3D12 pipelines for the whole run.
+				{"Shader mode", &g_cfg.video.shadermode, {"Async Recompiler (multi-threaded)", "Legacy Recompiler (single-threaded)"},
+					"Async compiles shaders on several threads. Legacy uses one thread and stutters more."},
 				{"Write color buffers", &g_cfg.video.write_color_buffers, {"false", "true"}, "Needed by some games for correct visuals; costs speed."},
 				{"Stats overlay", &g_cfg.video.perf_overlay.enabled, {"false", "true"}, "FPS, CPU and GPU load in the top right corner while a game runs."},
 				{"Stats detail", &g_cfg.video.perf_overlay.level, {"Minimal", "Low", "Medium", "High"}, "Minimal = FPS. Low adds CPU. Medium adds PPU/SPU/RSX. High adds GPU load."},
@@ -1457,6 +1461,12 @@ namespace uwp_frontend
 		// Boots a Games-tab entry the way the menu does and remembers it as the last played game.
 		void start_game_entry(const game_entry& game)
 		{
+			// A second press while the first boot is still queued would boot again over the running game.
+			if (g_in_game.exchange(true))
+			{
+				ui_log.warning("UI: not booting '%s': a game is already starting or running", game.title);
+				return;
+			}
 			{
 				std::lock_guard lock(g_data_mutex);
 				g_select_path = game.path;
@@ -1466,9 +1476,13 @@ namespace uwp_frontend
 			fs::write_file(last_game_file(), fs::rewrite, game.path);
 
 			set_status(fmt::format("Starting %s...", game.title), col_dim);
-			g_in_game = true;
 			g_host.run_on_main([game]()
 			{
+				if (!Emu.IsStopped(true))
+				{
+					ui_log.warning("UWP: not booting '%s': the emulator is not stopped", game.path);
+					return;
+				}
 				if (!boot(game.path))
 				{
 					g_in_game = false;
@@ -2353,6 +2367,7 @@ namespace uwp_frontend
 	void on_emulation_stopped()
 	{
 		g_paused_by_menu = false;
+		g_paused_by_suspend = false;
 		if (g_in_game.exchange(false))
 		{
 			ui_log.notice("UI: emulation stopped, back to the menu");
@@ -2884,6 +2899,33 @@ namespace uwp_frontend
 			{
 				Emu.Resume();
 			}
+		});
+	}
+
+	// Both 50 Cent runs that came back after 37 s and 55 s in Xbox Home (.76/.77) found the GPU device
+	// removed and died with a Vulkan out-of-memory error; the emulator had kept submitting frames into the
+	// suspend. Stop it first so no RSX work is in flight while the app is frozen.
+	void suspend_game()
+	{
+		std::shared_ptr<atomic_t<bool>> done = std::make_shared<atomic_t<bool>>(false);
+		g_host.run_on_main([done]()
+		{
+			if (Emu.IsRunning() && Emu.Pause(false, false))
+				g_paused_by_suspend = true;
+			*done = true;
+		});
+		for (int i = 0; i < 50 && !*done; i++)
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		ui_log.notice("UWP: suspending (%s)", g_paused_by_suspend ? "game paused" : *done ? "nothing to pause" : "pause still pending");
+	}
+
+	void resume_game()
+	{
+		ui_log.notice("UWP: resuming");
+		g_host.run_on_main([]()
+		{
+			if (g_paused_by_suspend.exchange(false) && Emu.IsPaused())
+				Emu.Resume();
 		});
 	}
 
