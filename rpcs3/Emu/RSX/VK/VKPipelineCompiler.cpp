@@ -467,13 +467,21 @@ namespace vk
 				g_uwp_cache_saver = std::make_unique<named_thread<std::function<void()>>>("VK Pipeline Cache Saver", []()
 				{
 					u64 saved = g_uwp_pipelines_created, seen = saved, last_save = get_system_time();
+					u64 waited = 0;
 
 					while (thread_ctrl::state() != thread_state::aborting)
 					{
-						thread_ctrl::wait_for(10'000'000);
+						// Checked every 250 ms instead of one 10 s wait: a 50 Cent stop on .77 waited over 12.9 s
+						// for an idle saver (no new pipeline since its last save), past its own 10 s timeout.
+						thread_ctrl::wait_for(250'000);
 
 						if (thread_ctrl::state() == thread_state::aborting)
 							break;
+
+						if ((waited += 250'000) < 10'000'000)
+							continue;
+
+						waited = 0;
 
 						const u64 now_count = g_uwp_pipelines_created;
 						const bool quiet = now_count == seen;
