@@ -1951,6 +1951,7 @@ namespace
 		static const float dark[4] = {0.08f, 0.085f, 0.105f, 1};
 		bool was_in_game = false;
 		u32 frames = 0;
+		HRESULT last_hr = S_OK;
 
 		for (;;)
 		{
@@ -1987,8 +1988,25 @@ namespace
 				g.ctx->ClearRenderTargetView(g.rtv, dark);
 			}
 			const HRESULT hr_present = g.sc->Present(1, 0);
-			if (++frames == 1 || FAILED(hr_present))
+			if (++frames == 1 || hr_present != last_hr)
 				sys_log.notice("UWP: XAML frame %u, state %u, Present: 0x%08x", frames, static_cast<u32>(st), static_cast<u32>(hr_present));
+			if (hr_present == DXGI_ERROR_DEVICE_REMOVED || hr_present == DXGI_ERROR_DEVICE_RESET)
+			{
+				// A lost device fails Present at once: without this the thread spun and logged every call
+				// (170000+ lines in a second of a 50 Cent crash log). Once, the reason (hung, reset, driver error).
+				// Logged as the fatal error: the whole adapter is gone, and RSX dies a few ms later with a
+				// misleading Vulkan "out of video/host memory" (50 Cent, SAW 2, PS Home on .75-.77).
+				if (hr_present != last_hr)
+				{
+					const HRESULT reason = g.dev->GetDeviceRemovedReason();
+					sys_log.fatal("UWP: the GPU device was lost (%s, 0x%08x)",
+						reason == DXGI_ERROR_DEVICE_HUNG ? "device hung" : reason == DXGI_ERROR_DEVICE_RESET ? "device reset" :
+						reason == DXGI_ERROR_DRIVER_INTERNAL_ERROR ? "driver internal error" : reason == DXGI_ERROR_DEVICE_REMOVED ? "device removed" :
+						reason == DXGI_ERROR_INVALID_CALL ? "invalid call" : "other", static_cast<u32>(reason));
+				}
+				Sleep(100);
+			}
+			last_hr = hr_present;
 		}
 		return 0;
 	}
