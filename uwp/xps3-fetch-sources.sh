@@ -72,4 +72,10 @@ fetch_locked \
     refs/tags/v1.4.335 \
     2fa203425eb4af9dfc6b03f97ef72b0b5bcb8350
 
+fetch_locked \
+    msix-packaging \
+    https://github.com/microsoft/msix-packaging.git \
+    refs/heads/master \
+    25a65f5c1690930813bcc10cdf1d59fa865f2bb1
+
 echo "XPS3_SOURCE_FETCH=PASS"
