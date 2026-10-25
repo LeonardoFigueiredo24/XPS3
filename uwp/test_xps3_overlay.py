@@ -98,6 +98,18 @@ def main() -> int:
             "120 FPS compatibility warning missing")
     checks.append("upstream_0_1_35_integration")
 
+    release_script = (ROOT / "uwp" / "xps3-docker-release.sh").read_text(encoding="utf-8")
+    package_script = (ROOT / "uwp" / "xps3-docker-package.sh").read_text(encoding="utf-8")
+    for phase in ("xps3-fetch-sources.sh", "xps3-fetch-packages.sh",
+                  "xps3-docker-build-ffmpeg.sh", "xps3-configure-build.sh",
+                  "xps3-docker-build-mesa.sh", "xps3-docker-build-msix.sh",
+                  "xps3-docker-package.sh"):
+        require(phase in release_script, f"release phase missing: {phase}")
+    require("CN=XPS3Development" in package_script, "own development certificate subject missing")
+    require("Microsoft.UI.Xaml.2.8.appx" in package_script, "XAML framework dependency not staged")
+    require("checksums.sha256" in package_script, "release checksum generation missing")
+    checks.append("release_pipeline")
+
     print(json.dumps({"result": "PASS", "checks": checks}, indent=2))
     return 0
 

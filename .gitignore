@@ -131,6 +131,7 @@ CMakeUserPresets.json
 __pycache__/
 *.pyc
 /build-xps3-*
+/dist/
 
 # claude
 CLAUDE.md
