@@ -5,6 +5,13 @@ XPS3 experimental RPCS3-UWP integration
 > narrowly scoped XPS3 overlay. See [XPS3_INTEGRATION.md](XPS3_INTEGRATION.md) for provenance,
 > privacy changes and the current evidence boundary. It is not yet an XPS3 gameplay release.
 
+![XPS3 Cell Horizon library concept](docs/images/xps3-cell-horizon-library-preview.png)
+
+> **Visual concept, not an Xbox capture.** The implemented XAML follows this Cell Horizon direction,
+> but only a package running on the target console can provide final screenshots. Current XPS3-specific
+> status and evidence are tracked in [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md), while inherited
+> RPCS3-Xbox results below remain reference data and are not automatically XPS3 test results.
+
 RPCS3 for Xbox (UWP) — imported base documentation
 ===================================================
 
