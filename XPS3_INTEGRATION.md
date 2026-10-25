@@ -43,6 +43,10 @@ python3 uwp/test_xps3_overlay.py
 The test rejects inherited package identity/publisher/executable names, compiled telemetry/update
 sources, inherited external endpoints, the old USB root and foreign author-logo packaging.
 
+External source inputs are pinned in `uwp/XPS3_SOURCE_LOCK.md` and fetched with
+`uwp/xps3-fetch-sources.sh`. A source checkout is accepted only when its resolved commit matches
+the recorded hash.
+
 After FFmpeg and LLVM have been cross-built and Vulkan headers are available, the XPS3 targets are
 configured and built with:
 
