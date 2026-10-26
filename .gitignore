@@ -132,6 +132,9 @@ __pycache__/
 *.pyc
 /build-xps3-*
 /dist/
+/.ci-build/
+/.ci-toolchain-cache/
+/.ci-zig-cache/
 
 # claude
 CLAUDE.md

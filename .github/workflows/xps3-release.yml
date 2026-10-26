@@ -1,0 +1,113 @@
+name: XPS3 UWP release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - xps3/uwp-integration
+    paths:
+      - ".github/workflows/xps3-release.yml"
+      - "3rdparty/**"
+      - "CMakeLists.txt"
+      - "Utilities/**"
+      - "rpcs3/**"
+      - "uwp/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xps3-uwp-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build signed development APPX
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Check out XPS3 and submodules
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Verify XPS3 integration
+        run: python3 -B uwp/test_xps3_overlay.py
+
+      - name: Restore cross-build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .ci-build/llvm-install
+            .ci-build/llvm-native-lfs
+            .ci-build/llvm-cross-lfs
+            .ci-build/ffmpeg-build
+            .ci-build/ffmpeg-install
+            .ci-build/sources
+            .ci-build/packages
+            .ci-toolchain-cache
+            .ci-zig-cache
+          key: xps3-uwp-${{ runner.os }}-${{ hashFiles('uwp/toolchain/**', 'uwp/xps3-docker-*.sh', 'uwp/xps3-fetch-*.sh', '3rdparty/llvm/llvm/llvm/CMakeLists.txt') }}
+          restore-keys: |
+            xps3-uwp-${{ runner.os }}-
+
+      - name: Prepare writable build directories
+        run: |
+          mkdir -p .ci-build .ci-toolchain-cache .ci-zig-cache dist
+          chmod -R u+rwX .ci-build .ci-toolchain-cache .ci-zig-cache dist
+
+      - name: Build reproducible UWP toolchain image
+        run: docker build --tag xps3-uwp-builder:ci --file uwp/toolchain/Dockerfile.xps3-uwp .
+
+      - name: Compile, package, sign, and validate XPS3
+        run: |
+          docker run --rm \
+            --env XPS3_JOBS=2 \
+            --env XPS3_BUILD_ROOT=/build \
+            --env XPS3_SOURCE_ROOT=/src \
+            --volume "$GITHUB_WORKSPACE:/src" \
+            --volume "$GITHUB_WORKSPACE/.ci-build:/build" \
+            --volume "$GITHUB_WORKSPACE/.ci-toolchain-cache:/xps3-cache" \
+            --volume "$GITHUB_WORKSPACE/.ci-zig-cache:/root/.cache/zig" \
+            xps3-uwp-builder:ci \
+            bash -o pipefail -lc '
+              chmod +x /src/uwp/*.sh /src/uwp/toolchain/*.sh
+              /src/uwp/xps3-docker-build-llvm.sh 2>&1 | tee /build/xps3-llvm-build.log
+              /src/uwp/xps3-docker-release.sh 2>&1 | tee /build/xps3-release-build.log
+            '
+
+      - name: Verify release payload
+        shell: bash
+        run: |
+          test -s dist/XPS3_0.3.2.0_x64.appx
+          test -s dist/Dependencies/x64/Microsoft.UI.Xaml.2.8.appx
+          test -s dist/XPS3.Development.cer
+          test -s dist/checksums.sha256
+          (cd dist && sha256sum --check checksums.sha256)
+
+      - name: Upload installation bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: XPS3-0.3.2.0-x64-devmode
+          path: dist/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Upload build evidence on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: XPS3-0.3.2.0-build-evidence
+          path: |
+            .ci-build/evidence/
+            .ci-build/xps3-llvm-build.log
+            .ci-build/xps3-release-build.log
+            .ci-build/app-build/xps3-cmake-configure.log
+            .ci-build/app-build/xps3-ninja-build.log
+            .ci-build/mesa-build/meson-logs/
+          if-no-files-found: ignore
+          retention-days: 14
