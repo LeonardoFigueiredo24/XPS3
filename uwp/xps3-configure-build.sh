@@ -26,7 +26,7 @@ for path in "$ffmpeg_lib" "$llvm_cmake" "$vulkan_include"; do
     [ -d "$path" ] || { echo "missing dependency directory: $path" >&2; exit 4; }
 done
 
-mkdir -p "$(dirname "$evidence")"
+mkdir -p "$build" "$(dirname "$evidence")"
 submodules=$(git -C "$root" submodule status --recursive)
 if printf '%s\n' "$submodules" | grep -Eq '^[-+U]'; then
     echo "submodule checkout is incomplete or differs from the recorded gitlink" >&2
