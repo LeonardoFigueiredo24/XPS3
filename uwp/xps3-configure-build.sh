@@ -42,7 +42,8 @@ fi
     echo "submodule_status_end"
 } >"$evidence"
 
-cmake -S "$root" -B "$build" -G Ninja \
+configure_log="$build/xps3-cmake-configure.log"
+if ! cmake -S "$root" -B "$build" -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE="$root/uwp/toolchain/toolchain-uwp.cmake" \
     -DCMAKE_BUILD_TYPE=Release \
     -DRPCS3_UWP=ON \
@@ -63,7 +64,26 @@ cmake -S "$root" -B "$build" -G Ninja \
     -DUSE_SYSTEM_OPENCV=OFF \
     -DUSE_DISCORD_RPC=OFF \
     -DUSE_GAMEMODE=OFF \
-    -DUSE_LIBEVDEV=OFF 2>&1 | tee -a "$evidence"
+    -DUSE_LIBEVDEV=OFF >"$configure_log" 2>&1; then
+    tee -a "$evidence" <"$configure_log"
+    exit 6
+fi
+tee -a "$evidence" <"$configure_log"
 
-ninja -j "$jobs" -C "$build" xps3_uwp xps3_uwp_importcheck 2>&1 | tee -a "$evidence"
+# The source checkout is shared with Windows and can contain CRLF line endings. libpng executes
+# generated awk/DFA inputs inside the Linux builder, where a trailing carriage return corrupts
+# tokens (for example "com\r"). Normalize only the generated build-tree copies so the verified
+# source checkout remains untouched.
+png_scripts="$build/3rdparty/libpng/libpng/scripts"
+if [ -d "$png_scripts" ]; then
+    find "$png_scripts" -type f \( -name '*.awk' -o -name '*.dfa' -o -name '*.dfn' -o -name '*.cmake' \) \
+        -exec sed -i 's/\r$//' {} +
+fi
+
+build_log="$build/xps3-ninja-build.log"
+if ! ninja -j "$jobs" -C "$build" xps3_uwp xps3_uwp_importcheck >"$build_log" 2>&1; then
+    tee -a "$evidence" <"$build_log"
+    exit 7
+fi
+tee -a "$evidence" <"$build_log"
 echo "xps3_build_finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$evidence"
