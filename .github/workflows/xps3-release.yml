@@ -47,11 +47,12 @@ jobs:
             .ci-build/llvm-cross-lfs
             .ci-build/ffmpeg-build
             .ci-build/ffmpeg-install
+            .ci-build/app-build
             .ci-build/sources
             .ci-build/packages
             .ci-toolchain-cache
             .ci-zig-cache
-          key: xps3-uwp-${{ runner.os }}-${{ hashFiles('uwp/toolchain/**', 'uwp/xps3-docker-*.sh', 'uwp/xps3-fetch-*.sh', '3rdparty/llvm/llvm/llvm/CMakeLists.txt') }}
+          key: xps3-uwp-${{ runner.os }}-${{ hashFiles('uwp/toolchain/build-llvm.sh', 'uwp/toolchain/build-ffmpeg.sh', 'uwp/xps3-docker-build-llvm.sh', 'uwp/xps3-docker-build-ffmpeg.sh', '3rdparty/llvm/llvm/llvm/CMakeLists.txt', '3rdparty/ffmpeg/configure') }}
           restore-keys: |
             xps3-uwp-${{ runner.os }}-
 
@@ -123,8 +124,9 @@ jobs:
             .ci-build/llvm-cross-lfs
             .ci-build/ffmpeg-build
             .ci-build/ffmpeg-install
+            .ci-build/app-build
             .ci-build/sources
             .ci-build/packages
             .ci-toolchain-cache
             .ci-zig-cache
-          key: xps3-uwp-${{ runner.os }}-${{ hashFiles('uwp/toolchain/**', 'uwp/xps3-docker-*.sh', 'uwp/xps3-fetch-*.sh', '3rdparty/llvm/llvm/llvm/CMakeLists.txt') }}
+          key: xps3-uwp-${{ runner.os }}-${{ hashFiles('uwp/toolchain/build-llvm.sh', 'uwp/toolchain/build-ffmpeg.sh', 'uwp/xps3-docker-build-llvm.sh', 'uwp/xps3-docker-build-ffmpeg.sh', '3rdparty/llvm/llvm/llvm/CMakeLists.txt', '3rdparty/ffmpeg/configure') }}

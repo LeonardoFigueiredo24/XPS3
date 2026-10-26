@@ -4,8 +4,17 @@ set(CMAKE_SYSTEM_NAME Windows)
 set(CMAKE_SYSTEM_PROCESSOR AMD64)
 set(CMAKE_C_COMPILER ${CMAKE_CURRENT_LIST_DIR}/zig-cc)
 set(CMAKE_CXX_COMPILER ${CMAKE_CURRENT_LIST_DIR}/zig-c++)
-set(CMAKE_AR ${CMAKE_CURRENT_LIST_DIR}/zig-ar)
-set(CMAKE_RANLIB ${CMAKE_CURRENT_LIST_DIR}/zig-ranlib)
+set(XPS3_ZIG_AR ${CMAKE_CURRENT_LIST_DIR}/zig-ar)
+set(XPS3_ZIG_RANLIB ${CMAKE_CURRENT_LIST_DIR}/zig-ranlib)
+set(CMAKE_AR ${XPS3_ZIG_AR} CACHE FILEPATH "Zig archive tool" FORCE)
+set(CMAKE_RANLIB ${XPS3_ZIG_RANLIB} CACHE FILEPATH "Zig archive index tool" FORCE)
+# CMake's Clang platform modules prefer the language-specific variables when
+# they build static C/C++ libraries. Set them explicitly so cross compilation
+# never falls back to CMAKE_CXX_COMPILER_AR-NOTFOUND.
+set(CMAKE_C_COMPILER_AR ${XPS3_ZIG_AR} CACHE FILEPATH "Zig C archive tool" FORCE)
+set(CMAKE_CXX_COMPILER_AR ${XPS3_ZIG_AR} CACHE FILEPATH "Zig C++ archive tool" FORCE)
+set(CMAKE_C_COMPILER_RANLIB ${XPS3_ZIG_RANLIB} CACHE FILEPATH "Zig C archive index tool" FORCE)
+set(CMAKE_CXX_COMPILER_RANLIB ${XPS3_ZIG_RANLIB} CACHE FILEPATH "Zig C++ archive index tool" FORCE)
 find_program(CMAKE_RC_COMPILER NAMES llvm-windres llvm-windres-18 llvm-windres-19 llvm-windres-20)
 execute_process(COMMAND python3 -c "import ziglang, os; print(os.path.dirname(ziglang.__file__))"
     OUTPUT_VARIABLE ZIG_DIR OUTPUT_STRIP_TRAILING_WHITESPACE)
