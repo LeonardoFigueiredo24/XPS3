@@ -31,9 +31,11 @@ RUN apt-get update \
 RUN python3 -m venv /opt/xps3-tools \
     && /opt/xps3-tools/bin/pip install --no-cache-dir \
         cmake \
+        mako \
         meson \
         ninja \
         packaging \
+        pyyaml \
         ziglang
 
 ENV PATH=/opt/xps3-tools/bin:${PATH}
