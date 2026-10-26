@@ -135,6 +135,7 @@ __pycache__/
 /.ci-build/
 /.ci-toolchain-cache/
 /.ci-zig-cache/
+/.github-evidence/
 
 # claude
 CLAUDE.md

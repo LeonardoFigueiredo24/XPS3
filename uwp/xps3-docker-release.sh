@@ -6,6 +6,12 @@ root=${XPS3_SOURCE_ROOT:-/src}
 state=${XPS3_BUILD_ROOT:-/build}
 export XPS3_JOBS=${XPS3_JOBS:-1}
 
+# GitHub Actions bind-mounts the checkout with a host UID that differs from the
+# container user. Trust only the explicitly configured source root so version
+# discovery can read the repository without disabling Git's ownership checks
+# globally.
+git config --global --add safe.directory "$root"
+
 [ -f "$state/llvm-install/lib/cmake/llvm/LLVMConfig.cmake" ] || {
     echo "LLVM is not complete; run xps3-docker-build-llvm.sh first" >&2
     exit 1

@@ -38,7 +38,8 @@ jobs:
         run: python3 -B uwp/test_xps3_overlay.py
 
       - name: Restore cross-build cache
-        uses: actions/cache@v4
+        id: cross-build-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             .ci-build/llvm-install
@@ -111,3 +112,19 @@ jobs:
             .ci-build/mesa-build/meson-logs/
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Save cross-build cache
+        if: always() && steps.cross-build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .ci-build/llvm-install
+            .ci-build/llvm-native-lfs
+            .ci-build/llvm-cross-lfs
+            .ci-build/ffmpeg-build
+            .ci-build/ffmpeg-install
+            .ci-build/sources
+            .ci-build/packages
+            .ci-toolchain-cache
+            .ci-zig-cache
+          key: xps3-uwp-${{ runner.os }}-${{ hashFiles('uwp/toolchain/**', 'uwp/xps3-docker-*.sh', 'uwp/xps3-fetch-*.sh', '3rdparty/llvm/llvm/llvm/CMakeLists.txt') }}
