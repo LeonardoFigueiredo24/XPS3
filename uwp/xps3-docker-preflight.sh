@@ -23,6 +23,7 @@ done
 [ -n "$windres" ] || { echo "missing llvm-windres" >&2; exit 3; }
 
 python3 -m ziglang version
+python3 -c 'import packaging'
 cmake --version | sed -n '1p'
 ninja --version
 meson --version

@@ -33,6 +33,7 @@ RUN python3 -m venv /opt/xps3-tools \
         cmake \
         meson \
         ninja \
+        packaging \
         ziglang
 
 ENV PATH=/opt/xps3-tools/bin:${PATH}
