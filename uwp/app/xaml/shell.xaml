@@ -73,10 +73,10 @@
         </StackPanel>
       </Grid>
 
-      <Pivot x:Name="MenuPivot" Grid.Row="1" IsHeaderItemsCarouselEnabled="False" Margin="0,12,0,0">
+      <Pivot x:Name="MenuPivot" Grid.Row="1" IsHeaderItemsCarouselEnabled="False" Margin="0,22,0,0">
         <Pivot.HeaderTemplate>
           <DataTemplate>
-            <TextBlock Text="{Binding}" FontSize="17" FontWeight="SemiBold" CharacterSpacing="35"/>
+            <TextBlock Text="{Binding}" FontSize="19" FontWeight="SemiBold" CharacterSpacing="20"/>
           </DataTemplate>
         </Pivot.HeaderTemplate>
 
@@ -88,7 +88,7 @@
               <RowDefinition Height="190"/>
             </Grid.RowDefinitions>
 
-            <Border x:Name="DetailsPanel" Grid.Row="0" Margin="0,8,0,14" CornerRadius="16" BorderBrush="#44245CFF"
+            <Border x:Name="DetailsPanel" Grid.Row="0" Margin="0,8,0,14" CornerRadius="22" BorderBrush="#44245CFF"
                     BorderThickness="1" Visibility="Collapsed" MinHeight="250">
               <Border.Background>
                 <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
@@ -97,7 +97,7 @@
                   <GradientStop Color="#E72D1550" Offset="1"/>
                 </LinearGradientBrush>
               </Border.Background>
-              <Grid Padding="34,26">
+              <Grid Padding="42,34">
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="3*"/>
                   <ColumnDefinition Width="2*"/>
@@ -111,15 +111,15 @@
                 </Grid>
                 <StackPanel VerticalAlignment="Center" Margin="0,0,28,0">
                   <TextBlock Text="SELECIONADO" FontSize="11" FontWeight="SemiBold" Foreground="#FF42D7FF" CharacterSpacing="150"/>
-                  <TextBlock x:Name="DetailTitle" FontSize="34" FontWeight="SemiBold" TextWrapping="Wrap" MaxLines="2" Margin="0,8,0,13"/>
+                  <TextBlock x:Name="DetailTitle" FontSize="46" FontWeight="SemiBold" TextWrapping="Wrap" MaxLines="2" Margin="0,8,0,17"/>
                   <StackPanel Orientation="Horizontal">
                     <TextBlock x:Name="DetailId" FontSize="13" Foreground="#FFDDE5FF" Margin="0,0,18,0"/>
                     <TextBlock x:Name="DetailKind" FontSize="13" Foreground="#FF9BA7CA" Margin="0,0,18,0"/>
                     <TextBlock x:Name="DetailVersion" FontSize="13" Foreground="#FF9BA7CA"/>
                   </StackPanel>
                   <TextBlock x:Name="DetailSource" FontSize="11" Foreground="#FF7782A6" TextTrimming="CharacterEllipsis" Margin="0,7,0,0"/>
-                  <Border Background="#FF245CFF" CornerRadius="18" Padding="18,8" Margin="0,18,0,0" HorizontalAlignment="Left">
-                    <TextBlock FontSize="14" FontWeight="SemiBold">Ⓐ  Iniciar</TextBlock>
+                  <Border Background="#FFF4F6FF" CornerRadius="22" Padding="24,11" Margin="0,24,0,0" HorizontalAlignment="Left">
+                    <TextBlock FontSize="16" FontWeight="SemiBold" Foreground="#FF080B16">Ⓐ  Iniciar jogo</TextBlock>
                   </Border>
                 </StackPanel>
                 <Border Grid.Column="1" Width="300" Height="180" CornerRadius="12" Background="#88080B16"
@@ -140,8 +140,8 @@
             <TextBlock x:Name="GamesEmpty" Grid.RowSpan="3" Margin="0,30,0,0" FontSize="15" Foreground="#FF9BA7CA"
                        TextWrapping="Wrap" Visibility="Collapsed"/>
 
-            <Grid Grid.Row="1" Margin="0,0,0,8">
-              <TextBlock Text="Seus jogos" FontSize="20" FontWeight="SemiBold"/>
+            <Grid Grid.Row="1" Margin="0,0,0,10">
+              <TextBlock Text="Seus jogos" FontSize="24" FontWeight="SemiBold"/>
               <TextBlock Text="USB + armazenamento local" FontSize="12" Foreground="#FF7782A6" HorizontalAlignment="Right" VerticalAlignment="Center"/>
             </Grid>
             <ListView x:Name="GamesList" Grid.Row="2" SelectionMode="Single" IsItemClickEnabled="True"
@@ -177,13 +177,14 @@
           <ScrollViewer VerticalScrollBarVisibility="Auto">
             <Grid Margin="0,8,12,0">
               <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="240"/>
+                <ColumnDefinition Width="290"/>
                 <ColumnDefinition Width="*"/>
               </Grid.ColumnDefinitions>
-              <StackPanel Margin="0,8,30,0">
-                <TextBlock Text="AJUSTES REAIS" FontSize="11" FontWeight="SemiBold" Foreground="#FF42D7FF" CharacterSpacing="140"/>
-                <TextBlock Text="As alterações abaixo são fornecidas diretamente pelo núcleo integrado. Opções ainda não implementadas não são exibidas." FontSize="13" Foreground="#FF9BA7CA" TextWrapping="Wrap" Margin="0,12,0,0"/>
-                <Border Height="2" Background="#FF245CFF" Margin="0,22,70,0"/>
+              <StackPanel Margin="0,8,38,0">
+                <TextBlock Text="Configurações" FontSize="28" FontWeight="SemiBold"/>
+                <Border Height="2" Background="#FF42D7FF" Margin="0,18,90,18"/>
+                <TextBlock Text="Ajustes disponíveis" FontSize="17" FontWeight="SemiBold" Foreground="#FFDDE5FF"/>
+                <TextBlock Text="Alterações ligadas ao núcleo integrado. Use o controle para selecionar e alterar cada opção." FontSize="14" Foreground="#FF9BA7CA" TextWrapping="Wrap" Margin="0,12,0,0"/>
               </StackPanel>
               <StackPanel x:Name="SettingsStack" Grid.Column="1"/>
             </Grid>
@@ -280,12 +281,12 @@
   <!-- In-game pause menu (hold View + Menu). -->
   <Grid x:Name="PauseLayer" Visibility="Collapsed">
     <Rectangle Fill="#99000000"/>
-    <Border Background="#F2171D32" BorderBrush="#663FD9FF" BorderThickness="1" CornerRadius="14"
-            HorizontalAlignment="Center" VerticalAlignment="Center" Padding="24" Width="560">
-      <ScrollViewer x:Name="PauseScroll" MaxHeight="460" VerticalScrollBarVisibility="Auto">
+    <Border Background="#F2171D32" BorderBrush="#663FD9FF" BorderThickness="1" CornerRadius="22"
+            HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,40,64,40" Padding="30" Width="560">
+      <ScrollViewer x:Name="PauseScroll" MaxHeight="610" VerticalScrollBarVisibility="Auto">
         <StackPanel>
           <TextBlock FontSize="11" FontWeight="SemiBold" Foreground="#FF42D7FF" CharacterSpacing="150">EMULAÇÃO</TextBlock>
-          <TextBlock FontSize="24" FontWeight="SemiBold" Margin="0,5,0,18">Jogo pausado</TextBlock>
+          <TextBlock FontSize="30" FontWeight="SemiBold" Margin="0,5,0,24">Menu rápido</TextBlock>
           <Button x:Name="PauseResume" Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Content="Continuar jogo" Margin="0,0,0,8"/>
           <Button x:Name="PauseStop" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Content="Encerrar e voltar à biblioteca" Margin="0,0,0,16"/>
           <TextBlock FontSize="14" Foreground="#FF9BA7CA" TextWrapping="Wrap" Margin="0,0,0,6">Somente ajustes com aplicação imediata aparecem aqui. Os demais entram em vigor na próxima inicialização.</TextBlock>

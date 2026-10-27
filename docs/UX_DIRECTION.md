@@ -24,8 +24,10 @@ The signature element is an abstract Cell horizon assembled from XAML circles an
 
 - The header separates XPS3 identity from build and firmware status.
 - The library gives the selected real game a cinematic hero panel and uses a horizontal controller-friendly rail.
+- The selected game's title and actual metadata have clear priority. The light action pill is a visual cue for the existing A-button boot action; it is not a separate unimplemented feature.
 - Install uses the same surfaces and displays only files found through the storage implementation.
-- Settings lists only real core-backed values. A note explicitly explains this constraint.
+- Settings uses a left explanation rail and a wide control column, following the television-friendly rhythm in the supplied references. It lists only real core-backed values; categories and switches are added only when their behavior is wired up.
+- The in-game pause panel sits on the right, preserving a view of the game frame and the existing resume, stop and immediate-setting actions.
 - Dialog, loading, pause and error layers share the same surface, focus and status colours.
 - Controller hints stay in the bottom-right safe area and use Xbox button semantics.
 
@@ -35,6 +37,7 @@ The signature element is an abstract Cell horizon assembled from XAML circles an
 - Text sizes target viewing at television distance, while the 64 px outer margin preserves overscan safety.
 - Cobalt focus/action, cyan information, amber warning and red error have distinct semantic roles.
 - The horizontal library keeps the selected item and adjacent choices visible without shrinking titles.
+- The supplied screenshots are visual references only. Their game art, branding, fictional library entries, frame rates and controls are not XPS3 test evidence and are not bundled with the app.
 
 ## 120 Hz policy
 
