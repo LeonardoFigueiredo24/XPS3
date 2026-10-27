@@ -108,6 +108,8 @@ def main() -> int:
     require("CN=XPS3Development" in package_script, "own development certificate subject missing")
     require("Microsoft.UI.Xaml.2.8.appx" in package_script, "XAML framework dependency not staged")
     require("checksums.sha256" in package_script, "release checksum generation missing")
+    require('chmod -R a+rX "$dist"' in package_script,
+            "Docker release payload is not made readable by the host runner")
     checks.append("release_pipeline")
 
     print(json.dumps({"result": "PASS", "checks": checks}, indent=2))

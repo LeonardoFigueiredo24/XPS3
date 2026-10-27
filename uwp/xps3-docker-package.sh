@@ -52,12 +52,17 @@ cat >"$dist/INSTALL.md" <<EOF
 Status: experimental RPCS3-based port. This package does not claim universal game compatibility.
 
 1. Keep the Xbox application type set to **Game** for the 5 GiB resource budget.
-2. In Xbox Device Portal, install `Dependencies/x64/Microsoft.UI.Xaml.2.8.appx` as a dependency if it is not already installed.
-3. Add `XPS3_${version}_x64.appx`. If the portal requests a certificate, provide `XPS3.Development.cer`.
+2. In Xbox Device Portal, install Dependencies/x64/Microsoft.UI.Xaml.2.8.appx as a dependency if it is not already installed.
+3. Add XPS3_${version}_x64.appx. If the portal requests a certificate, provide XPS3.Development.cer.
 4. Install legitimate PS3 firmware through the XPS3 Install tab. Firmware and games are not included.
 5. Use Auto frame limit first. 120 requires a compatible title or patch, a 120 Hz Xbox output and measured headroom.
 EOF
 
 (cd "$dist" && sha256sum "XPS3_${version}_x64.appx" XPS3.Development.cer \
     Dependencies/x64/Microsoft.UI.Xaml.2.8.appx >checksums.sha256)
+# The Docker container runs as root while dist is a bind mount owned by the
+# GitHub runner.  Make the release payload readable by the host-side
+# verification and artifact-upload steps.  The PFX and its password remain in
+# the private build-state volume and are deliberately not copied to dist.
+chmod -R a+rX "$dist"
 echo "XPS3_RELEASE=$out"
