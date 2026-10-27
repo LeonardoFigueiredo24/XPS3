@@ -27,7 +27,7 @@ def main() -> int:
     require(identity is not None, "manifest Identity missing")
     require(identity.attrib["Name"] == "XPS3.Experimental.Emulator", "foreign package identity")
     require(identity.attrib["Publisher"] == "CN=XPS3Development", "foreign publisher")
-    require(identity.attrib["Version"] == "0.3.2.0", "unexpected package version after Cell Horizon UI update")
+    require(identity.attrib["Version"] == "0.3.3.0", "unexpected package version after Cell Horizon UI update")
     require(identity.attrib["ProcessorArchitecture"] == "x64", "Xbox target must be x64")
     apps = manifest.findall("f:Applications/f:Application", ns)
     require([a.attrib["Executable"] for a in apps] ==

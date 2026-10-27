@@ -1,19 +1,69 @@
-XPS3 experimental RPCS3-UWP integration
-========================================
+XPS3 — PlayStation 3 experimental emulator for Xbox
+====================================================
 
-> This `xps3/uwp-integration` branch preserves the complete RPCS3/RPCS3-Xbox history and adds a
-> narrowly scoped XPS3 overlay. See [XPS3_INTEGRATION.md](XPS3_INTEGRATION.md) for provenance,
-> privacy changes and the current evidence boundary. It is not yet an XPS3 gameplay release.
+[![XPS3 UWP release](https://github.com/LeonardoFigueiredo24/XPS3/actions/workflows/xps3-release.yml/badge.svg)](https://github.com/LeonardoFigueiredo24/XPS3/actions/workflows/xps3-release.yml)
+[![Latest release](https://img.shields.io/github/v/release/LeonardoFigueiredo24/XPS3?label=download)](https://github.com/LeonardoFigueiredo24/XPS3/releases/latest)
+[![License: GPL-2.0](https://img.shields.io/badge/license-GPL--2.0-blue.svg)](LICENSE)
 
-![XPS3 Cell Horizon library concept](docs/images/xps3-cell-horizon-library-preview.png)
+XPS3 is an experimental RPCS3-derived UWP port for Xbox Series X|S in Developer Mode. The project
+keeps the RPCS3/RPCS3-Xbox history and adds its own package identity, television interface, build
+pipeline and evidence boundary. Firmware, games and copyrighted cover art are not distributed.
 
-> **Visual concept, not an Xbox capture.** The implemented XAML follows this Cell Horizon direction,
-> but only a package running on the target console can provide final screenshots. Current XPS3-specific
-> status and evidence are tracked in [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md), while inherited
-> RPCS3-Xbox results below remain reference data and are not automatically XPS3 test results.
+## Download
 
-RPCS3 for Xbox (UWP) — imported base documentation
-===================================================
+Installable versions are published on the [Releases page](https://github.com/LeonardoFigueiredo24/XPS3/releases).
+Each release contains the XPS3 APPX, Microsoft.UI.Xaml dependency, development certificate,
+checksums, installation instructions and matching source code. See [docs/RELEASES.md](docs/RELEASES.md)
+for the publication process.
+
+> XPS3 is under active development. A successful build proves that the package was compiled and
+> validated; it does not prove that a specific PS3 game works on Xbox. Compatibility is recorded
+> only from an identifiable XPS3 build tested on the target console.
+
+## Cell Horizon interface
+
+![XPS3 library concept](docs/images/xps3-cell-horizon-library-preview.png)
+
+![XPS3 interface gallery](docs/images/xps3-interface-gallery.png)
+
+The interface has three controller-friendly tabs: **Biblioteca**, **Instalar** and **Configurações**,
+plus a lateral in-game quick menu. The library displays only content found by the emulator, and the
+settings page displays only controls connected to the integrated core. The images above are visual
+previews, not Xbox captures or compatibility evidence. See [docs/UX_DIRECTION.md](docs/UX_DIRECTION.md).
+
+## Current XPS3 status
+
+| Area | Status |
+| --- | --- |
+| Xbox UWP probe | JIT, D3D12, controller and 5 GiB Game allocation tested on the user's Series S |
+| RPCS3/RPCS3-Xbox core | Integrated; ongoing adaptation and validation |
+| Cell Horizon frontend | Implemented in source; 0.3.3.0 console validation pending |
+| Installable package | Published only after the tagged workflow compiles, signs and validates it |
+| Commercial games | No title is classified as working in XPS3 without versioned Xbox evidence |
+
+Detailed evidence is maintained in [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md). The next hardware
+test sequence is in [docs/XBOX_TEST_PLAN.md](docs/XBOX_TEST_PLAN.md).
+
+## Install on Xbox Developer Mode
+
+1. Download the APPX and `Microsoft.UI.Xaml.2.8.appx` from the same XPS3 release.
+2. In Xbox Device Portal, select the XPS3 APPX and add Microsoft.UI.Xaml as a dependency.
+3. In Dev Home, open the XPS3 details and set **App type: Game** to use the Game memory budget.
+4. Start XPS3 and follow the version-specific test plan. Supply only legally obtained firmware and games.
+
+See the release's `INSTALL.md` for complete instructions.
+
+## Source, credits and evidence
+
+See [XPS3_INTEGRATION.md](XPS3_INTEGRATION.md) for provenance, privacy changes and the integration
+boundary. The complete project remains GPL-2.0-compatible and preserves upstream credits.
+
+RPCS3 for Xbox (UWP) — imported upstream reference
+====================================================
+
+> The section below is preserved from the imported base for engineering reference. Its game results,
+> branding, telemetry service and release instructions describe that upstream project. They are not
+> automatically XPS3 results or XPS3 services. Use the XPS3 sections above for downloads and status.
 
 > **Proof of concept.** This is an unofficial, experimental port of the [RPCS3](https://rpcs3.net)
 > PlayStation 3 emulator to Xbox Series X|S as a UWP app (Developer Mode). It is **not** supported by

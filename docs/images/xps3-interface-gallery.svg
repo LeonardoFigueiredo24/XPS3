@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#080b16"/><stop offset=".58" stop-color="#101936"/><stop offset="1" stop-color="#17102d"/></linearGradient>
+    <linearGradient id="hero" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#182143"/><stop offset=".6" stop-color="#1b2a5c"/><stop offset="1" stop-color="#2d1550"/></linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <style>
+      .title{font:600 28px 'Segoe UI',sans-serif;fill:#f4f6ff}.h{font:600 19px 'Segoe UI',sans-serif;fill:#f4f6ff}.body{font:15px 'Segoe UI',sans-serif;fill:#dbe4ff}.dim{font:13px 'Segoe UI',sans-serif;fill:#9ba7ca}.tiny{font:11px 'Segoe UI',sans-serif;fill:#9ba7ca;letter-spacing:2px}.accent{fill:#42d7ff}.card{fill:#171d32;stroke:#394671;stroke-width:1}.focus{fill:#171d32;stroke:#42d7ff;stroke-width:2}.pill{fill:#f4f6ff}.dark{fill:#080b16}.line{stroke:#245cff;stroke-width:2}.panel{fill:url(#bg);stroke:#28345c;stroke-width:2}
+    </style>
+  </defs>
+  <rect width="1600" height="1000" fill="#050711"/>
+  <text x="55" y="52" class="title">XPS3 · Cell Horizon</text>
+  <text x="1545" y="49" class="tiny" text-anchor="end">PRÉVIA VISUAL · DADOS ILUSTRATIVOS</text>
+
+  <!-- Biblioteca -->
+  <g transform="translate(55 82)">
+    <rect width="720" height="390" rx="22" class="panel"/>
+    <circle cx="640" cy="-10" r="160" fill="none" stroke="#245cff" opacity=".45"/>
+    <path d="M430 110L720 25" class="line" opacity=".7"/>
+    <text x="28" y="40" class="h">XPS3</text><text x="692" y="38" class="tiny" text-anchor="end">BUILD 0.3.3.0</text>
+    <text x="28" y="76" class="body">Biblioteca</text><text x="139" y="76" class="dim">Instalar</text><text x="220" y="76" class="dim">Configurações</text>
+    <rect x="27" y="91" width="666" height="166" rx="16" fill="url(#hero)" stroke="#394671"/>
+    <text x="55" y="130" class="tiny accent">JOGO SELECIONADO</text>
+    <text x="55" y="174" class="title">Título detectado</text>
+    <text x="55" y="201" class="dim">ID do título · Formato · Versão</text>
+    <rect x="55" y="218" width="145" height="34" rx="17" class="pill"/><text x="127" y="240" class="body dark" text-anchor="middle">Ⓐ Iniciar jogo</text>
+    <text x="28" y="287" class="h">Seus jogos</text>
+    <rect x="28" y="304" width="152" height="62" rx="11" class="focus"/><rect x="192" y="304" width="152" height="62" rx="11" class="card"/><rect x="356" y="304" width="152" height="62" rx="11" class="card"/><rect x="520" y="304" width="152" height="62" rx="11" class="card"/>
+    <text x="104" y="340" class="dim" text-anchor="middle">conteúdo real</text><text x="268" y="340" class="dim" text-anchor="middle">USB</text><text x="432" y="340" class="dim" text-anchor="middle">local</text><text x="596" y="340" class="dim" text-anchor="middle">homebrew</text>
+  </g>
+
+  <!-- Instalar -->
+  <g transform="translate(825 82)">
+    <rect width="720" height="390" rx="22" class="panel"/>
+    <text x="28" y="40" class="h">XPS3</text><text x="692" y="38" class="tiny" text-anchor="end">FIRMWARE NÃO INSTALADO</text>
+    <text x="28" y="76" class="dim">Biblioteca</text><text x="139" y="76" class="body">Instalar</text><text x="220" y="76" class="dim">Configurações</text>
+    <rect x="28" y="95" width="664" height="108" rx="16" class="card"/>
+    <text x="52" y="130" class="title">Instalação e conteúdo</text>
+    <text x="52" y="158" class="dim">Firmware legítimo, pacotes e licenças encontrados.</text>
+    <rect x="502" y="119" width="165" height="28" rx="14" fill="#1e2d63"/><text x="584" y="138" class="dim" text-anchor="middle">USB + local</text>
+    <rect x="28" y="222" width="664" height="56" rx="12" class="focus"/><text x="50" y="249" class="h">PS3UPDAT.PUP</text><text x="50" y="267" class="tiny">FIRMWARE · CAMINHO REAL</text><text x="665" y="254" class="body" text-anchor="end">Ⓐ Abrir</text>
+    <rect x="28" y="291" width="664" height="56" rx="12" class="card"/><text x="50" y="324" class="dim">Pacotes e licenças aparecem após a varredura</text>
+  </g>
+
+  <!-- Configurações -->
+  <g transform="translate(55 522)">
+    <rect width="720" height="390" rx="22" class="panel"/>
+    <text x="28" y="42" class="title">Configurações</text>
+    <line x1="205" y1="70" x2="205" y2="355" stroke="#394671"/>
+    <text x="28" y="94" class="h">Ajustes disponíveis</text><text x="28" y="124" class="dim">Somente opções ligadas</text><text x="28" y="144" class="dim">ao núcleo integrado.</text>
+    <rect x="235" y="74" width="445" height="65" rx="12" class="focus"/><text x="255" y="101" class="h">Escala de resolução</text><text x="255" y="122" class="dim">Resolução interna baseada em 720p</text><text x="655" y="112" class="body" text-anchor="end">100%⌄</text>
+    <rect x="235" y="151" width="445" height="65" rx="12" class="card"/><text x="255" y="178" class="h">Limite de quadros</text><text x="255" y="199" class="dim">Automático acompanha o jogo</text><text x="655" y="189" class="body" text-anchor="end">Auto⌄</text>
+    <rect x="235" y="228" width="445" height="65" rx="12" class="card"/><text x="255" y="255" class="h">Sincronização vertical</text><text x="255" y="276" class="dim">Aplica no próximo início</text><rect x="601" y="247" width="55" height="25" rx="13" fill="#245cff"/><circle cx="643" cy="259.5" r="9" fill="#fff"/>
+    <rect x="235" y="305" width="445" height="45" rx="12" class="card"/><text x="255" y="333" class="body">Mais ajustes do núcleo</text>
+  </g>
+
+  <!-- Menu rápido -->
+  <g transform="translate(825 522)">
+    <rect width="720" height="390" rx="22" class="panel"/>
+    <text x="35" y="63" class="tiny">EMULAÇÃO PAUSADA</text><text x="35" y="105" class="title">Jogo em execução</text><text x="35" y="132" class="dim">O quadro do jogo permanece visível.</text>
+    <rect x="322" y="32" width="366" height="325" rx="20" fill="#e8171d32" stroke="#394671"/>
+    <text x="350" y="75" class="title">Menu rápido</text>
+    <rect x="348" y="96" width="314" height="48" rx="14" class="pill"/><text x="370" y="126" class="body dark">▶ Continuar jogo</text>
+    <rect x="348" y="157" width="314" height="48" rx="14" class="card"/><text x="370" y="187" class="body">Encerrar e voltar à biblioteca</text>
+    <text x="350" y="232" class="dim">Ajustes com aplicação imediata</text>
+    <rect x="348" y="250" width="314" height="46" rx="12" class="card"/><text x="370" y="279" class="body">Sobreposição de desempenho</text>
+    <text x="662" y="334" class="tiny" text-anchor="end">Ⓐ SELECIONAR · Ⓑ VOLTAR</text>
+  </g>
+
+  <text x="800" y="965" class="dim" text-anchor="middle">Os jogos, caminhos, métricas e resultados exibidos pelo aplicativo vêm do núcleo e dos testes reais.</text>
+</svg>

@@ -1,4 +1,4 @@
-# Xbox Series S test plan for XPS3 0.3.2.0
+# Xbox Series S test plan for XPS3 0.3.3.0
 
 Run tests in Xbox Developer Mode with **App type: Game**. Keep the first run focused on infrastructure; do not begin with a heavy commercial title.
 

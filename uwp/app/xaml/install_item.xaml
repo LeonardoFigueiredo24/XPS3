@@ -1,9 +1,15 @@
 <ListViewItem xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
               HorizontalContentAlignment="Stretch" Padding="6" Margin="0,0,0,7">
-  <Border Background="#D9171D32" BorderBrush="#44394671" BorderThickness="1" CornerRadius="10" Padding="18,13">
-    <StackPanel>
-      <TextBlock FontSize="16" FontWeight="SemiBold" Foreground="#FFF4F6FF" TextTrimming="CharacterEllipsis" MaxLines="1">$TITLE$</TextBlock>
-      <TextBlock FontSize="12" Foreground="#FF9BA7CA" TextTrimming="CharacterEllipsis" MaxLines="1" Margin="0,4,0,0">$SUBTITLE$</TextBlock>
-    </StackPanel>
+  <Border Background="#D9171D32" BorderBrush="#44394671" BorderThickness="1" CornerRadius="12" Padding="20,15">
+    <Grid>
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <StackPanel>
+        <TextBlock FontSize="16" FontWeight="SemiBold" Foreground="#FFF4F6FF" TextTrimming="CharacterEllipsis" MaxLines="1">$TITLE$</TextBlock>
+        <TextBlock FontSize="12" Foreground="#FF9BA7CA" TextTrimming="CharacterEllipsis" MaxLines="1" Margin="0,4,0,0">$SUBTITLE$</TextBlock>
+      </StackPanel>
+      <Border Grid.Column="1" Background="#33245CFF" CornerRadius="14" Padding="12,6" VerticalAlignment="Center" Margin="20,0,0,0">
+        <TextBlock FontSize="12" Foreground="#FFDDE5FF">Ⓐ Abrir</TextBlock>
+      </Border>
+    </Grid>
   </Border>
 </ListViewItem>

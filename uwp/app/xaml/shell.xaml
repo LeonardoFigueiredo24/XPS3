@@ -160,8 +160,23 @@
               <RowDefinition Height="Auto"/>
               <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
-            <Border Background="#B3171D32" BorderBrush="#44245CFF" BorderThickness="1" CornerRadius="12" Padding="20" Margin="0,8,0,14">
-              <TextBlock FontSize="14" Foreground="#FFB9C3E2" TextWrapping="Wrap">Firmware legítimo (PS3UPDAT.PUP), pacotes (.pkg) e licenças (.rap) encontrados no armazenamento local ou em uma unidade USB autorizada.</TextBlock>
+            <Border Background="#B3171D32" BorderBrush="#44245CFF" BorderThickness="1" CornerRadius="18" Padding="28" Margin="0,8,0,18">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Margin="0,0,30,0">
+                  <TextBlock Text="Instalação e conteúdo" FontSize="28" FontWeight="SemiBold"/>
+                  <TextBlock FontSize="14" Foreground="#FFB9C3E2" TextWrapping="Wrap" Margin="0,10,0,0">Firmware legítimo (PS3UPDAT.PUP), pacotes (.pkg) e licenças (.rap) encontrados no armazenamento local ou em uma unidade USB autorizada.</TextBlock>
+                </StackPanel>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                  <Border Background="#33245CFF" BorderBrush="#663FD9FF" BorderThickness="1" CornerRadius="12" Padding="14,7" Margin="0,0,0,8">
+                    <TextBlock FontSize="12" Foreground="#FF9EC5FF">USB + armazenamento local</TextBlock>
+                  </Border>
+                  <TextBlock Text="Ⓐ selecionar   Ⓨ atualizar" FontSize="12" Foreground="#FF9BA7CA" HorizontalAlignment="Right"/>
+                </StackPanel>
+              </Grid>
             </Border>
             <StackPanel x:Name="InstallBusy" Grid.Row="1" Orientation="Horizontal" VerticalAlignment="Top">
               <ProgressRing IsActive="True" Width="28" Height="28" Margin="0,0,14,0" VerticalAlignment="Center"/>
