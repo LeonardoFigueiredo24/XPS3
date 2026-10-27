@@ -24,6 +24,7 @@ done
 
 python3 -m ziglang version
 python3 -c 'import mako, packaging, yaml'
+pkg-config --exists icu-uc
 cmake --version | sed -n '1p'
 ninja --version
 meson --version
