@@ -85,7 +85,7 @@
             <Grid.RowDefinitions>
               <RowDefinition Height="*"/>
               <RowDefinition Height="Auto"/>
-              <RowDefinition Height="190"/>
+              <RowDefinition Height="210"/>
             </Grid.RowDefinitions>
 
             <Border x:Name="DetailsPanel" Grid.Row="0" Margin="0,8,0,14" CornerRadius="22" BorderBrush="#44245CFF"
@@ -111,7 +111,7 @@
                 </Grid>
                 <StackPanel VerticalAlignment="Center" Margin="0,0,28,0">
                   <TextBlock Text="SELECIONADO" FontSize="11" FontWeight="SemiBold" Foreground="#FF42D7FF" CharacterSpacing="150"/>
-                  <TextBlock x:Name="DetailTitle" FontSize="46" FontWeight="SemiBold" TextWrapping="Wrap" MaxLines="2" Margin="0,8,0,17"/>
+                  <TextBlock x:Name="DetailTitle" FontSize="40" FontWeight="SemiBold" TextWrapping="WrapWholeWords" Margin="0,8,0,17"/>
                   <StackPanel Orientation="Horizontal">
                     <TextBlock x:Name="DetailId" FontSize="13" Foreground="#FFDDE5FF" Margin="0,0,18,0"/>
                     <TextBlock x:Name="DetailKind" FontSize="13" Foreground="#FF9BA7CA" Margin="0,0,18,0"/>
@@ -154,7 +154,7 @@
           </Grid>
         </PivotItem>
 
-        <PivotItem Header="Instalar" Margin="0">
+        <PivotItem Header="Adicionar e instalar" Margin="0">
           <Grid>
             <Grid.RowDefinitions>
               <RowDefinition Height="Auto"/>
@@ -167,8 +167,8 @@
                   <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Margin="0,0,30,0">
-                  <TextBlock Text="Instalação e conteúdo" FontSize="28" FontWeight="SemiBold"/>
-                  <TextBlock FontSize="14" Foreground="#FFB9C3E2" TextWrapping="Wrap" Margin="0,10,0,0">Firmware legítimo (PS3UPDAT.PUP), pacotes (.pkg) e licenças (.rap) encontrados no armazenamento local ou em uma unidade USB autorizada.</TextBlock>
+                  <TextBlock Text="Conteúdo de PlayStation 3" FontSize="28" FontWeight="SemiBold"/>
+                  <TextBlock FontSize="14" Foreground="#FFB9C3E2" TextWrapping="Wrap" Margin="0,10,0,0">Instale firmware legítimo (PS3UPDAT.PUP), pacotes (.pkg) e licenças (.rap), ou abra jogos em pasta PS3_GAME, imagens .iso e homebrew ELF/SELF encontrados no armazenamento local ou USB.</TextBlock>
                 </StackPanel>
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                   <Border Background="#33245CFF" BorderBrush="#663FD9FF" BorderThickness="1" CornerRadius="12" Padding="14,7" Margin="0,0,0,8">

@@ -1,6 +1,6 @@
 <ListViewItem xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
               xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-              Width="206" Height="174" HorizontalContentAlignment="Stretch" Padding="7" Margin="0,0,8,0">
+              Width="224" Height="194" HorizontalContentAlignment="Stretch" Padding="7" Margin="0,0,8,0">
   <Grid>
     <Grid.RowDefinitions>
       <RowDefinition Height="112"/>
@@ -13,7 +13,7 @@
       </Grid>
     </Border>
     <StackPanel Grid.Row="1" Margin="3,9,3,0">
-      <TextBlock FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxLines="1">$TITLE$</TextBlock>
+      <TextBlock FontSize="15" FontWeight="SemiBold" TextWrapping="WrapWholeWords" MaxLines="2">$TITLE$</TextBlock>
       <TextBlock FontSize="11" Foreground="#FF8591B4" TextTrimming="CharacterEllipsis" MaxLines="1" Margin="0,3,0,0">$SUBTITLE$</TextBlock>
     </StackPanel>
   </Grid>

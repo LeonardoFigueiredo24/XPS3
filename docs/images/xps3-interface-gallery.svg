@@ -16,7 +16,7 @@
     <rect width="720" height="390" rx="22" class="panel"/>
     <circle cx="640" cy="-10" r="160" fill="none" stroke="#245cff" opacity=".45"/>
     <path d="M430 110L720 25" class="line" opacity=".7"/>
-    <text x="28" y="40" class="h">XPS3</text><text x="692" y="38" class="tiny" text-anchor="end">BUILD 0.3.3.0</text>
+    <text x="28" y="40" class="h">XPS3</text><text x="692" y="38" class="tiny" text-anchor="end">BUILD 0.3.4.0</text>
     <text x="28" y="76" class="body">Biblioteca</text><text x="139" y="76" class="dim">Instalar</text><text x="220" y="76" class="dim">Configurações</text>
     <rect x="27" y="91" width="666" height="166" rx="16" fill="url(#hero)" stroke="#394671"/>
     <text x="55" y="130" class="tiny accent">JOGO SELECIONADO</text>

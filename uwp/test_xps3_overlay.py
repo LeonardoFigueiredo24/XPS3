@@ -27,7 +27,7 @@ def main() -> int:
     require(identity is not None, "manifest Identity missing")
     require(identity.attrib["Name"] == "XPS3.Experimental.Emulator", "foreign package identity")
     require(identity.attrib["Publisher"] == "CN=XPS3Development", "foreign publisher")
-    require(identity.attrib["Version"] == "0.3.3.0", "unexpected package version after Cell Horizon UI update")
+    require(identity.attrib["Version"] == "0.3.4.0", "unexpected package version after content-library update")
     require(identity.attrib["ProcessorArchitecture"] == "x64", "Xbox target must be x64")
     apps = manifest.findall("f:Applications/f:Application", ns)
     require([a.attrib["Executable"] for a in apps] ==
@@ -83,6 +83,18 @@ def main() -> int:
             "television library is not horizontal")
     require("$TITLE$" in game_item_xaml and "x:Name=\"Icon\"" in game_item_xaml,
             "game tile no longer binds real library data")
+    require('TextWrapping="WrapWholeWords"' in game_item_xaml and 'MaxLines="2"' in game_item_xaml,
+            "game tile title can still be cut to one line")
+    detail_title = re.search(r'<TextBlock x:Name="DetailTitle"[^>]*/>', shell_xaml)
+    require(detail_title is not None and 'TextWrapping="WrapWholeWords"' in detail_title.group(0)
+            and 'MaxLines=' not in detail_title.group(0),
+            "selected game title is still capped and can be cut")
+    require('Header="Adicionar e instalar"' in shell_xaml,
+            "content tab does not describe both playable and installable content")
+    require("PS3_GAME" in shell_xaml and ".iso" in shell_xaml,
+            "content tab does not explain directly playable PS3 formats")
+    require("Nenhum conteúdo compatível encontrado" in xaml_cpp,
+            "empty content state is not localized or no longer describes all content")
     checks.append("cell_horizon_ui")
 
     frontend_cpp = (APP / "uwp_frontend.cpp").read_text(encoding="utf-8")
@@ -96,6 +108,11 @@ def main() -> int:
             "120 frame-limit option missing from core")
     require("120 requires a compatible title or patch" in frontend_cpp,
             "120 FPS compatibility warning missing")
+    for marker in (
+        "disc_image", "game_folder", "program", "playable content",
+        "known_free", "USB drive is full", "cover.png", "EBOOT.BIN", 'A  Select      Y  Refresh',
+    ):
+        require(marker in frontend_cpp, f"content and package safety integration missing: {marker}")
     checks.append("upstream_0_1_35_integration")
 
     release_script = (ROOT / "uwp" / "xps3-docker-release.sh").read_text(encoding="utf-8")

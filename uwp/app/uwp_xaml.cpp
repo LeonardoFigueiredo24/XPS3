@@ -993,7 +993,7 @@ namespace uwp_xaml
 				set_visible(install_busy_el, !have && snap.scanning);
 				set_visible(install_empty_el, !have && !snap.scanning);
 				if (!have && !snap.scanning)
-					set_text(t_install_empty, "Nothing to install found. Press Y to look again.");
+					set_text(t_install_empty, "Nenhum conteúdo compatível encontrado. Aperte Y para procurar novamente.");
 			}
 
 			void sync_header()

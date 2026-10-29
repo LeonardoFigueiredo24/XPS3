@@ -120,7 +120,7 @@ MAKEMSIX=/path/to/makemsix uwp/package/package.sh build-uwp RPCS3Xbox.appx cert.
    `tools/AppX/x64/Release`), install.
 3. In Dev Home, select RPCS3Xbox > View details and set **App type: Game** (5 GB RAM instead of 1 GB).
    A reinstall can reset this.
-4. Start the app. Install firmware from the Install tab (`PS3UPDAT.PUP` on a USB drive), then boot
+4. Start the app. Install firmware from the Add and install tab (`PS3UPDAT.PUP` on a USB drive), then boot
    the XMB or a game from the Games tab.
 
 ## Using the menu
@@ -128,9 +128,11 @@ MAKEMSIX=/path/to/makemsix uwp/package/package.sh build-uwp RPCS3Xbox.appx cert.
 - **Games**: the XMB, game folders and `.iso` files in `LocalState/games/`, games installed into the
   emulated HDD, and folders/ISOs in `GAMES/`, `PS3ISO/` or the root of a USB drive. Encrypted
   (redump) ISOs need their `.dkey` next to them. Opens on the last played game.
-- **Install**: firmware (`PS3UPDAT.PUP`), packages (`.pkg`) and licenses (`.rap`) from `LocalState/`,
-  `LocalState/firmware/`, `LocalState/packages/` or a USB drive (root, `PS3/UPDATE/`, `PKG/`,
-  `packages/`, `exdata/`). Installing a package also installs the `.rap` files next to it.
+- **Add and install**: firmware (`PS3UPDAT.PUP`), packages (`.pkg`) and licenses (`.rap`) from
+  `LocalState/`, `LocalState/firmware/`, `LocalState/packages/` or a USB drive (root,
+  `PS3/UPDATE/`, `PKG/`, `packages/`, `exdata/`). It also lists directly playable `PS3_GAME`
+  folders, `.iso`, ELF, SELF and `EBOOT.BIN` content; those entries start directly and are not
+  copied or installed. Installing a package also installs the `.rap` files next to it.
 - **Settings**: resolution scale, frame limit, VSync, shader mode, network, PSN mode, stats overlay
   and more, saved to `config.yml` right away.
 - **Settings > RPCN account**: RPCN, RPCS3's PSN replacement for online play. Create an account

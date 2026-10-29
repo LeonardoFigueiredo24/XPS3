@@ -26,7 +26,7 @@ for the publication process.
 
 ![XPS3 interface gallery](docs/images/xps3-interface-gallery.png)
 
-The interface has three controller-friendly tabs: **Biblioteca**, **Instalar** and **Configurações**,
+The interface has three controller-friendly tabs: **Biblioteca**, **Adicionar e instalar** and **Configurações**,
 plus a lateral in-game quick menu. The library displays only content found by the emulator, and the
 settings page displays only controls connected to the integrated core. The images above are visual
 previews, not Xbox captures or compatibility evidence. See [docs/UX_DIRECTION.md](docs/UX_DIRECTION.md).
@@ -37,7 +37,7 @@ previews, not Xbox captures or compatibility evidence. See [docs/UX_DIRECTION.md
 | --- | --- |
 | Xbox UWP probe | JIT, D3D12, controller and 5 GiB Game allocation tested on the user's Series S |
 | RPCS3/RPCS3-Xbox core | Integrated; ongoing adaptation and validation |
-| Cell Horizon frontend | Implemented in source; 0.3.3.0 console validation pending |
+| Cell Horizon frontend | 0.3.3.0 launched on Xbox; 0.3.4.0 content-library update pending package validation |
 | Installable package | Published only after the tagged workflow compiles, signs and validates it |
 | Commercial games | No title is classified as working in XPS3 without versioned Xbox evidence |
 
