@@ -14,7 +14,7 @@ Run tests in Xbox Developer Mode with **App type: Game**. Keep the first run foc
 1. Confirm the app reports an approximately 5120 MiB memory limit.
 2. Confirm controller navigation, A selection, B return, Y rescan and LB/RB tabs.
 3. Confirm JIT initialization and that no executable-memory error appears in the log.
-4. Run `gs_gcm_basic_triangle.elf`, then `pad_test.elf`, and record the visible result.
+4. Re-run `gs_gcm_basic_triangle.elf` to confirm the already observed colored-triangle output. Then run `pad_test.elf`, press every Xbox control shown by the test for at least one second, and photograph the final input report rather than the PPU compilation screen.
 5. Confirm firmware selection and installation using a legitimate `PS3UPDAT.PUP`.
 6. Confirm USB discovery for a `PS3_GAME` folder, ISO, PKG/RAP and ELF/SELF/EBOOT.BIN; confirm they are listed under **Adicionar e instalar** with the correct action.
 7. Confirm a deliberately oversized PKG is refused before writing when the target USB lacks space.
