@@ -10,7 +10,7 @@ Evidence date: 2026-10-29. Status is evidence-based; no percentages are used.
 | Cell Horizon frontend | Tested on Xbox for launch, navigation and quick-menu entry in 0.3.3.0 | User photos show Biblioteca, Instalar, Configurações and Menu rápido rendered on Series S while an emulation session was active |
 | PPU/SPU LLVM toolchain | Test ELF executed in 0.3.3.0 | `gs_gcm_basic_triangle.elf` passed the visible PPU compilation stage and rendered its expected triangle; `pad_test.elf` reached PPU compilation and produced a 204,629-byte cached PPU object, but its input result is not yet evidenced |
 | Mesa Dozen / D3D12 package | Basic RSX workload rendered in 0.3.3.0 | `gs_gcm_basic_triangle.elf` produced a colored triangle on the Xbox display. This validates the isolated test path, not commercial-game rendering |
-| Xbox controller in emulated PS3 software | In development | Frontend and quick-menu navigation work; the supplied `pad_test.elf` photo does not yet show a completed input report, so emulated pad input remains unconfirmed |
+| Xbox controller in emulated PS3 software | In development | Frontend and quick-menu navigation work; a repeat of `pad_test.elf` reached a black screen. [RPCS3 issue #19095](https://github.com/RPCS3/rpcs3/issues/19095) documents a current upstream regression in that test, so a visually interactive ELF and Trace logs are required before classifying emulated pad input |
 | XPS3 gameplay | Not tested | No commercial game may be labelled playable until an identifiable build runs it on the target console with logs |
 | Universal PS3 compatibility | Not achieved | Long-term goal; compatibility must be established title by title |
 
