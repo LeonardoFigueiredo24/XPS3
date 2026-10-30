@@ -1,0 +1,38 @@
+name: XPS3 core tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preparation-state-machine:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Build preparation state test
+        shell: pwsh
+        run: >-
+          cl /nologo /std:c++20 /EHsc
+          uwp/app/uwp_preparation.cpp
+          uwp/app/test/preparation_test.cpp
+          /Fe:preparation_test.exe
+      - name: Run preparation state test
+        shell: pwsh
+        run: .\preparation_test.exe
+
+  static-integration:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run XPS3 static integration checks
+        run: python uwp/test_xps3_overlay.py
