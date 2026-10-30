@@ -56,7 +56,10 @@ def main() -> int:
 
     main_cpp = (APP / "uwp_main.cpp").read_text(encoding="utf-8")
     xaml_cpp = (APP / "uwp_xaml.cpp").read_text(encoding="utf-8")
-    require('root + "XPS3/"' in main_cpp, "external storage root is not XPS3")
+    require('"XPS3/storage.json"' in main_cpp, "persistent storage configuration missing")
+    require("load_storage_configuration()" in main_cpp, "storage configuration is not loaded at startup")
+    require("g_storage_config.install_profile_id" in main_cpp,
+            "configured install destination is not connected to dev_hdd0")
     require('WindowsCreateString(L"XPS3.App", 8, name)' in xaml_cpp, "activation class mismatch")
     require(not (PACKAGE / "Assets" / "AuthorLogo.png").exists(), "foreign author logo packaged")
     checks.append("branding_and_storage")

@@ -48,6 +48,7 @@
 #include <set>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // Firmware library list (Emu/Cell/PPUModule.cpp): true = HLE by default.
@@ -597,6 +598,7 @@ namespace uwp_frontend
 		atomic_t<bool> g_paused_by_suspend{false}; // suspend_game() paused the emulator
 
 		std::mutex g_data_mutex; // games, pups, messages written by worker threads
+		std::mutex g_storage_mutex; // storage paths can be edited while a background scan is finishing
 		std::vector<game_entry> g_games;
 		std::vector<install_entry> g_installs;
 		std::string g_fw_version;
@@ -620,7 +622,8 @@ namespace uwp_frontend
 
 		std::string manual_cover_root()
 		{
-			return g_host.local_dir + "XPS3/COVERS";
+			std::lock_guard lock(g_storage_mutex);
+			return g_host.storage.cover_root.empty() ? g_host.local_dir + "XPS3/COVERS" : g_host.storage.cover_root;
 		}
 
 		std::shared_ptr<icon_image> load_resolved_cover(std::string_view title_id,
@@ -887,6 +890,11 @@ namespace uwp_frontend
 			std::vector<game_entry> games;
 			std::vector<game_entry> programs;
 			std::vector<install_entry> installs;
+			xps3::storage::config storage;
+			{
+				std::lock_guard lock(g_storage_mutex);
+				storage = g_host.storage;
+			}
 
 			const std::string games_dir = g_host.local_dir + "games/";
 			const std::string boot_dir = g_host.local_dir + "boot/";
@@ -898,28 +906,50 @@ namespace uwp_frontend
 			fs::create_path(pkg_dir);
 			fs::create_path(manual_cover_root());
 
+			std::unordered_set<std::string> scanned_game_directories;
+			const auto scan_game_directory = [&](std::string directory, const std::string& source)
+			{
+				directory = xps3::storage::normalize_root(directory);
+				if (directory.empty() || !scanned_game_directories.emplace(directory).second)
+					return;
+				if (directory.back() != '/') directory += '/';
+				for (const auto& e : fs::dir(directory))
+				{
+					if (e.name == "." || e.name == "..")
+						continue;
+					if (e.is_directory)
+					{
+						if (add_game_folder(games, directory + e.name, source))
+							add_playable_install(installs, install_entry::kind::game_folder, games.back());
+					}
+					else if (upper_ext(e.name) == ".ISO")
+					{
+						if (add_iso(games, directory + e.name, source))
+							add_playable_install(installs, install_entry::kind::disc_image, games.back(), e.size);
+					}
+					else if (is_program_file(e.name))
+					{
+						programs.push_back({e.name, "program  ·  " + source, directory + e.name, nullptr, {}, {}, "Program", source});
+						add_playable_install(installs, install_entry::kind::program, programs.back(), e.size);
+					}
+				}
+			};
+			const auto profile_for = [&](std::string_view id) -> const xps3::storage::profile*
+			{
+				const auto found = std::find_if(storage.profiles.begin(), storage.profiles.end(),
+					[id](const auto& profile) { return profile.id == id; });
+				return found == storage.profiles.end() ? nullptr : &*found;
+			};
+
 			// Pass 1, local only (fast): game folders, ISOs and programs in LocalState/games,
 			// games installed into the emulated HDD, LocalState/boot, the bundled test programs,
 			// and firmware/packages/licenses in LocalState, LocalState/firmware and LocalState/packages.
-			for (const auto& e : fs::dir(games_dir))
+			scan_game_directory(games_dir, "legacy local library");
+			for (const auto& library : storage.libraries)
 			{
-				if (e.name == "." || e.name == "..")
-					continue;
-				if (e.is_directory)
-				{
-					if (add_game_folder(games, games_dir + e.name, "games folder"))
-						add_playable_install(installs, install_entry::kind::game_folder, games.back());
-				}
-				else if (upper_ext(e.name) == ".ISO")
-				{
-					if (add_iso(games, games_dir + e.name, "games folder"))
-						add_playable_install(installs, install_entry::kind::disc_image, games.back(), e.size);
-				}
-				else if (is_program_file(e.name))
-				{
-					programs.push_back({e.name, "program  ·  games folder", games_dir + e.name, nullptr, {}, {}, "Program", "games folder"});
-					add_playable_install(installs, install_entry::kind::program, programs.back(), e.size);
-				}
+				const auto* profile = profile_for(library.profile_id);
+				if (library.enabled && profile && profile->device == xps3::storage::device_kind::internal)
+					scan_game_directory(library.path, profile->name);
 			}
 
 			const std::string hdd_game = rpcs3::utils::get_hdd0_dir() + "game/";
@@ -948,6 +978,13 @@ namespace uwp_frontend
 
 			g_scanning_usb = true;
 			publish_scan(games, programs, installs, false);
+
+			for (const auto& library : storage.libraries)
+			{
+				const auto* profile = profile_for(library.profile_id);
+				if (library.enabled && profile && profile->device != xps3::storage::device_kind::internal)
+					scan_game_directory(library.path, profile->name);
+			}
 
 			// Pass 2, USB drives (slow: brokered *FromApp file APIs, see Utilities/File.cpp):
 			// game folders and ISOs in GAMES/ and PS3ISO/ (the multiMAN/webMAN layout) or the root,
@@ -1502,6 +1539,191 @@ namespace uwp_frontend
 			g_ui->dirty = true;
 		}
 
+		enum class storage_target
+		{
+			install,
+			library,
+			cache,
+			logs,
+			covers,
+		};
+
+		const char* storage_target_name(storage_target target)
+		{
+			switch (target)
+			{
+			case storage_target::install: return "jogos instalados, saves e dados do sistema";
+			case storage_target::library: return "biblioteca de jogos";
+			case storage_target::cache: return "cache e shaders";
+			case storage_target::logs: return "logs";
+			case storage_target::covers: return "capas manuais";
+			}
+			return "armazenamento";
+		}
+
+		std::string parent_directory(std::string path)
+		{
+			path = xps3::storage::normalize_root(path);
+			if (path.size() <= 3 && path.size() >= 2 && path[1] == ':')
+				return {};
+			const auto slash = path.find_last_of('/');
+			if (slash == std::string::npos)
+				return {};
+			path.resize(slash);
+			if (path.size() == 2 && path[1] == ':')
+				path += '/';
+			return path;
+		}
+
+		std::string ensure_exact_profile(xps3::storage::config& config, const std::string& root)
+		{
+			const auto normalized = xps3::storage::normalize_root(root);
+			const auto found = std::find_if(config.profiles.begin(), config.profiles.end(), [&](const auto& profile)
+			{
+				return xps3::storage::normalize_root(profile.root) == normalized;
+			});
+			if (found != config.profiles.end())
+				return found->id;
+			const std::string id = "custom-" + xps3::storage::stable_content_key({}, normalized);
+			const bool internal = normalized.rfind(xps3::storage::normalize_root(g_host.local_dir), 0) == 0;
+			config.profiles.push_back({id, internal ? "Armazenamento interno" : "Pasta selecionada", normalized, {},
+				internal ? xps3::storage::device_kind::internal : xps3::storage::device_kind::external});
+			return id;
+		}
+
+		void configure_storage_target(storage_target target, const std::string& selected)
+		{
+			const std::string path = xps3::storage::normalize_root(selected);
+			if (!fs::is_dir(path))
+			{
+				show_modal("Pasta indisponivel", "A pasta selecionada nao esta acessivel. Reconecte o USB e tente novamente.");
+				return;
+			}
+			if (target != storage_target::library)
+			{
+				const std::string probe = path + (path.back() == '/' ? "" : "/") + ".xps3-write-probe.tmp";
+				if (!fs::write_file(probe, fs::rewrite, std::string_view{"ok"}))
+				{
+					show_modal("Pasta somente leitura", "O XPS3 nao conseguiu gravar na pasta selecionada.");
+					return;
+				}
+				fs::remove_file(probe);
+			}
+
+			xps3::storage::config next;
+			{
+				std::lock_guard lock(g_storage_mutex);
+				next = g_host.storage;
+			}
+			const std::string profile_id = ensure_exact_profile(next, path);
+			switch (target)
+			{
+			case storage_target::install:
+				next.install_profile_id = profile_id;
+				break;
+			case storage_target::library:
+			{
+				const auto found = std::find_if(next.libraries.begin(), next.libraries.end(), [&](const auto& library)
+				{
+					return xps3::storage::normalize_root(library.path) == path;
+				});
+				if (found == next.libraries.end()) next.libraries.push_back({path, profile_id, true});
+				else found->enabled = true;
+				break;
+			}
+			case storage_target::cache: next.cache_root = path; break;
+			case storage_target::logs: next.log_root = path; break;
+			case storage_target::covers: next.cover_root = path; break;
+			}
+
+			std::string error;
+			if (!xps3::storage::save(g_host.storage_config_file, next, error))
+			{
+				show_modal("Configuracao nao salva", error);
+				return;
+			}
+			{
+				std::lock_guard lock(g_storage_mutex);
+				g_host.storage = std::move(next);
+			}
+			if (target == storage_target::library || target == storage_target::covers)
+				rescan();
+			g_data_serial++;
+			show_modal("Pasta salva", target == storage_target::library || target == storage_target::covers
+				? "A nova pasta foi salva e a biblioteca sera atualizada."
+				: "A nova pasta foi salva. Reinicie o XPS3 para aplicar esta alteracao com seguranca.");
+		}
+
+		void open_storage_browser(storage_target target, std::string path)
+		{
+			path = xps3::storage::normalize_root(path);
+			auto menu = std::make_unique<list_menu>();
+			menu->title = "Escolher pasta";
+			menu->header = [target, path]()
+			{
+				return fmt::format("Destino: %s\nPasta atual: %s", storage_target_name(target), path.empty() ? "volumes acessiveis" : path);
+			};
+			menu->build = [target, path]()
+			{
+				std::vector<menu_item> items;
+				if (path.empty())
+				{
+					const std::string internal = xps3::storage::normalize_root(g_host.local_dir + "XPS3");
+					items.push_back({"Armazenamento interno do aplicativo", internal, [target, internal]() { open_storage_browser(target, internal); }});
+					for (char drive = 'D'; drive <= 'Z'; drive++)
+					{
+						const std::string root = fmt::format("%c:/", drive);
+						if (fs::is_dir(root))
+							items.push_back({fmt::format("Volume %c:", drive), "USB ou volume acessivel", [target, root]() { open_storage_browser(target, root); }});
+					}
+					return items;
+				}
+
+				items.push_back({"Usar esta pasta", path, [target, path]() { configure_storage_target(target, path); }});
+				const std::string parent = parent_directory(path);
+				if (!parent.empty())
+					items.push_back({"..", parent, [target, parent]() { open_storage_browser(target, parent); }});
+				std::string base = path;
+				if (base.back() != '/') base += '/';
+				u32 count = 0;
+				for (const auto& entry : fs::dir(base))
+				{
+					if (!entry.is_directory || entry.name == "." || entry.name == ".." || ++count > 200)
+						continue;
+					const std::string child = base + entry.name;
+					items.push_back({entry.name, "Pasta", [target, child]() { open_storage_browser(target, child); }});
+				}
+				return items;
+			};
+			g_ui->menu = std::move(menu);
+			g_ui->dirty = true;
+		}
+
+		void open_storage_menu()
+		{
+			auto menu = std::make_unique<list_menu>();
+			menu->title = "Armazenamento";
+			menu->header = []()
+			{
+				std::lock_guard lock(g_storage_mutex);
+				return fmt::format("Instalacao: %s\nCache: %s\nLogs: %s\nCapas: %s\n\nAs pastas de sistema entram em vigor apos reiniciar.",
+					xps3::storage::profile_root(g_host.storage, g_host.storage.install_profile_id), g_host.storage.cache_root,
+					g_host.storage.log_root, g_host.storage.cover_root);
+			};
+			menu->build = []()
+			{
+				return std::vector<menu_item>{
+					{"Destino de instalacao", "PKG, saves e dados do sistema PS3", []() { open_storage_browser(storage_target::install, {}); }},
+					{"Adicionar pasta de jogos", "Jogos extraidos, ISO e programas livres", []() { open_storage_browser(storage_target::library, {}); }},
+					{"Pasta de cache", "Shaders, PPU/SPU e dados temporarios", []() { open_storage_browser(storage_target::cache, {}); }},
+					{"Pasta de logs", "Relatorios e diagnosticos exportados", []() { open_storage_browser(storage_target::logs, {}); }},
+					{"Pasta de capas", "PNG/JPG adicionados manualmente", []() { open_storage_browser(storage_target::covers, {}); }},
+				};
+			};
+			g_ui->menu = std::move(menu);
+			g_ui->dirty = true;
+		}
+
 		// ---- Settings ----
 		std::vector<setting_item> make_settings()
 		{
@@ -1525,6 +1747,11 @@ namespace uwp_frontend
 				{"RPCN account", nullptr, {}, "Create an account or log in for online play (A to open).", open_rpcn_menu, []()
 				{
 					return g_ui->rpcn_account.npid.empty() ? std::string("Not set up") : g_ui->rpcn_account.npid;
+				}},
+				{"Armazenamento", nullptr, {}, "Escolha pastas no armazenamento interno ou USB.", open_storage_menu, []()
+				{
+					std::lock_guard lock(g_storage_mutex);
+					return fmt::format("%u bibliotecas", g_host.storage.libraries.size());
 				}},
 				{"System language", &g_cfg.sys.language, {}, {}},
 			};

@@ -5,6 +5,7 @@
 
 #include "util/types.hpp"
 #include "uwp_preparation.h"
+#include "uwp_storage.h"
 
 #include <functional>
 #include <memory>
@@ -28,6 +29,8 @@ namespace uwp_frontend
 		// Set when no USB/external drive holds the PS3 hard drive: games and package installs
 		// are refused with this text, since LocalState is far too small for them.
 		std::string no_storage;
+		std::string storage_config_file;
+		xps3::storage::config storage;
 	};
 
 	// Emulator thread, after Emu.Init() and the shell's fixed settings.

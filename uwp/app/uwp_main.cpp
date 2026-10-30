@@ -14,6 +14,7 @@
 #include "winrt_min.h"
 #include "uwp_frontend.h"
 #include "uwp_localized.h"
+#include "uwp_storage.h"
 #include "uwp_telemetry.h"
 #include "uwp_xaml.h"
 
@@ -181,6 +182,92 @@ namespace
 	}
 	std::string g_local_dir; // LocalState, with trailing slash
 	std::string g_storage_root; // folder on the big drive chosen by choose_cache_dir ("E:/XPS3/"), empty = LocalState
+	xps3::storage::config g_storage_config;
+	std::string g_storage_config_file;
+
+	std::string with_slash(std::string value)
+	{
+		value = xps3::storage::normalize_root(value);
+		if (!value.empty() && value.back() != '/')
+			value += '/';
+		return value;
+	}
+
+	// Imports the paths used by pre-0.3.5 builds once. Nothing is moved here; the existing
+	// dev_hdd0 migration remains transactional in place_hdd(). A malformed new configuration
+	// is never overwritten, so it can be recovered from Device Portal.
+	std::string load_storage_configuration()
+	{
+		g_storage_config = xps3::storage::make_default(g_local_dir);
+		g_storage_config_file = g_local_dir + "XPS3/storage.json";
+		std::string warning;
+		if (fs::is_file(g_storage_config_file))
+		{
+			if (!xps3::storage::load(g_storage_config_file, g_storage_config, warning))
+				return warning + " Using safe internal defaults for this run; the file was not changed.";
+			g_storage_root = with_slash(xps3::storage::profile_root(g_storage_config, g_storage_config.active_profile_id));
+			return "loaded " + g_storage_config_file;
+		}
+
+		std::string legacy_root;
+		if (fs::file old_storage{g_local_dir + "storage"})
+		{
+			legacy_root = fmt::trim(old_storage.to_string(), " \t\r\n");
+			if (legacy_root == "local")
+				legacy_root.clear();
+		}
+		if (legacy_root.empty())
+		{
+			if (fs::file old_home{g_local_dir + "hdd_home"})
+			{
+				legacy_root = xps3::storage::normalize_root(fmt::trim(old_home.to_string(), " \t\r\n"));
+				const std::string suffix = "/dev_hdd0";
+				if (legacy_root.size() >= suffix.size() && legacy_root.compare(legacy_root.size() - suffix.size(), suffix.size(), suffix) == 0)
+					legacy_root.resize(legacy_root.size() - suffix.size());
+			}
+		}
+
+		if (legacy_root.empty())
+		{
+			fs::device_stat st{};
+			u64 best = 2ull << 30;
+			for (char drive = 'D'; drive <= 'Z'; drive++)
+			{
+				const std::string root = fmt::format("%c:/", drive);
+				if (root[0] != g_local_dir[0] && fs::is_dir(root) && fs::statfs(root, st) && st.avail_free > best)
+				{
+					best = st.avail_free;
+					legacy_root = root + "XPS3";
+				}
+			}
+		}
+
+		if (!legacy_root.empty())
+		{
+			legacy_root = xps3::storage::normalize_root(legacy_root);
+			g_storage_config.profiles.push_back({"external", "USB / armazenamento externo", legacy_root, {}, xps3::storage::device_kind::external});
+			g_storage_config.active_profile_id = "external";
+			g_storage_config.install_profile_id = "external";
+			g_storage_config.libraries.push_back({legacy_root + "/GAMES", "external", true});
+			g_storage_config.cache_root = legacy_root + "/CACHE";
+			g_storage_config.log_root = legacy_root + "/LOGS";
+			g_storage_config.cover_root = legacy_root + "/COVERS";
+		}
+
+		g_storage_root = with_slash(xps3::storage::profile_root(g_storage_config, g_storage_config.active_profile_id));
+		for (const auto& profile : g_storage_config.profiles)
+			fs::create_path(with_slash(profile.root));
+		for (const auto& library : g_storage_config.libraries)
+			if (library.enabled) fs::create_path(with_slash(library.path));
+		fs::create_path(with_slash(g_storage_config.cache_root));
+		fs::create_path(with_slash(g_storage_config.log_root));
+		fs::create_path(with_slash(g_storage_config.cover_root));
+
+		std::string error;
+		if (!xps3::storage::save(g_storage_config_file, g_storage_config, error))
+			return "could not save migrated storage configuration: " + error;
+		return legacy_root.empty() ? "created internal storage defaults" : "migrated existing storage paths without moving data";
+	}
 
 	// The app's own storage on the Xbox (LocalState, drive Q:) has only a few MB free, far too
 	// little for the PPU/SPU/shader caches (hundreds of MB for the XMB alone). Put the cache on
@@ -195,42 +282,15 @@ namespace
 		if (fs::statfs(g_local_dir, st))
 			note += fmt::format("LocalState %llu MB free of %llu MB", st.avail_free >> 20, st.total_size >> 20);
 
-		std::string choice;
-		if (fs::file f{g_local_dir + "storage"})
-		{
-			choice = fmt::trim(f.to_string(), " \t\r\n");
-			if (choice == "local")
-				return note + "; cache in LocalState (LocalState/storage says local)";
-			if (!choice.empty() && choice.back() != '/' && choice.back() != '\\')
-				choice += '/';
-		}
-
-		if (choice.empty())
-		{
-			u64 best = 2ull << 30;
-			for (char d = 'D'; d <= 'Z'; d++)
-			{
-				const std::string root = fmt::format("%c:/", d);
-				if (root[0] == g_local_dir[0] || !fs::is_dir(root) || !fs::statfs(root, st))
-					continue;
-				note += fmt::format("; %s %llu MB free of %llu MB", root, st.avail_free >> 20, st.total_size >> 20);
-				if (st.avail_free > best)
-				{
-					best = st.avail_free;
-					choice = root + "XPS3/";
-				}
-			}
-		}
-
+		const std::string choice = with_slash(g_storage_config.cache_root);
 		if (choice.empty())
 			return note + "; no drive with 2 GB free, cache in LocalState";
 
-		const std::string dir = choice + "cache/";
+		const std::string dir = choice;
 		if (!fs::create_path(dir) || !fs::write_file(dir + "write_test", fs::rewrite, std::string_view("ok")))
 			return note + fmt::format("; cannot write to %s (%s), cache in LocalState", dir, fs::g_tls_error);
 		fs::remove_file(dir + "write_test");
 		g_android_cache_dir = dir;
-		g_storage_root = choice;
 
 		// The old cache in LocalState only takes the space the rest of the app needs.
 		if (fs::is_dir(local_cache))
@@ -303,15 +363,18 @@ namespace
 		const std::string local_hdd0 = g_android_config_dir + "dev_hdd0/";
 		const std::string local_hdd1 = g_android_config_dir + "dev_hdd1/";
 		const std::string home_file = g_local_dir + "hdd_home";
-		bool local_wanted = false; // LocalState/storage says "local"
-		if (fs::file f{g_local_dir + "storage"})
-			local_wanted = fmt::trim(f.to_string(), " \t\r\n") == "local";
+		const std::string install_root = with_slash(xps3::storage::profile_root(g_storage_config, g_storage_config.install_profile_id));
+		const auto install_profile = std::find_if(g_storage_config.profiles.begin(), g_storage_config.profiles.end(), [&](const auto& profile)
+		{
+			return profile.id == g_storage_config.install_profile_id;
+		});
+		const bool local_wanted = install_profile != g_storage_config.profiles.end() && install_profile->device == xps3::storage::device_kind::internal;
 
 		std::string home;
 		if (fs::file f{home_file})
 			home = fmt::trim(f.to_string(), " \t\r\n");
-		if (home.empty() && !g_storage_root.empty())
-			home = g_storage_root + "dev_hdd0/";
+		if (!install_root.empty())
+			home = install_root + "dev_hdd0/";
 
 		std::string note;
 		bool use_home = !home.empty();
@@ -815,6 +878,7 @@ namespace
 			}
 			g_android_executable_dir = get_package_dir();
 			g_android_config_dir = g_local_dir + "rpcs3/";
+			const std::string storage_configuration_note = load_storage_configuration();
 			const std::string storage_note = choose_cache_dir();
 			fs::create_path(g_android_config_dir);
 			fs::create_path(g_android_cache_dir);
@@ -863,6 +927,7 @@ namespace
 			// it the app's memory grew by every log line ever written: 1.3 -> 4.2 GB in 2 minutes of
 			// a TTY-heavy test program until the app was killed, and slowly in every game.
 			logs::set_init({});
+			sys_log.always()("UWP: storage configuration: %s", storage_configuration_note);
 			sys_log.always()("UWP: %s", storage_note);
 			sys_log.always()("UWP: %s", place_hdd());
 
@@ -1128,7 +1193,7 @@ namespace
 			uwp_frontend::init({g_local_dir, get_package_dir(), [](std::function<void()> func)
 			{
 				g_emu_callbacks.call_from_main_thread(std::move(func), nullptr);
-			}, g_no_storage});
+			}, g_no_storage, g_storage_config_file, g_storage_config});
 
 			// The app opens its controller menu; the XMB is started from the Games tab. A
 			// LocalState/autoboot file (used by the remote test runs) boots straight away instead:
