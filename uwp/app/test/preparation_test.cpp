@@ -20,6 +20,17 @@ int main()
 {
     using namespace xps3::preparation;
 
+    require(classify_system_progress("Compiling PPU Modules...", 2, 1) == phase::compile_ppu,
+        "PPU counters must map to the PPU phase");
+    require(classify_system_progress("Building SPU cache", 0, 0) == phase::prepare_spu,
+        "SPU messages must map to the SPU phase");
+    require(classify_system_progress("Loading shader cache", 0, 0) == phase::load_shader_cache,
+        "shader cache messages must map to the shader phase");
+    require(classify_system_progress("Creating pipeline object", 0, 0) == phase::prepare_pipelines,
+        "pipeline messages must map to the pipeline phase");
+    require(classify_system_progress("", 0, 0) == phase::start_emulation,
+        "unknown idle progress must remain in the start phase");
+
     controller state;
     const auto first_serial = state.begin({
         .title = "Triangulo RSX",
