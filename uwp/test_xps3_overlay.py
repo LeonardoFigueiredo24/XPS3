@@ -110,9 +110,11 @@ def main() -> int:
             "120 FPS compatibility warning missing")
     for marker in (
         "disc_image", "game_folder", "program", "playable content",
-        "known_free", "USB drive is full", "cover.png", "EBOOT.BIN", 'A  Select      Y  Refresh',
+        "known_free", "USB drive is full", "EBOOT.BIN", 'A  Select      Y  Refresh',
     ):
         require(marker in frontend_cpp, f"content and package safety integration missing: {marker}")
+    require("cover.png" in active_text and "max_encoded_bytes" in active_text,
+            "bounded manual-cover integration missing")
     checks.append("upstream_0_1_35_integration")
 
     release_script = (ROOT / "uwp" / "xps3-docker-release.sh").read_text(encoding="utf-8")

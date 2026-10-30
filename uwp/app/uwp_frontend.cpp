@@ -17,6 +17,7 @@
 #include "uwp_telemetry.h"
 #include "uwp_textinput.h"
 #include "uwp_preparation.h"
+#include "uwp_cover_store.h"
 
 #include "Emu/System.h"
 #include "Emu/system_config.h"
@@ -307,7 +308,7 @@ namespace uwp_frontend
 
 		std::shared_ptr<icon_image> load_icon_file(const std::string& path)
 		{
-			if (fs::file f{path})
+			if (fs::file f{path}; f && f.size() > 0 && f.size() <= xps3::covers::max_encoded_bytes)
 				return decode_icon(f.to_vector<u8>());
 			return nullptr;
 		}
@@ -617,6 +618,20 @@ namespace uwp_frontend
 			return g_host.local_dir + "rpcs3/last_game.txt";
 		}
 
+		std::string manual_cover_root()
+		{
+			return g_host.local_dir + "XPS3/COVERS";
+		}
+
+		std::shared_ptr<icon_image> load_resolved_cover(std::string_view title_id,
+			const std::string& content_path, const std::string& embedded_path = {})
+		{
+			const auto found = xps3::covers::resolve(manual_cover_root(), title_id, content_path, embedded_path);
+			if (!found.warning.empty())
+				ui_log.warning("UI: manual cover ignored: %s", found.warning);
+			return found.path.empty() ? nullptr : load_icon_file(found.path);
+		}
+
 		// Running install job (firmware or package); done/total drive the progress bar.
 		std::unique_ptr<uwp_firmware::progress> g_job;
 		std::string g_job_title; // set on the UI thread before the job starts
@@ -731,6 +746,7 @@ namespace uwp_frontend
 
 			std::string title, title_id = "?", version;
 			std::shared_ptr<icon_image> icon;
+			std::vector<u8> embedded_icon;
 			iso_archive archive(path);
 			if (archive.is_valid())
 			{
@@ -741,25 +757,20 @@ namespace uwp_frontend
 				if (archive.is_file("PS3_GAME/ICON0.PNG"))
 				{
 					if (fs::file f{archive.open("PS3_GAME/ICON0.PNG")})
-						icon = decode_icon(f.to_vector<u8>());
+						embedded_icon = f.to_vector<u8>();
 				}
 			}
-			// Optional, user-provided legal artwork beside the ISO. Prefer a same-name PNG,
-			// then the conventional cover.png / ICON0.PNG names.
-			if (!icon)
+			// Central manual art precedes the embedded PS3 icon; sibling files are the fallback.
+			const auto manual = xps3::covers::resolve(manual_cover_root(), title_id, path);
+			if (manual.source == xps3::covers::source_kind::central_png ||
+				manual.source == xps3::covers::source_kind::central_jpg)
 			{
-				const usz slash = path.rfind('/');
-				const usz dot = path.rfind('.');
-				const usz start = slash == umax ? 0 : slash + 1;
-				const usz end = dot == umax || dot < start ? path.size() : dot;
-				const std::string dir = slash == umax ? std::string() : path.substr(0, slash + 1);
-				const std::string stem = path.substr(start, end - start);
-				for (const std::string& candidate : {dir + stem + ".png", dir + "cover.png", dir + "ICON0.PNG"})
-				{
-					if ((icon = load_icon_file(candidate)))
-						break;
-				}
+				icon = load_icon_file(manual.path);
 			}
+			if (!icon && !embedded_icon.empty() && embedded_icon.size() <= xps3::covers::max_encoded_bytes)
+				icon = decode_icon(embedded_icon);
+			if (!icon && manual.source != xps3::covers::source_kind::placeholder)
+				icon = load_icon_file(manual.path);
 			const std::string name = path.substr(path.rfind('/') + 1);
 			if (title.empty())
 				title = name;
@@ -823,18 +834,10 @@ namespace uwp_frontend
 				title = dir.substr(dir.rfind('/') + 1);
 			std::replace(title.begin(), title.end(), '\n', ' ');
 
-			// ICON0.PNG sits next to PARAM.SFO.
-			std::shared_ptr<icon_image> icon = load_icon_file(sfo_path.substr(0, sfo_path.rfind('/') + 1) + "ICON0.PNG");
-			if (!icon)
-			{
-				for (const std::string& candidate : {dir + "/cover.png", dir + "/ICON0.PNG"})
-				{
-					if ((icon = load_icon_file(candidate)))
-						break;
-				}
-			}
-
 			const std::string title_id{psf::get_string(sfo, "TITLE_ID", "?")};
+			// Central TITLE_ID cover, then the game's ICON0.PNG, then sibling manual files.
+			std::shared_ptr<icon_image> icon = load_resolved_cover(title_id, dir,
+				sfo_path.substr(0, sfo_path.rfind('/') + 1) + "ICON0.PNG");
 			const bool disc = sfo_path.ends_with("/PS3_GAME/PARAM.SFO");
 			out.push_back({title, fmt::format("%s  ·  %s", title_id, source), dir, std::move(icon), title_id,
 				std::string(psf::get_string(sfo, "APP_VER")), disc ? "Disc game (folder)" : "HDD game", std::string(source)});
@@ -893,6 +896,7 @@ namespace uwp_frontend
 			fs::create_path(boot_dir);
 			fs::create_path(fw_dir);
 			fs::create_path(pkg_dir);
+			fs::create_path(manual_cover_root());
 
 			// Pass 1, local only (fast): game folders, ISOs and programs in LocalState/games,
 			// games installed into the emulated HDD, LocalState/boot, the bundled test programs,
