@@ -75,6 +75,15 @@ int main()
         "oversized cover must not be decoded");
     require(!found.warning.empty(), "oversized cover must explain why it was rejected");
 
+    const auto folder_game = temp / "GAMES" / "FolderGame";
+    std::filesystem::create_directories(folder_game / "PS3_GAME" / "USRDIR");
+    touch(folder_game / "PS3_GAME" / "USRDIR" / "EBOOT.BIN");
+    touch(folder_game / "cover.png");
+    std::filesystem::remove(central / "BLES12345.png");
+    found = resolve(central.string(), "BLES-54321", folder_game.string(), {});
+    require(found.source == source_kind::sibling_cover,
+        "cover.png inside an extracted game folder must be accepted");
+
     std::filesystem::remove_all(temp);
     std::cout << "PASS: manual cover store\n";
     return 0;
