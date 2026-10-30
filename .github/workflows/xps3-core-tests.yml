@@ -44,6 +44,23 @@ jobs:
         shell: pwsh
         run: .\storage_test.exe
 
+  content-verification:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Build content verification test
+        shell: pwsh
+        run: >-
+          cl /nologo /std:c++20 /EHsc
+          uwp/app/uwp_preparation.cpp
+          uwp/app/test/content_verification_test.cpp
+          /Fe:content_verification_test.exe
+      - name: Run content verification test
+        shell: pwsh
+        run: .\content_verification_test.exe
+
   static-integration:
     runs-on: windows-latest
     steps:
