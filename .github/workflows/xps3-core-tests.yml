@@ -27,6 +27,23 @@ jobs:
         shell: pwsh
         run: .\preparation_test.exe
 
+  storage-model:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Build storage model test
+        shell: pwsh
+        run: >-
+          cl /nologo /std:c++20 /EHsc
+          uwp/app/uwp_storage.cpp
+          uwp/app/test/storage_test.cpp
+          /Fe:storage_test.exe
+      - name: Run storage model test
+        shell: pwsh
+        run: .\storage_test.exe
+
   static-integration:
     runs-on: windows-latest
     steps:
