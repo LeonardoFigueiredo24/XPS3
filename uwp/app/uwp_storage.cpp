@@ -495,6 +495,13 @@ validation_result validate_profile(const profile& value, std::uint64_t required_
     return result;
 }
 
+std::string profile_root(const config& value, std::string_view profile_id)
+{
+    const auto found = std::find_if(value.profiles.begin(), value.profiles.end(),
+        [profile_id](const profile& item) { return item.id == profile_id; });
+    return found == value.profiles.end() ? std::string{} : normalize_root(found->root);
+}
+
 std::string normalize_root(std::string_view value)
 {
     std::string result;

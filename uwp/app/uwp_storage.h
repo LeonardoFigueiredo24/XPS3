@@ -66,6 +66,7 @@ config make_default(std::string_view local_state_root);
 bool load(std::string_view file, config& value, std::string& warning);
 bool save(std::string_view file, const config& value, std::string& error);
 validation_result validate_profile(const profile& value, std::uint64_t required_bytes);
+std::string profile_root(const config& value, std::string_view profile_id);
 std::string normalize_root(std::string_view value);
 std::string stable_content_key(std::string_view title_id, std::string_view content_path);
 }
