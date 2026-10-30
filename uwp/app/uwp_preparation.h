@@ -40,6 +40,27 @@ enum class mode
     smoothness,
 };
 
+enum class content_kind
+{
+    elf,
+    iso,
+    extracted_game,
+    installed_title,
+    package,
+    unsupported,
+};
+
+struct verification_result
+{
+    bool ok = false;
+    content_kind kind = content_kind::unsupported;
+    std::uint64_t readable_bytes = 0;
+    std::string title_id;
+    std::vector<std::string> executable_candidates;
+    std::string error_code;
+    std::string message;
+};
+
 struct phase_progress
 {
     phase id = phase::verify_content;
@@ -97,4 +118,6 @@ private:
     std::chrono::steady_clock::time_point m_started{};
     std::uint64_t m_next_serial = 1;
 };
+
+verification_result verify_content(std::string_view path);
 }

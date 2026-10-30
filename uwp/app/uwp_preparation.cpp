@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
+#include <filesystem>
+#include <fstream>
 #include <utility>
 
 namespace xps3::preparation
@@ -18,6 +21,126 @@ constexpr std::array<std::pair<phase, const char*>, 8> s_phases{{
     {phase::start_emulation, "Iniciando emulacao"},
     {phase::wait_first_frame, "Aguardando primeiro quadro"},
 }};
+
+std::string lower_extension(const std::filesystem::path& path)
+{
+    auto extension = path.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return extension;
+}
+
+bool readable_file(const std::filesystem::path& path, std::uint64_t& size)
+{
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(path, ec) || ec)
+    {
+        return false;
+    }
+    size = std::filesystem::file_size(path, ec);
+    if (ec)
+    {
+        return false;
+    }
+    std::ifstream input(path, std::ios::binary);
+    return static_cast<bool>(input);
+}
+}
+
+verification_result verify_content(std::string_view path_text)
+{
+    verification_result result;
+    if (path_text.empty())
+    {
+        result.error_code = "CONTENT_MISSING";
+        result.message = "Nenhum conteudo foi selecionado.";
+        return result;
+    }
+
+    const std::filesystem::path path{std::string(path_text)};
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec) || ec)
+    {
+        result.error_code = "CONTENT_MISSING";
+        result.message = "O arquivo ou pasta selecionado nao esta disponivel.";
+        return result;
+    }
+
+    if (std::filesystem::is_directory(path, ec) && !ec)
+    {
+        const auto extracted_eboot = path / "PS3_GAME" / "USRDIR" / "EBOOT.BIN";
+        const auto direct_eboot = path / "USRDIR" / "EBOOT.BIN";
+        std::uint64_t executable_size = 0;
+        if (readable_file(extracted_eboot, executable_size))
+        {
+            result.ok = true;
+            result.kind = content_kind::extracted_game;
+            result.readable_bytes = executable_size;
+            result.executable_candidates.push_back(extracted_eboot.string());
+            result.message = "Pasta PS3_GAME verificada.";
+            return result;
+        }
+        if (readable_file(direct_eboot, executable_size))
+        {
+            result.ok = true;
+            result.kind = content_kind::installed_title;
+            result.readable_bytes = executable_size;
+            result.executable_candidates.push_back(direct_eboot.string());
+            result.message = "Titulo instalado verificado.";
+            return result;
+        }
+        result.error_code = "EBOOT_MISSING";
+        result.message = "A pasta nao contem PS3_GAME/USRDIR/EBOOT.BIN.";
+        return result;
+    }
+
+    std::uint64_t file_size = 0;
+    if (!readable_file(path, file_size))
+    {
+        result.error_code = "CONTENT_UNREADABLE";
+        result.message = "O conteudo existe, mas nao pode ser lido.";
+        return result;
+    }
+    result.readable_bytes = file_size;
+
+    const auto extension = lower_extension(path);
+    if (extension == ".pkg")
+    {
+        result.kind = content_kind::package;
+        result.error_code = "INSTALL_REQUIRED";
+        result.message = "Pacotes PKG precisam ser instalados antes da inicializacao.";
+        return result;
+    }
+    if (extension == ".iso")
+    {
+        result.ok = true;
+        result.kind = content_kind::iso;
+        result.message = "Imagem ISO legivel; a estrutura sera validada pelo leitor ISO do nucleo.";
+        return result;
+    }
+
+    if (extension == ".elf" || extension == ".self" || extension == ".bin")
+    {
+        std::array<unsigned char, 4> magic{};
+        std::ifstream input(path, std::ios::binary);
+        input.read(reinterpret_cast<char*>(magic.data()), static_cast<std::streamsize>(magic.size()));
+        if (input.gcount() == static_cast<std::streamsize>(magic.size()) &&
+            magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F')
+        {
+            result.ok = true;
+            result.kind = content_kind::elf;
+            result.executable_candidates.push_back(path.string());
+            result.message = "Executavel ELF verificado.";
+            return result;
+        }
+        result.error_code = "EXECUTABLE_HEADER_UNSUPPORTED";
+        result.message = "O arquivo nao possui um cabecalho ELF reconhecido.";
+        return result;
+    }
+
+    result.error_code = "CONTENT_FORMAT_UNSUPPORTED";
+    result.message = "O formato selecionado nao e uma entrada de jogo suportada.";
+    return result;
 }
 
 std::uint64_t controller::begin(request value)
