@@ -1591,14 +1591,6 @@ namespace uwp_frontend
 			g_preparation.update(preparation_serial, xps3::preparation::phase::analyse_executables,
 				verified.executable_candidates.size(), verified.executable_candidates.size(), verified.message);
 			g_preparation.complete(preparation_serial, xps3::preparation::phase::analyse_executables, verified.message);
-			g_preparation.skip(preparation_serial, xps3::preparation::phase::compile_ppu,
-				"O progresso PPU sera informado pelo nucleo durante o boot");
-			g_preparation.skip(preparation_serial, xps3::preparation::phase::prepare_spu,
-				"O progresso SPU sera informado pelo nucleo durante o boot");
-			g_preparation.skip(preparation_serial, xps3::preparation::phase::load_shader_cache,
-				"Shaders serao descobertos pelo RSX durante o boot");
-			g_preparation.skip(preparation_serial, xps3::preparation::phase::prepare_pipelines,
-				"Pipelines serao criados quando o RSX os descobrir");
 			g_preparation.activate(preparation_serial, xps3::preparation::phase::start_emulation,
 				"Entregando conteudo ao nucleo RPCS3");
 			ui_log.notice("UI: boot '%s' (%s)", game.title, game.path);
@@ -2495,6 +2487,17 @@ namespace uwp_frontend
 		}
 
 		const u64 serial = g_preparation_serial.load();
+		const auto before_start = g_preparation.get_snapshot();
+		for (const auto& item : before_start.phases)
+		{
+			if (item.id < xps3::preparation::phase::compile_ppu ||
+				item.id > xps3::preparation::phase::prepare_pipelines)
+				continue;
+			if (item.state == xps3::preparation::phase_state::active)
+				g_preparation.complete(serial, item.id, item.detail);
+			else if (item.state == xps3::preparation::phase_state::pending)
+				g_preparation.skip(serial, item.id, "Nenhum trabalho necessario nesta inicializacao");
+		}
 		g_preparation.complete(serial, xps3::preparation::phase::start_emulation, "O nucleo aceitou a inicializacao");
 		g_preparation.activate(serial, xps3::preparation::phase::wait_first_frame, "Aguardando um quadro valido do RSX");
 		g_preparation_waiting_for_frame = true;
@@ -2531,6 +2534,38 @@ namespace uwp_frontend
 			g_preparation.first_frame_presented(g_preparation_serial.load());
 			ui_log.success("UI: first guest frame presented; preparation complete");
 		}
+	}
+
+	void report_system_progress(const std::string& message, u64 program_done, u64 program_total,
+		u64 file_done, u64 file_total)
+	{
+		const u64 serial = g_preparation_serial.load();
+		const auto snapshot = g_preparation.get_snapshot();
+		if (!snapshot.active || snapshot.serial != serial)
+			return;
+
+		const auto next = xps3::preparation::classify_system_progress(message, program_total, file_total);
+		if (next == xps3::preparation::phase::start_emulation)
+			return;
+
+		if (snapshot.current != next &&
+			snapshot.current >= xps3::preparation::phase::compile_ppu &&
+			snapshot.current <= xps3::preparation::phase::prepare_pipelines)
+		{
+			g_preparation.complete(serial, snapshot.current, "Etapa concluida pelo nucleo");
+		}
+
+		u64 done = program_done;
+		u64 total = program_total;
+		if (next == xps3::preparation::phase::compile_ppu && file_total && !program_total)
+		{
+			done = file_done;
+			total = file_total;
+		}
+		std::string detail = message;
+		if (file_total)
+			fmt::append(detail, "%sArquivo %u de %u", detail.empty() ? "" : " - ", file_done, file_total);
+		g_preparation.update(serial, next, done, total, std::move(detail));
 	}
 
 	xps3::preparation::snapshot get_preparation_snapshot()

@@ -1566,6 +1566,8 @@ namespace
 		// still hold an older message (e.g. the shader cache's "pipeline object N of N").
 		const u32 total = g_progr_ptotal, done = g_progr_pdone;
 		const u32 ftotal = g_progr_ftotal, fdone = g_progr_fdone;
+		uwp_frontend::report_system_progress(std::string(g_progr_text), done, total, fdone, ftotal);
+		const auto preparation = uwp_frontend::get_preparation_snapshot();
 		const bool compiling = (total && done < total) || (ftotal && fdone < ftotal);
 		const std::string text = compiling ? std::string() : std::string(g_progr_text);
 
@@ -1577,7 +1579,7 @@ namespace
 		was_compiling = compiling;
 		const bool long_compile = compiling && std::chrono::steady_clock::now() - compile_since >= std::chrono::milliseconds(1500);
 
-		if (frame_live || (have_frame && !long_compile) || (!compiling && (text.empty() || st == shell_state::running)))
+		if (!preparation.active && (frame_live || (have_frame && !long_compile) || (!compiling && (text.empty() || st == shell_state::running))))
 		{
 			showing = false;
 			return false;
@@ -1614,7 +1616,15 @@ namespace
 		{
 			const u64 secs = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - since).count();
 			std::string title = text, detail;
-			if (compiling)
+			if (preparation.active)
+			{
+				title = "Preparando " + preparation.game.title;
+				const auto it = std::find_if(preparation.phases.begin(), preparation.phases.end(),
+					[&](const auto& item) { return item.id == preparation.current; });
+				if (it != preparation.phases.end())
+					detail = it->label + (it->detail.empty() ? std::string() : " - " + it->detail) + ". ";
+			}
+			if (compiling && !preparation.active)
 			{
 				title = "Compiling PPU code";
 				if (ftotal)
@@ -2057,6 +2067,8 @@ namespace
 		const bool have_frame = g_xaml_have_frame, frame_live = g_xaml_frame_live;
 		const u32 total = g_progr_ptotal, done = g_progr_pdone;
 		const u32 ftotal = g_progr_ftotal, fdone = g_progr_fdone;
+		uwp_frontend::report_system_progress(std::string(g_progr_text), done, total, fdone, ftotal);
+		const auto preparation = uwp_frontend::get_preparation_snapshot();
 		const bool compiling = (total && done < total) || (ftotal && fdone < ftotal);
 		const std::string text = compiling ? std::string() : std::string(g_progr_text);
 
@@ -2067,7 +2079,7 @@ namespace
 		// Over a picture, only when a compile has run 1.5 s (short on-demand compiles don't flash it).
 		const bool long_compile = compiling && now - compile_since >= std::chrono::milliseconds(1500);
 
-		if (frame_live || (have_frame && !long_compile) || (!compiling && (text.empty() || st == shell_state::running)))
+		if (!preparation.active && (frame_live || (have_frame && !long_compile) || (!compiling && (text.empty() || st == shell_state::running))))
 		{
 			showing = false;
 			return;
@@ -2084,7 +2096,19 @@ namespace
 
 		const u64 secs = std::chrono::duration_cast<std::chrono::seconds>(now - since).count();
 		std::string title = text, detail;
-		if (compiling)
+		if (preparation.active)
+		{
+			title = "Preparando " + preparation.game.title;
+			for (const auto& item : preparation.phases)
+			{
+				const char* state = item.state == xps3::preparation::phase_state::complete ? "[OK]" :
+					item.state == xps3::preparation::phase_state::skipped ? "[-]" :
+					item.state == xps3::preparation::phase_state::active ? "[>]" : "[ ]";
+				fmt::append(detail, "%s %s%s%s\n", state, item.label,
+					item.detail.empty() ? "" : ": ", item.detail);
+			}
+		}
+		if (compiling && !preparation.active)
 		{
 			title = "Compiling PPU code";
 			if (ftotal)

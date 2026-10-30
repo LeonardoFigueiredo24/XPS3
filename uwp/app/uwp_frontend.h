@@ -51,6 +51,8 @@ namespace uwp_frontend
 	void on_emulation_stopped();
 	// Render thread: completes the active preparation only after a real guest frame exists.
 	void on_first_frame_presented();
+	void report_system_progress(const std::string& message, u64 program_done, u64 program_total,
+		u64 file_done, u64 file_total);
 	xps3::preparation::snapshot get_preparation_snapshot();
 
 	// ---- Model for the XAML shell (uwp_xaml.cpp) ----
