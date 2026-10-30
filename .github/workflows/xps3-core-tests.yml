@@ -61,6 +61,24 @@ jobs:
         shell: pwsh
         run: .\content_verification_test.exe
 
+  manual-cover-store:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Build manual cover store test
+        shell: pwsh
+        run: >-
+          cl /nologo /std:c++20 /EHsc
+          uwp/app/uwp_storage.cpp
+          uwp/app/uwp_cover_store.cpp
+          uwp/app/test/cover_store_test.cpp
+          /Fe:cover_store_test.exe
+      - name: Run manual cover store test
+        shell: pwsh
+        run: .\cover_store_test.exe
+
   static-integration:
     runs-on: windows-latest
     steps:
