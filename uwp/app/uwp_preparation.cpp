@@ -143,6 +143,32 @@ verification_result verify_content(std::string_view path_text)
     return result;
 }
 
+phase classify_system_progress(std::string_view message, std::uint64_t program_total,
+    std::uint64_t file_total)
+{
+    std::string lowered(message);
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    if (lowered.find("spu") != std::string::npos)
+    {
+        return phase::prepare_spu;
+    }
+    if (lowered.find("pipeline") != std::string::npos ||
+        lowered.find("pipeline object") != std::string::npos)
+    {
+        return phase::prepare_pipelines;
+    }
+    if (lowered.find("shader") != std::string::npos)
+    {
+        return phase::load_shader_cache;
+    }
+    if (program_total != 0 || file_total != 0 || lowered.find("ppu") != std::string::npos)
+    {
+        return phase::compile_ppu;
+    }
+    return phase::start_emulation;
+}
+
 std::uint64_t controller::begin(request value)
 {
     std::lock_guard lock(m_mutex);

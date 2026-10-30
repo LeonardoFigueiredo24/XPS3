@@ -120,4 +120,6 @@ private:
 };
 
 verification_result verify_content(std::string_view path);
+phase classify_system_progress(std::string_view message, std::uint64_t program_total,
+    std::uint64_t file_total);
 }
