@@ -4,6 +4,7 @@
 // settings, drawn in software into a BGRA canvas the shell shows while no game runs.
 
 #include "util/types.hpp"
+#include "uwp_preparation.h"
 
 #include <functional>
 #include <memory>
@@ -48,6 +49,9 @@ namespace uwp_frontend
 	// Emulator callbacks.
 	void on_emulation_started();
 	void on_emulation_stopped();
+	// Render thread: completes the active preparation only after a real guest frame exists.
+	void on_first_frame_presented();
+	xps3::preparation::snapshot get_preparation_snapshot();
 
 	// ---- Model for the XAML shell (uwp_xaml.cpp) ----
 	// The menu logic (scanning, installs, settings) above is shared with the software-drawn menu;

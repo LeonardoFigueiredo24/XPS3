@@ -1837,6 +1837,8 @@ namespace
 				const game_frame game = update_game_frame(dev, ctx, st);
 				ID3D11Texture2D* frame_tex = game.texture;
 				const bool have_frame = game.have_frame, frame_live = game.frame_live;
+				if (have_frame)
+					uwp_frontend::on_first_frame_presented();
 
 				if (show_loading_screen(dev, ctx, rtv, st, have_frame, frame_live))
 				{
@@ -1975,6 +1977,8 @@ namespace
 			was_in_game = in_game;
 			g_xaml_have_frame = game.have_frame;
 			g_xaml_frame_live = game.frame_live;
+			if (game.have_frame)
+				uwp_frontend::on_first_frame_presented();
 
 			if (game.have_frame)
 			{

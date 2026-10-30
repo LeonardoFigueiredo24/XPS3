@@ -16,6 +16,7 @@
 #include "uwp_rpcn.h"
 #include "uwp_telemetry.h"
 #include "uwp_textinput.h"
+#include "uwp_preparation.h"
 
 #include "Emu/System.h"
 #include "Emu/system_config.h"
@@ -57,6 +58,9 @@ namespace uwp_frontend
 {
 	namespace
 	{
+		xps3::preparation::controller g_preparation;
+		atomic_t<u64> g_preparation_serial{0};
+		atomic_t<bool> g_preparation_waiting_for_frame{false};
 		// ---- WinRT ABI declarations (Windows.Gaming.Input, CoreWindow key state) ----
 		// Vtable order and IIDs follow the Windows SDK / Wine IDL; unused methods are placeholder slots.
 #define UI_SLOT(n) virtual HRESULT STDMETHODCALLTYPE slot_##n() = 0
@@ -1560,6 +1564,43 @@ namespace uwp_frontend
 				std::lock_guard lock(g_data_mutex);
 				g_select_path = game.path;
 			}
+
+			const u64 preparation_serial = g_preparation.begin({
+				.title = game.title,
+				.title_id = game.title_id,
+				.content_path = game.path,
+				.preparation_mode = xps3::preparation::mode::balanced,
+			});
+			g_preparation_serial = preparation_serial;
+			g_preparation_waiting_for_frame = false;
+			const xps3::preparation::verification_result verified = xps3::preparation::verify_content(game.path);
+			if (!verified.ok)
+			{
+				g_preparation.fail(preparation_serial, verified.error_code, verified.message);
+				g_in_game = false;
+				ui_log.error("UI: pre-boot verification failed for '%s': %s (%s)", game.path, verified.error_code, verified.message);
+				set_status("O conteudo nao pode ser iniciado", col_err);
+				post_modal("Nao foi possivel preparar o jogo", verified.message + "\n\nCodigo: " + verified.error_code);
+				return;
+			}
+			g_preparation.update(preparation_serial, xps3::preparation::phase::verify_content,
+				verified.readable_bytes, verified.readable_bytes, verified.message);
+			g_preparation.complete(preparation_serial, xps3::preparation::phase::verify_content, verified.message);
+			g_preparation.activate(preparation_serial, xps3::preparation::phase::analyse_executables,
+				"Analisando entradas de execucao");
+			g_preparation.update(preparation_serial, xps3::preparation::phase::analyse_executables,
+				verified.executable_candidates.size(), verified.executable_candidates.size(), verified.message);
+			g_preparation.complete(preparation_serial, xps3::preparation::phase::analyse_executables, verified.message);
+			g_preparation.skip(preparation_serial, xps3::preparation::phase::compile_ppu,
+				"O progresso PPU sera informado pelo nucleo durante o boot");
+			g_preparation.skip(preparation_serial, xps3::preparation::phase::prepare_spu,
+				"O progresso SPU sera informado pelo nucleo durante o boot");
+			g_preparation.skip(preparation_serial, xps3::preparation::phase::load_shader_cache,
+				"Shaders serao descobertos pelo RSX durante o boot");
+			g_preparation.skip(preparation_serial, xps3::preparation::phase::prepare_pipelines,
+				"Pipelines serao criados quando o RSX os descobrir");
+			g_preparation.activate(preparation_serial, xps3::preparation::phase::start_emulation,
+				"Entregando conteudo ao nucleo RPCS3");
 			ui_log.notice("UI: boot '%s' (%s)", game.title, game.path);
 			// Remembered so the next start of the app selects it again.
 			fs::write_file(last_game_file(), fs::rewrite, game.path);
@@ -1570,6 +1611,8 @@ namespace uwp_frontend
 				if (!Emu.IsStopped(true))
 				{
 					ui_log.warning("UWP: not booting '%s': the emulator is not stopped", game.path);
+					g_preparation.fail(g_preparation_serial.load(), "EMULATOR_BUSY", "O nucleo ainda nao encerrou a execucao anterior.");
+					g_in_game = false;
 					return;
 				}
 				if (!boot(game.path))
@@ -2447,9 +2490,14 @@ namespace uwp_frontend
 			ui_log.error("UWP: boot failed: %s", result);
 			set_status(fmt::format("Couldn't start it: %s", result), col_err);
 			post_modal("Couldn't start the game", fmt::format("RPCS3 reported: %s\n\nDetails are in RPCS3.log (LocalState/rpcs3).", result));
+			g_preparation.fail(g_preparation_serial.load(), "RPCS3_BOOT_FAILED", fmt::format("RPCS3 reported: %s", result));
 			return false;
 		}
 
+		const u64 serial = g_preparation_serial.load();
+		g_preparation.complete(serial, xps3::preparation::phase::start_emulation, "O nucleo aceitou a inicializacao");
+		g_preparation.activate(serial, xps3::preparation::phase::wait_first_frame, "Aguardando um quadro valido do RSX");
+		g_preparation_waiting_for_frame = true;
 		set_status({}, col_dim);
 		return true;
 	}
@@ -2461,6 +2509,12 @@ namespace uwp_frontend
 
 	void on_emulation_stopped()
 	{
+		if (const auto preparation = g_preparation.get_snapshot(); preparation.active)
+		{
+			g_preparation.fail(preparation.serial, "STOPPED_BEFORE_FIRST_FRAME",
+				"A emulacao terminou antes de apresentar um quadro valido.");
+		}
+		g_preparation_waiting_for_frame = false;
 		g_paused_by_menu = false;
 		g_paused_by_suspend = false;
 		if (g_in_game.exchange(false))
@@ -2468,6 +2522,20 @@ namespace uwp_frontend
 			ui_log.notice("UI: emulation stopped, back to the menu");
 			set_status("Returned from the game", col_dim);
 		}
+	}
+
+	void on_first_frame_presented()
+	{
+		if (g_preparation_waiting_for_frame.exchange(false))
+		{
+			g_preparation.first_frame_presented(g_preparation_serial.load());
+			ui_log.success("UI: first guest frame presented; preparation complete");
+		}
+	}
+
+	xps3::preparation::snapshot get_preparation_snapshot()
+	{
+		return g_preparation.get_snapshot();
 	}
 
 	bool loading_frame(const std::string& title, const std::string& detail, u32 done, u32 total, const u32*& pixels)
