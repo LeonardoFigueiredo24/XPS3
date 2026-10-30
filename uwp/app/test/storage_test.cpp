@@ -78,6 +78,10 @@ int main()
         "round trip must retain profiles and active selection");
     require(restored.libraries.size() == 2 && restored.libraries.back().enabled,
         "round trip must retain library roots");
+    require(profile_root(restored, restored.active_profile_id) == "E:/XPS3",
+        "active profile root must resolve by stable profile id");
+    require(profile_root(restored, "missing").empty(),
+        "unknown profile ids must not silently select another device");
 
     {
         std::ofstream invalid(config_file, std::ios::trunc);
