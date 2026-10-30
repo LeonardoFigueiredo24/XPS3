@@ -49,8 +49,12 @@ lookup_result resolve(std::string_view cover_root, std::string_view title_id,
     const auto key = storage::stable_content_key(title_id, content_path);
     const std::filesystem::path central{storage::normalize_root(cover_root)};
     const std::filesystem::path content{storage::normalize_root(content_path)};
-    const auto parent = content.has_parent_path() ? content.parent_path() : std::filesystem::path{};
-    const auto stem = content.stem().string();
+    std::error_code content_ec;
+    const bool content_is_directory = std::filesystem::is_directory(content, content_ec) && !content_ec;
+    const auto parent = content_is_directory
+        ? content
+        : (content.has_parent_path() ? content.parent_path() : std::filesystem::path{});
+    const auto stem = content_is_directory ? content.filename().string() : content.stem().string();
 
     const std::array<candidate, 6> candidates{{
         {central / (key + ".png"), source_kind::central_png},
