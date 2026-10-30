@@ -5,6 +5,7 @@ file(GLOB UWP_XAML_PAGES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/xaml/*.xa
 add_executable(xps3_uwp WIN32
     uwp_main.cpp
     uwp_preparation.cpp
+    uwp_storage.cpp
     uwp_input.cpp
     uwp_frontend.cpp
     uwp_xaml.cpp
