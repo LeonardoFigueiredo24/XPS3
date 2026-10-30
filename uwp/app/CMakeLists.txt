@@ -6,6 +6,7 @@ add_executable(xps3_uwp WIN32
     uwp_main.cpp
     uwp_preparation.cpp
     uwp_storage.cpp
+    uwp_cover_store.cpp
     uwp_input.cpp
     uwp_frontend.cpp
     uwp_xaml.cpp
