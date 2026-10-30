@@ -37,7 +37,7 @@ previews, not Xbox captures or compatibility evidence. See [docs/UX_DIRECTION.md
 | --- | --- |
 | Xbox UWP probe | JIT, D3D12, controller and 5 GiB Game allocation tested on the user's Series S |
 | RPCS3/RPCS3-Xbox core | Integrated; ongoing adaptation and validation |
-| Cell Horizon frontend | 0.3.3.0 launched on Xbox and executed the basic RSX triangle ELF; 0.3.4.0 content-library update pending package validation |
+| Cell Horizon frontend | 0.3.3.0 launched on Xbox and executed the basic RSX triangle ELF; 0.3.5.0 storage/preparation source pending package and Xbox validation |
 | Installable package | Published only after the tagged workflow compiles, signs and validates it |
 | Commercial games | No title is classified as working in XPS3 without versioned Xbox evidence |
 
