@@ -14,12 +14,13 @@ USB and external drives are discovered through the file APIs already used by the
 
 ## Storage model
 
-XPS3 exposes four independent categories:
+XPS3 exposes five independent categories:
 
 1. **Bibliotecas de jogos** — zero or more folders containing `PS3_GAME`, HDD-layout games, ISO, ELF, SELF or `EBOOT.BIN`. These paths are scanned and combined into one library. Library content is opened in place and is not copied automatically.
 2. **Sistema PS3 ativo** — one writable profile containing `dev_hdd0` plus the profile's `dev_flash*` firmware directories: installed PKG games, updates, DLC, licenses, game data, users, saves and installed PS3 firmware. RPCS3 requires one coherent active virtual system, so only one profile can be mounted for writes and launches at a time.
 3. **Cache e shaders** — Automatic, internal XPS3 storage, same location as the active PS3 profile, or a custom writable folder.
 4. **Logs e capturas** — internal XPS3 storage or a custom writable folder. A failed external destination falls back to internal logs without redirecting package or save writes.
+5. **Capas manuais** — `LocalState/XPS3/COVERS` by default or a custom authorized folder. XPS3 does not download artwork. The user copies legally obtained `.png` or `.jpg` files into this folder and may change the destination between internal storage and USB.
 
 Each external PS3-system location is a named storage profile. The initial built-in profiles are **Interno do XPS3** and one profile per writable external drive. A custom profile may point at a user-selected folder. Profile data is stored in `LocalState/storage_profiles.json`; sensitive account data is not stored there.
 
@@ -39,6 +40,7 @@ Settings gains an **Armazenamento** section with these cards:
 - **Pastas da biblioteca** — add, remove, enable/disable and rescan multiple folders.
 - **Cache e shaders** — destination and current size.
 - **Logs e capturas** — destination and an export action.
+- **Capas manuais** — destination, current size, rescan action and the accepted filename for the selected title.
 - **Gerenciar perfis** — create, rename, validate, switch or remove a profile. Removing a profile removes only its XPS3 reference, never its files.
 - **Migrar dados** — copy the active PS3 system to another profile using partial files and post-copy verification. The source remains intact until the destination is verified.
 
@@ -56,6 +58,17 @@ The in-app browser lists only storage roots XPS3 can actually enumerate. It supp
 - cancelling without changing configuration.
 
 The browser never accepts an unresolved path, a package-install directory, the app installation directory, or a path outside the authorized root. A Windows UWP `FolderPicker` action may be offered as an additional option and its access retained, but failure or cancellation leaves the previous configuration unchanged.
+
+## Manual cover resolution
+
+The central cover folder is searched without modifying the original game. A valid PS3 `Title ID` uses `<TITLE_ID>.png` or `<TITLE_ID>.jpg`; homebrew and entries without a title ID use a stable content hash. Matching is case-insensitive, while duplicate names prefer `.png`. The lookup priority is:
+
+1. central manual cover;
+2. the game's embedded `ICON0.PNG`;
+3. a same-name `.png`, `cover.png` or `ICON0.PNG` beside an ISO or folder, preserving the existing compatibility behavior;
+4. the generated placeholder.
+
+Images are decoded off the XAML thread, cached by path, size and modification time, and rejected when the encoded file is larger than 16 MiB or either decoded dimension exceeds 4096 pixels. An invalid image produces a warning for that title and falls back to the next source. If an external cover folder is absent, the library remains usable and shows embedded artwork or placeholders. Changing the cover folder or selecting **Atualizar capas** invalidates only the artwork cache and does not rescan or alter game data.
 
 ## PKG installation flow
 
@@ -91,7 +104,7 @@ Disc folders, ISO and homebrew stored in library folders remain launchable in pl
 
 ## Persistence format
 
-`LocalState/storage_profiles.json` contains a schema version, active profile identifier, default install profile identifier, library folders, cache policy, log policy and profile records. Each record contains an opaque ID, display name, device kind, authorized path/token when available, last known volume identity and last validation result. Unknown future fields are ignored; invalid files are preserved as `.invalid` and defaults are reconstructed without deleting user content.
+`LocalState/storage_profiles.json` contains a schema version, active profile identifier, default install profile identifier, library folders, cache policy, log policy, manual-cover policy and profile records. Each record contains an opaque ID, display name, device kind, authorized path/token when available, last known volume identity and last validation result. Unknown future fields are ignored; invalid files are preserved as `.invalid` and defaults are reconstructed without deleting user content.
 
 ## Error handling
 
@@ -110,7 +123,7 @@ Errors include the affected profile and path. XPS3 never labels an install compl
 
 ## Test strategy
 
-Static integration tests first assert that the storage manager, profile persistence, destination selector, target-based free-space check and localized UI markers exist. Unit-level path/profile tests cover valid internal and external profiles, missing devices, read-only destinations, duplicate library roots, path normalization and malformed persistence data.
+Static integration tests first assert that the storage manager, profile persistence, destination selector, target-based free-space check, manual-cover folder and localized UI markers exist. Unit-level path/profile tests cover valid internal and external profiles, missing devices, read-only destinations, duplicate library roots, path normalization and malformed persistence data. Cover tests verify Title-ID naming, stable homebrew keys, `.png` preference, invalid/oversized-image fallback and a missing removable cover folder.
 
 Xbox Series S validation then covers:
 
@@ -124,9 +137,10 @@ Xbox Series S validation then covers:
 8. profile switching before launching installed content;
 9. cache and log destination selection;
 10. migration with source preservation.
+11. manual covers loaded from internal and USB folders, including fallback after USB removal.
 
 No commercial title is classified as playable solely because its package installs or its cover appears.
 
 ## Release scope
 
-Version 0.3.5.0 targets the storage manager, destination selection, persisted profiles, multiple library folders and safe PKG placement. Arbitrary access to protected Xbox folders, automatic deletion of old installations, cloud synchronization and per-title save redirection are explicitly out of scope.
+Version 0.3.5.0 targets the storage manager, destination selection, persisted profiles, multiple library folders, safe PKG placement and a configurable manual-cover folder. Artwork downloading, arbitrary access to protected Xbox folders, automatic deletion of old installations, cloud synchronization and per-title save redirection are explicitly out of scope.
